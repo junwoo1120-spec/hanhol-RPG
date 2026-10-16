@@ -1,5 +1,5 @@
 export const WATER_LEVEL = 0;
-export const PLAY_RADIUS = 4850;                       // 플레이어가 갈 수 있는 최대 반지름
+export const PLAY_RADIUS = 5000;                      // 플레이어가 갈 수 있는 최대 반지름
 export const VILLAGE = { x: 0, z: 0, r: 300, blend: 220, h: 16 };
 
 const smooth = (a, b, x) => {
@@ -31,13 +31,13 @@ const REGIONS = [
   { t: 5, x: -380,  z: -2850, rx: 3300, rz: 1100 },  // 바다·해안
 ];
 const CONES = [
-  { x: -2550, z: 800,  R: 700, H: 330, crater: 110 },
-  { x: -3200, z: 1150, R: 450, H: 200, crater: 70 },
+  { x: -2550, z: 800,  R: 450, H: 450, crater: 80 },
+  { x: -3200, z: 1150, R: 300, H: 300, crater: 55 },
 ];
 const PEAKS = [
-  { x: -2000, z: 2250, R: 520, H: 240 },
-  { x: -800,  z: 2950, R: 620, H: 300 },
-  { x: -1400, z: 3450, R: 450, H: 210 },
+  { x: -2000, z: 2250, R: 340, H: 340 },
+  { x: -800,  z: 2950, R: 400, H: 420 },
+  { x: -1400, z: 3450, R: 300, H: 300 },
 ];
 
 export function makeTerrain(seed) {
