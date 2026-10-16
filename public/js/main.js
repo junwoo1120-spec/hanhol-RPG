@@ -1,9 +1,13 @@
 import * as THREE from 'three';
 import { makeTerrain, WATER_LEVEL } from './terrain.js';
 
-const S = 32, N = 32;           // 청크 크기(unit), 청크당 분할 수
+
+const S = 32, N = 32;
 const VIEW = 5, UNLOAD = VIEW + 2;
-const $ = (id) => document.getElementById(id);
+
+// 맵 경계: 중심 기준 각 방향 4650 유닛까지 이동 가능
+const WORLD_LIMIT = 4650;
+
 
 $('join').onclick = () => {
   $('join').disabled = true;
