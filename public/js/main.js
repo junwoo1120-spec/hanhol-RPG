@@ -1,15 +1,18 @@
-
+import * as THREE from 'three';
 import { makeTerrain, WATER_LEVEL, PLAY_RADIUS } from './terrain.js';
 import { buildVillage } from './village.js';
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
 
-const S = 32;
-const N = 32;
-const VIEW = 5;
+const S = 32;            // 청크 크기
+const N = 32;            // 청크 분할 수
+const VIEW = 5;          // 로딩 반경(청크 단위)
 const UNLOAD = VIEW + 2;
-const WORLD_LIMIT = 4650;
+
+const FAST_MULT = 100;   // 속도 배율
+const RES_HIGH = N;      // 평소 청크 해상도
+const RES_LOW = 8;       // 빠르게 이동할 때 청크 해상도
 
 // 플레이어 라벨
 function makeLabel(text) {
@@ -189,24 +192,29 @@ function boot(socket, { id, seed }) {
   water.position.y = WATER_LEVEL;
   scene.add(water);
 
-  // 청크 공통 인덱스
-  const indices = [];
+  // 시작마을 터 (선으로만 표시)
+  buildVillage(scene);
 
-  for (let z = 0; z < N; z++) {
-    for (let x = 0; x < N; x++) {
-      const a = z * (N + 1) + x;
-      const b = a + 1;
-      const c = a + N + 1;
-      const d = c + 1;
+  // 청크 공통 인덱스 (해상도별로 한 번만 만들어 재사용)
+  const indexCache = {};
 
-      indices.push(a, c, b, b, c, d);
+  function getIndex(res) {
+    if (indexCache[res]) return indexCache[res];
+
+    const idx = [];
+    for (let z = 0; z < res; z++) {
+      for (let x = 0; x < res; x++) {
+        const a = z * (res + 1) + x;
+        const b = a + 1;
+        const c = a + res + 1;
+        const d = c + 1;
+        idx.push(a, c, b, b, c, d);
+      }
     }
-  }
 
-  const sharedIndex = new THREE.BufferAttribute(
-    new Uint16Array(indices),
-    1
-  );
+    indexCache[res] = new THREE.BufferAttribute(new Uint16Array(idx), 1);
+    return indexCache[res];
+  }
 
   const terrainMat = new THREE.MeshLambertMaterial({
     vertexColors: true
@@ -214,20 +222,29 @@ function boot(socket, { id, seed }) {
 
   const chunks = new Map();
   const E = 0.5;
+  let fast = false;
 
-  // 청크 생성
-  function buildChunk(cx, cz) {
-    const V = (N + 1) * (N + 1);
+  // 청크 생성 (res가 클수록 정밀)
+  function buildChunk(cx, cz, res) {
+    const key = `${cx},${cz}`;
+
+    const old = chunks.get(key);
+    if (old) {
+      scene.remove(old);
+      old.geometry.dispose();
+    }
+
+    const V = (res + 1) * (res + 1);
     const pos = new Float32Array(V * 3);
     const nor = new Float32Array(V * 3);
     const col = new Float32Array(V * 3);
 
     let i = 0;
 
-    for (let z = 0; z <= N; z++) {
-      for (let x = 0; x <= N; x++, i++) {
-        const wx = cx * S + (x * S) / N;
-        const wz = cz * S + (z * S) / N;
+    for (let z = 0; z <= res; z++) {
+      for (let x = 0; x <= res; x++, i++) {
+        const wx = cx * S + (x * S) / res;
+        const wz = cz * S + (z * S) / res;
 
         const h = T.height(wx, wz);
 
@@ -242,10 +259,7 @@ function boot(socket, { id, seed }) {
 
         let c = T.color(wx, wz, h);
 
-        const rock = 1 - Math.min(
-          1,
-          Math.max(0, (ny - 0.65) / 0.2)
-        );
+        const rock = 1 - Math.min(1, Math.max(0, (ny - 0.65) / 0.2));
 
         c = [
           c[0] + (0.45 - c[0]) * rock,
@@ -253,7 +267,7 @@ function boot(socket, { id, seed }) {
           c[2] + (0.40 - c[2]) * rock
         ];
 
-        pos.set([(x * S) / N, h, (z * S) / N], i * 3);
+        pos.set([(x * S) / res, h, (z * S) / res], i * 3);
         nor.set([nx, ny, nz], i * 3);
         col.set(c, i * 3);
       }
@@ -264,15 +278,15 @@ function boot(socket, { id, seed }) {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    geo.setIndex(sharedIndex);
+    geo.setIndex(getIndex(res));
     geo.computeBoundingSphere();
 
     const mesh = new THREE.Mesh(geo, terrainMat);
     mesh.position.set(cx * S, 0, cz * S);
-    mesh.userData = { cx, cz };
+    mesh.userData = { cx, cz, res };
 
     scene.add(mesh);
-    chunks.set(`${cx},${cz}`, mesh);
+    chunks.set(key, mesh);
   }
 
   // 주변 청크 로딩 및 먼 청크 제거
@@ -293,28 +307,32 @@ function boot(socket, { id, seed }) {
       }
     }
 
-    // 한 프레임에 가까운 청크 하나만 생성
-    let best = null;
-    let bestDistance = Infinity;
+    const wantRes = fast ? RES_LOW : RES_HIGH;
+    const t0 = performance.now();
+    const budget = fast ? 8 : 0; // 빠른 모드: 프레임당 8ms까지, 평소: 1개씩
 
-    for (let dz = -VIEW; dz <= VIEW; dz++) {
-      for (let dx = -VIEW; dx <= VIEW; dx++) {
-        const distance = dx * dx + dz * dz;
+    do {
+      let best = null;
+      let bestDistance = Infinity;
 
-        if (distance > VIEW * VIEW) continue;
-        if (distance >= bestDistance) continue;
+      for (let dz = -VIEW; dz <= VIEW; dz++) {
+        for (let dx = -VIEW; dx <= VIEW; dx++) {
+          const distance = dx * dx + dz * dz;
 
-        const key = `${pcx + dx},${pcz + dz}`;
-        if (chunks.has(key)) continue;
+          if (distance > VIEW * VIEW) continue;
+          if (distance >= bestDistance) continue;
 
-        bestDistance = distance;
-        best = [pcx + dx, pcz + dz];
+          const existing = chunks.get(`${pcx + dx},${pcz + dz}`);
+          if (existing && existing.userData.res >= wantRes) continue;
+
+          bestDistance = distance;
+          best = [pcx + dx, pcz + dz];
+        }
       }
-    }
 
-    if (best) {
-      buildChunk(best[0], best[1]);
-    }
+      if (!best) break;
+      buildChunk(best[0], best[1], wantRes);
+    } while (performance.now() - t0 < budget);
   }
 
   // 육지 스폰 위치 찾기
@@ -386,6 +404,32 @@ function boot(socket, { id, seed }) {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
+
+  // 속도 배율 버튼 (오른쪽 위)
+  const fastBtn = document.createElement('button');
+  fastBtn.style.cssText =
+    'position:fixed;top:8px;right:8px;z-index:5;padding:8px 14px;' +
+    'font-size:15px;font-weight:bold;border:0;border-radius:8px;' +
+    'color:#fff;cursor:pointer;opacity:.9';
+  document.body.appendChild(fastBtn);
+
+  function setFast(v) {
+    fast = v;
+    fastBtn.textContent = fast
+      ? `⚡ 속도 ×${FAST_MULT} ON (F)`
+      : `⚡ 속도 ×${FAST_MULT} OFF (F)`;
+    fastBtn.style.background = fast ? '#d33' : '#444';
+    socket.emit('fast', fast);
+    fastBtn.blur();
+  }
+
+  fastBtn.addEventListener('click', () => setFast(!fast));
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyF') setFast(!fast);
+  });
+
+  setFast(false);
 
   // 다른 플레이어
   const remotes = new Map();
@@ -487,21 +531,20 @@ function boot(socket, { id, seed }) {
     const len = Math.hypot(mx, mz);
 
     if (len > 0) {
-      const speed = keys.ShiftLeft ? 14 : 7;
+      const speed = (keys.ShiftLeft ? 14 : 7) * (fast ? FAST_MULT : 1);
 
-      const nextX = me.x + (mx / len) * speed * dt;
-      const nextZ = me.z + (mz / len) * speed * dt;
+      let px = me.x + (mx / len) * speed * dt;
+      let pz = me.z + (mz / len) * speed * dt;
 
-      me.x = Math.max(
-        -WORLD_LIMIT,
-        Math.min(WORLD_LIMIT, nextX)
-      );
+      // 원형 활동 범위 제한
+      const pr = Math.hypot(px, pz);
+      if (pr > PLAY_RADIUS) {
+        px *= PLAY_RADIUS / pr;
+        pz *= PLAY_RADIUS / pr;
+      }
 
-      me.z = Math.max(
-        -WORLD_LIMIT,
-        Math.min(WORLD_LIMIT, nextZ)
-      );
-
+      me.x = px;
+      me.z = pz;
       me.ry = Math.atan2(mx, mz);
     }
 
@@ -560,7 +603,7 @@ function boot(socket, { id, seed }) {
     $('hud').textContent =
       `X ${me.x.toFixed(0)}  Z ${me.z.toFixed(0)}\n` +
       `청크 ${chunks.size}  접속 ${remotes.size + 1}명\n` +
-      '클릭=마우스 잠금, WASD, Shift=달리기';
+      '클릭=마우스 잠금, WASD, Shift=달리기, F=속도 ×' + FAST_MULT;
 
     renderer.render(scene, camera);
   }
