@@ -165,10 +165,10 @@ export function makeTerrain(seed) {
     }
 
     // 경계 산맥: 바위색 + 꼭대기 눈
-    const ring = smooth(3800, 4400, Math.hypot(x, z));
+     const ring = smooth(4500, 4900, Math.hypot(x, z));
     if (ring > 0) {
       c = mix(c, ROCK, ring);
-      c = mix(c, SNOW, smooth(170, 240, h) * ring);
+      c = mix(c, SNOW, smooth(250, 340, h) * ring);
     }
     return c;
   }
