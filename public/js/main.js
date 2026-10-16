@@ -170,11 +170,20 @@ function boot(socket, { id, seed }) {
     if (keys.KeyD) { mx += rx; mz += rz; }
     if (keys.KeyA) { mx -= rx; mz -= rz; }
     const len = Math.hypot(mx, mz);
-    if (len > 0) {
-      const sp = keys.ShiftLeft ? 14 : 7;
-      me.x += (mx / len) * sp * dt; me.z += (mz / len) * sp * dt;
-      me.ry = Math.atan2(mx, mz);
-    }
+   
+if (len > 0) {
+  const sp = keys.ShiftLeft ? 14 : 7;
+
+  const nextX = me.x + (mx / len) * sp * dt;
+  const nextZ = me.z + (mz / len) * sp * dt;
+
+  // 맵 경계 밖으로 이동하지 못하게 제한
+  me.x = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, nextX));
+  me.z = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, nextZ));
+
+  me.ry = Math.atan2(mx, mz);
+}
+
     me.y = Math.max(T.height(me.x, me.z), WATER_LEVEL - 0.8);
     myAvatar.position.set(me.x, me.y, me.z); myAvatar.rotation.y = me.ry;
 
