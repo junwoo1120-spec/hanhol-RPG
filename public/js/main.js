@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { makeTerrain, WATER_LEVEL } from './terrain.js';
 
+const $ = (id) => document.getElementById(id);
 
 const S = 32, N = 32;
 const VIEW = 5, UNLOAD = VIEW + 2;
