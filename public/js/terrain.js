@@ -104,7 +104,7 @@ export function makeTerrain(seed) {
   };
   const volcanoH = (x, z) => {
     const rg = 1 - Math.abs(fbm(x * 0.005 + 300, z * 0.005 - 300, 4) * 2 - 1);
-    let h = 45 + rg * rg * 110 + (fbm(x * 0.02, z * 0.02, 3) - 0.5) * 12;
+    let h = 45 + Math.pow(rg, 5) * 140 + (fbm(x * 0.02, z * 0.02, 3) - 0.5) * 12;
     for (const c of CONES) h += coneH(c, x, z);
     return h;
   };
@@ -114,7 +114,7 @@ export function makeTerrain(seed) {
     let pk = 0;
     for (const p of PEAKS) {
       const t = Math.max(0, 1 - Math.hypot(x - p.x, z - p.z) / p.R);
-      pk = Math.max(pk, p.H * Math.pow(t, 1.7));
+      pk = Math.max(pk, p.H * Math.pow(t, 2));
     }
     return h + pk * (0.8 + 0.4 * fbm(x * 0.012 + 40, z * 0.012, 3));
   };
@@ -133,9 +133,9 @@ export function makeTerrain(seed) {
 
     // 맵 경계 산맥 (지름 10km 원형)
     const rr = Math.hypot(x, z);
-    const edge = smooth(3700, 4600, rr);
-    if (edge > 0) h += edge * (140 + fbm(x * 0.006 + 999, z * 0.006, 4) * 220);
-    h += smooth(5000, 5600, rr) * 300;
+    const edge = smooth(4500, 5000, rr);
+    if (edge > 0) h += edge * (300 + fbm(x * 0.006 + 999, z * 0.006, 4) * 250);
+    h += smooth(5000, 5400, rr) * 400;
 
     // 시작마을 평평한 터
     const vd = Math.hypot(x - VILLAGE.x, z - VILLAGE.z);
