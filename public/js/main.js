@@ -1,252 +1,574 @@
+
 import * as THREE from 'three';
 import { makeTerrain, WATER_LEVEL } from './terrain.js';
 
+// HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
 
-const S = 32, N = 32;
-const VIEW = 5, UNLOAD = VIEW + 2;
-
-// 맵 경계: 중심 기준 각 방향 4650 유닛까지 이동 가능
+const S = 32;
+const N = 32;
+const VIEW = 5;
+const UNLOAD = VIEW + 2;
 const WORLD_LIMIT = 4650;
 
-
-document.getElementById('join').onclick = () => {
-  $('join').disabled = true;
-  const socket = io();
-  socket.on('full', () => { $('msg').textContent = '서버가 가득 찼어요 (최대 10명)'; });
-  socket.on('init', (d) => boot(socket, d));
-  socket.emit('join', { nick: $('nick').value });
-};
-
+// 플레이어 라벨
 function makeLabel(text) {
-  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
-  const g = c.getContext('2d');
-  g.font = 'bold 34px sans-serif'; g.textAlign = 'center';
-  g.lineWidth = 6; g.strokeStyle = '#000'; g.strokeText(text, 128, 44);
-  g.fillStyle = '#fff'; g.fillText(text, 128, 44);
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
-  sp.scale.set(3, 0.75, 1); sp.position.y = 2.6;
-  return sp;
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+
+  const ctx = canvas.getContext('2d');
+  ctx.font = 'bold 34px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = '#000';
+  ctx.strokeText(text, 128, 44);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(text, 128, 44);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: texture,
+      depthTest: false
+    })
+  );
+
+  sprite.scale.set(3, 0.75, 1);
+  sprite.position.y = 2.6;
+
+  return sprite;
 }
+
+// 플레이어 모델
 function makeAvatar(nick, color) {
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.4, 1.0, 4, 8),
-    new THREE.MeshLambertMaterial({ color }));
-  body.position.y = 0.9; g.add(body); g.add(makeLabel(nick));
-  return g;
+  const group = new THREE.Group();
+
+  const body = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.4, 1.0, 4, 8),
+    new THREE.MeshLambertMaterial({ color })
+  );
+
+  body.position.y = 0.9;
+  group.add(body);
+  group.add(makeLabel(nick));
+
+  return group;
 }
+
+// 서버 데이터에서 플레이어 목록을 배열로 변환
+function normalizePlayers(data) {
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.players)) return data.players;
+    if (Array.isArray(data.list)) return data.list;
+
+    return Object.entries(data).map(([pid, p]) => {
+      if (Array.isArray(p)) {
+        return [pid, ...p.slice(1)];
+      }
+
+      return { id: pid, ...p };
+    });
+  }
+
+  console.error('알 수 없는 state 데이터 형식:', data);
+  return [];
+}
+
+// 플레이어 데이터 해석
+function parsePlayer(p) {
+  if (Array.isArray(p)) {
+    // [id, nick, x, y, z, ry]
+    return {
+      id: p[0],
+      nick: p[1],
+      x: p[2],
+      y: p[3],
+      z: p[4],
+      ry: p[5]
+    };
+  }
+
+  if (p && typeof p === 'object') {
+    return {
+      id: p.id ?? p.pid,
+      nick: p.nick ?? p.name ?? '플레이어',
+      x: p.x,
+      y: p.y ?? 0,
+      z: p.z,
+      ry: p.ry ?? 0
+    };
+  }
+
+  return null;
+}
+
+// 입장
+$('join').onclick = () => {
+  $('join').disabled = true;
+  $('msg').textContent = '서버에 연결 중...';
+
+  const socket = io();
+
+  socket.on('connect', () => {
+    socket.emit('join', {
+      nick: $('nick').value.trim() || '플레이어'
+    });
+  });
+
+  socket.on('connect_error', (err) => {
+    console.error('서버 연결 오류:', err);
+    $('msg').textContent = '서버 연결에 실패했습니다.';
+    $('join').disabled = false;
+  });
+
+  socket.on('full', () => {
+    $('msg').textContent = '서버가 가득 찼어요 (최대 10명)';
+    $('join').disabled = false;
+  });
+
+  socket.on('init', (data) => {
+    if (!data || !data.id) {
+      console.error('잘못된 init 데이터:', data);
+      $('msg').textContent = '캐릭터 초기화에 실패했습니다.';
+      $('join').disabled = false;
+      return;
+    }
+
+    $('msg').textContent = '';
+    boot(socket, data);
+  });
+};
 
 function boot(socket, { id, seed }) {
   $('login').style.display = 'none';
+
   const T = makeTerrain(seed);
 
+  // 렌더러
   const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   document.body.appendChild(renderer.domElement);
+
+  renderer.domElement.style.position = 'fixed';
+  renderer.domElement.style.inset = '0';
+  renderer.domElement.style.zIndex = '0';
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xa8c8e8);
   scene.fog = new THREE.Fog(0xa8c8e8, 70, VIEW * S - 8);
-  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 400);
+
+  const camera = new THREE.PerspectiveCamera(
+    70,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    400
+  );
+
   scene.add(new THREE.HemisphereLight(0xffffff, 0x556655, 0.9));
-  const sun = new THREE.DirectionalLight(0xfff2d0, 1.0); sun.position.set(80, 120, 40); scene.add(sun);
 
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200).rotateX(-Math.PI / 2),
-    new THREE.MeshLambertMaterial({ color: 0x2f6fb5, transparent: true, opacity: 0.72 }));
-  water.position.y = WATER_LEVEL; scene.add(water);
+  const sun = new THREE.DirectionalLight(0xfff2d0, 1.0);
+  sun.position.set(80, 120, 40);
+  scene.add(sun);
 
-  // ---------- 청크 ----------
-  const idx = [];
-  for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) {
-    const a = z * (N + 1) + x, b = a + 1, c = a + N + 1, d = c + 1;
-    idx.push(a, c, b, b, c, d);
+  // 물은 플레이어 주변에 배치
+  const water = new THREE.Mesh(
+    new THREE.PlaneGeometry(1200, 1200).rotateX(-Math.PI / 2),
+    new THREE.MeshLambertMaterial({
+      color: 0x2f6fb5,
+      transparent: true,
+      opacity: 0.72
+    })
+  );
+
+  water.position.y = WATER_LEVEL;
+  scene.add(water);
+
+  // 청크 공통 인덱스
+  const indices = [];
+
+  for (let z = 0; z < N; z++) {
+    for (let x = 0; x < N; x++) {
+      const a = z * (N + 1) + x;
+      const b = a + 1;
+      const c = a + N + 1;
+      const d = c + 1;
+
+      indices.push(a, c, b, b, c, d);
+    }
   }
-  const sharedIndex = new THREE.BufferAttribute(new Uint16Array(idx), 1);
-  const terrainMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+
+  const sharedIndex = new THREE.BufferAttribute(
+    new Uint16Array(indices),
+    1
+  );
+
+  const terrainMat = new THREE.MeshLambertMaterial({
+    vertexColors: true
+  });
+
   const chunks = new Map();
   const E = 0.5;
 
+  // 청크 생성
   function buildChunk(cx, cz) {
     const V = (N + 1) * (N + 1);
-    const pos = new Float32Array(V * 3), nor = new Float32Array(V * 3), col = new Float32Array(V * 3);
+    const pos = new Float32Array(V * 3);
+    const nor = new Float32Array(V * 3);
+    const col = new Float32Array(V * 3);
+
     let i = 0;
-    for (let z = 0; z <= N; z++) for (let x = 0; x <= N; x++, i++) {
-      const wx = cx * S + (x * S) / N, wz = cz * S + (z * S) / N;
-      const h = T.height(wx, wz);
-      // 월드 좌표 기준 유한차분 법선 -> 청크 경계에서 음영이 끊기지 않음
-      let nx = T.height(wx - E, wz) - T.height(wx + E, wz), ny = 2 * E, nz = T.height(wx, wz - E) - T.height(wx, wz + E);
-      const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
-      let c = T.color(wx, wz, h);
-      const rock = 1 - Math.min(1, Math.max(0, (ny - 0.65) / 0.2)); // 가파르면 바위색
-      c = [c[0] + (0.45 - c[0]) * rock, c[1] + (0.43 - c[1]) * rock, c[2] + (0.40 - c[2]) * rock];
-      pos.set([(x * S) / N, h, (z * S) / N], i * 3);
-      nor.set([nx, ny, nz], i * 3);
-      col.set(c, i * 3);
+
+    for (let z = 0; z <= N; z++) {
+      for (let x = 0; x <= N; x++, i++) {
+        const wx = cx * S + (x * S) / N;
+        const wz = cz * S + (z * S) / N;
+
+        const h = T.height(wx, wz);
+
+        let nx = T.height(wx - E, wz) - T.height(wx + E, wz);
+        let ny = 2 * E;
+        let nz = T.height(wx, wz - E) - T.height(wx, wz + E);
+
+        const len = Math.hypot(nx, ny, nz) || 1;
+        nx /= len;
+        ny /= len;
+        nz /= len;
+
+        let c = T.color(wx, wz, h);
+
+        const rock = 1 - Math.min(
+          1,
+          Math.max(0, (ny - 0.65) / 0.2)
+        );
+
+        c = [
+          c[0] + (0.45 - c[0]) * rock,
+          c[1] + (0.43 - c[1]) * rock,
+          c[2] + (0.40 - c[2]) * rock
+        ];
+
+        pos.set([(x * S) / N, h, (z * S) / N], i * 3);
+        nor.set([nx, ny, nz], i * 3);
+        col.set(c, i * 3);
+      }
     }
+
     const geo = new THREE.BufferGeometry();
+
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.setIndex(sharedIndex);
     geo.computeBoundingSphere();
+
     const mesh = new THREE.Mesh(geo, terrainMat);
     mesh.position.set(cx * S, 0, cz * S);
     mesh.userData = { cx, cz };
+
     scene.add(mesh);
-    chunks.set(cx + ',' + cz, mesh);
+    chunks.set(`${cx},${cz}`, mesh);
   }
 
+  // 주변 청크 로딩 및 먼 청크 제거
   function updateChunks(px, pz) {
-    const pcx = Math.floor(px / S), pcz = Math.floor(pz / S);
-    for (const [k, m] of chunks) {
-      if (Math.max(Math.abs(m.userData.cx - pcx), Math.abs(m.userData.cz - pcz)) > UNLOAD) {
-        scene.remove(m); m.geometry.dispose(); chunks.delete(k);
+    const pcx = Math.floor(px / S);
+    const pcz = Math.floor(pz / S);
+
+    for (const [key, mesh] of chunks) {
+      const distance = Math.max(
+        Math.abs(mesh.userData.cx - pcx),
+        Math.abs(mesh.userData.cz - pcz)
+      );
+
+      if (distance > UNLOAD) {
+        scene.remove(mesh);
+        mesh.geometry.dispose();
+        chunks.delete(key);
       }
     }
-    let best = null, bd = Infinity;               // 프레임당 가장 가까운 빈 청크 1개만 생성
-    for (let dz = -VIEW; dz <= VIEW; dz++) for (let dx = -VIEW; dx <= VIEW; dx++) {
-      const d = dx * dx + dz * dz;
-      if (d > VIEW * VIEW || d >= bd || chunks.has((pcx + dx) + ',' + (pcz + dz))) continue;
-      bd = d; best = [pcx + dx, pcz + dz];
+
+    // 한 프레임에 가까운 청크 하나만 생성
+    let best = null;
+    let bestDistance = Infinity;
+
+    for (let dz = -VIEW; dz <= VIEW; dz++) {
+      for (let dx = -VIEW; dx <= VIEW; dx++) {
+        const distance = dx * dx + dz * dz;
+
+        if (distance > VIEW * VIEW) continue;
+        if (distance >= bestDistance) continue;
+
+        const key = `${pcx + dx},${pcz + dz}`;
+        if (chunks.has(key)) continue;
+
+        bestDistance = distance;
+        best = [pcx + dx, pcz + dz];
+      }
     }
-    if (best) buildChunk(best[0], best[1]);
+
+    if (best) {
+      buildChunk(best[0], best[1]);
+    }
   }
 
-  // ---------- 플레이어 ----------
-  let sx = 0, sz = 0;                              // 육지 스폰 탐색 (나선형)
-  search: for (let r = 0; r < 400; r += 8)
-    for (let a = 0; a < 6.28; a += 0.5) {
-      const x = Math.cos(a) * r, z = Math.sin(a) * r;
-      if (T.height(x, z) > 3) { sx = x; sz = z; break search; }
+  // 육지 스폰 위치 찾기
+  let sx = 0;
+  let sz = 0;
+  let foundLand = false;
+
+  search:
+  for (let r = 0; r < 400; r += 8) {
+    for (let a = 0; a < Math.PI * 2; a += 0.5) {
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+
+      if (T.height(x, z) > WATER_LEVEL + 1) {
+        sx = x;
+        sz = z;
+        foundLand = true;
+        break search;
+      }
     }
-  const me = { x: sx, z: sz, y: 0, yaw: 0, pitch: 0.45, ry: 0 };
-  const myAvatar = makeAvatar('', 0xffffff); scene.add(myAvatar); // 본인은 라벨 없이
+  }
+
+  if (!foundLand) {
+    console.warn(
+      '스폰 주변에서 물보다 높은 지형을 찾지 못했습니다. terrain.js를 확인하세요.'
+    );
+  }
+
+  const me = {
+    x: sx,
+    z: sz,
+    y: T.height(sx, sz),
+    yaw: 0,
+    pitch: 0.45,
+    ry: 0
+  };
+
+  const myAvatar = makeAvatar('', 0xffffff);
   myAvatar.children[1].visible = false;
+  scene.add(myAvatar);
 
+  // 키보드 및 마우스
   const keys = {};
-  addEventListener('keydown', (e) => { keys[e.code] = true; });
-  addEventListener('keyup', (e) => { keys[e.code] = false; });
-  renderer.domElement.addEventListener('click', () => renderer.domElement.requestPointerLock());
-  addEventListener('mousemove', (e) => {
+
+  window.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+  });
+
+  window.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+  });
+
+  renderer.domElement.addEventListener('click', () => {
+    renderer.domElement.requestPointerLock();
+  });
+
+  window.addEventListener('mousemove', (e) => {
     if (document.pointerLockElement !== renderer.domElement) return;
+
     me.yaw -= e.movementX * 0.003;
-    me.pitch = Math.min(1.2, Math.max(0.1, me.pitch + e.movementY * 0.003));
-  });
-  addEventListener('resize', () => {
-    camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
+    me.pitch = Math.min(
+      1.2,
+      Math.max(0.1, me.pitch + e.movementY * 0.003)
+    );
   });
 
-  // ---------- 네트워크 ----------
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // 다른 플레이어
   const remotes = new Map();
- socket.on('state', (list) => {
-  if (!Array.isArray(list)) {
-    console.error('state 데이터가 배열이 아닙니다:', list);
-    return;
-  }
 
-  const seen = new Set();
+  socket.on('state', (data) => {
+    const list = normalizePlayers(data);
+    const seen = new Set();
 
-  for (const p of list) {
-    const { id: pid, nick, x, y, z, ry } = p;
+    for (const rawPlayer of list) {
+      const p = parsePlayer(rawPlayer);
 
-    if (pid === id) continue;
-    seen.add(pid);
-
-    let r = remotes.get(pid);
-
-    if (!r) {
-      r = {
-        g: makeAvatar(nick, 0xffa040),
-        t: { x, y, z, ry }
-      };
-
-      r.g.position.set(x, y, z);
-      scene.add(r.g);
-      remotes.set(pid, r);
-    }
-
-    r.t = { x, y, z, ry };
-  }
-
-  for (const [pid, r] of remotes) {
-    if (!seen.has(pid)) {
-      scene.remove(r.g);
-      remotes.delete(pid);
-    }
-  }
-});
-      if (pid === id) continue;
-      seen.add(pid);
-      let r = remotes.get(pid);
-      if (!r) {
-        r = { g: makeAvatar(nick, 0xffa040), t: { x, y, z, ry } };
-        r.g.position.set(x, y, z); scene.add(r.g); remotes.set(pid, r);
+      if (
+        !p ||
+        p.id == null ||
+        !Number.isFinite(Number(p.x)) ||
+        !Number.isFinite(Number(p.z))
+      ) {
+        continue;
       }
-      r.t = { x, y, z, ry };
-    }
-    for (const [pid, r] of remotes) if (!seen.has(pid)) { scene.remove(r.g); remotes.delete(pid); }
-  });
-  socket.on('correct', (p) => { me.x = p.x; me.z = p.z; });
 
+      const pid = p.id;
+      const x = Number(p.x);
+      const y = Number(p.y) || 0;
+      const z = Number(p.z);
+      const ry = Number(p.ry) || 0;
+
+      if (String(pid) === String(id)) continue;
+
+      seen.add(pid);
+
+      let remote = remotes.get(pid);
+
+      if (!remote) {
+        remote = {
+          g: makeAvatar(p.nick || '플레이어', 0xffa040),
+          t: { x, y, z, ry }
+        };
+
+        remote.g.position.set(x, y, z);
+        scene.add(remote.g);
+        remotes.set(pid, remote);
+      }
+
+      remote.t = { x, y, z, ry };
+    }
+
+    for (const [pid, remote] of remotes) {
+      if (!seen.has(pid)) {
+        scene.remove(remote.g);
+        remotes.delete(pid);
+      }
+    }
+  });
+
+  socket.on('correct', (p) => {
+    if (!p) return;
+
+    if (Number.isFinite(p.x)) me.x = p.x;
+    if (Number.isFinite(p.z)) me.z = p.z;
+  });
+
+  // 게임 루프
   let sendTimer = 0;
   const clock = new THREE.Clock();
 
   function loop() {
     requestAnimationFrame(loop);
+
     const dt = Math.min(clock.getDelta(), 0.1);
 
-    const fx = -Math.sin(me.yaw), fz = -Math.cos(me.yaw);
-    const rx = Math.cos(me.yaw), rz = -Math.sin(me.yaw);
-    let mx = 0, mz = 0;
-    if (keys.KeyW) { mx += fx; mz += fz; }
-    if (keys.KeyS) { mx -= fx; mz -= fz; }
-    if (keys.KeyD) { mx += rx; mz += rz; }
-    if (keys.KeyA) { mx -= rx; mz -= rz; }
+    const fx = -Math.sin(me.yaw);
+    const fz = -Math.cos(me.yaw);
+    const rx = Math.cos(me.yaw);
+    const rz = -Math.sin(me.yaw);
+
+    let mx = 0;
+    let mz = 0;
+
+    if (keys.KeyW) {
+      mx += fx;
+      mz += fz;
+    }
+
+    if (keys.KeyS) {
+      mx -= fx;
+      mz -= fz;
+    }
+
+    if (keys.KeyD) {
+      mx += rx;
+      mz += rz;
+    }
+
+    if (keys.KeyA) {
+      mx -= rx;
+      mz -= rz;
+    }
+
     const len = Math.hypot(mx, mz);
-   
-if (len > 0) {
-  const sp = keys.ShiftLeft ? 14 : 7;
 
-  const nextX = me.x + (mx / len) * sp * dt;
-  const nextZ = me.z + (mz / len) * sp * dt;
+    if (len > 0) {
+      const speed = keys.ShiftLeft ? 14 : 7;
 
-  // 맵 경계 밖으로 이동하지 못하게 제한
-  me.x = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, nextX));
-  me.z = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, nextZ));
+      const nextX = me.x + (mx / len) * speed * dt;
+      const nextZ = me.z + (mz / len) * speed * dt;
 
-  me.ry = Math.atan2(mx, mz);
-}
+      me.x = Math.max(
+        -WORLD_LIMIT,
+        Math.min(WORLD_LIMIT, nextX)
+      );
+
+      me.z = Math.max(
+        -WORLD_LIMIT,
+        Math.min(WORLD_LIMIT, nextZ)
+      );
+
+      me.ry = Math.atan2(mx, mz);
+    }
 
     me.y = Math.max(T.height(me.x, me.z), WATER_LEVEL - 0.8);
-    myAvatar.position.set(me.x, me.y, me.z); myAvatar.rotation.y = me.ry;
 
+    myAvatar.position.set(me.x, me.y, me.z);
+    myAvatar.rotation.y = me.ry;
+
+    // 3인칭 카메라
     const dist = 9;
-    const cx = me.x + Math.sin(me.yaw) * Math.cos(me.pitch) * dist;
-    const cz = me.z + Math.cos(me.yaw) * Math.cos(me.pitch) * dist;
-    const cy = Math.max(me.y + Math.sin(me.pitch) * dist + 1.5, T.height(cx, cz) + 1.5);
+
+    const cx =
+      me.x + Math.sin(me.yaw) * Math.cos(me.pitch) * dist;
+
+    const cz =
+      me.z + Math.cos(me.yaw) * Math.cos(me.pitch) * dist;
+
+    const cy = Math.max(
+      me.y + Math.sin(me.pitch) * dist + 1.5,
+      T.height(cx, cz) + 1.5
+    );
+
     camera.position.set(cx, cy, cz);
     camera.lookAt(me.x, me.y + 1.5, me.z);
 
-    water.position.x = me.x; water.position.z = me.z;
+    // 물과 지형
+    water.position.x = me.x;
+    water.position.z = me.z;
+
     updateChunks(me.x, me.z);
 
-    for (const r of remotes.values()) {
+    // 다른 플레이어 위치 보간
+    for (const remote of remotes.values()) {
       const k = 1 - Math.exp(-12 * dt);
-      r.g.position.x += (r.t.x - r.g.position.x) * k;
-      r.g.position.y += (r.t.y - r.g.position.y) * k;
-      r.g.position.z += (r.t.z - r.g.position.z) * k;
-      r.g.rotation.y = r.t.ry;
+
+      remote.g.position.x += (remote.t.x - remote.g.position.x) * k;
+      remote.g.position.y += (remote.t.y - remote.g.position.y) * k;
+      remote.g.position.z += (remote.t.z - remote.g.position.z) * k;
+      remote.g.rotation.y = remote.t.ry;
     }
 
+    // 서버로 이동 정보 전송
     sendTimer += dt;
+
     if (sendTimer > 0.05) {
       sendTimer = 0;
-      socket.emit('move', { x: me.x, y: me.y, z: me.z, ry: me.ry });
+
+      socket.emit('move', {
+        x: me.x,
+        y: me.y,
+        z: me.z,
+        ry: me.ry
+      });
     }
-    $('hud').textContent = `X ${me.x.toFixed(0)}  Z ${me.z.toFixed(0)}\n청크 ${chunks.size}  접속 ${remotes.size + 1}명\n클릭=마우스 잠금, WASD, Shift=달리기`;
+
+    $('hud').textContent =
+      `X ${me.x.toFixed(0)}  Z ${me.z.toFixed(0)}\n` +
+      `청크 ${chunks.size}  접속 ${remotes.size + 1}명\n` +
+      '클릭=마우스 잠금, WASD, Shift=달리기';
+
     renderer.render(scene, camera);
   }
+
+  // 초기 청크를 빠르게 생성
+  updateChunks(me.x, me.z);
+  updateChunks(me.x, me.z);
+  updateChunks(me.x, me.z);
+
   loop();
 }
