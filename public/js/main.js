@@ -140,9 +140,43 @@ function boot(socket, { id, seed }) {
 
   // ---------- 네트워크 ----------
   const remotes = new Map();
-  socket.on('state', (list) => {
-    const seen = new Set();
-    for (const [pid, nick, x, y, z, ry] of list) {
+ socket.on('state', (list) => {
+  if (!Array.isArray(list)) {
+    console.error('state 데이터가 배열이 아닙니다:', list);
+    return;
+  }
+
+  const seen = new Set();
+
+  for (const p of list) {
+    const { id: pid, nick, x, y, z, ry } = p;
+
+    if (pid === id) continue;
+    seen.add(pid);
+
+    let r = remotes.get(pid);
+
+    if (!r) {
+      r = {
+        g: makeAvatar(nick, 0xffa040),
+        t: { x, y, z, ry }
+      };
+
+      r.g.position.set(x, y, z);
+      scene.add(r.g);
+      remotes.set(pid, r);
+    }
+
+    r.t = { x, y, z, ry };
+  }
+
+  for (const [pid, r] of remotes) {
+    if (!seen.has(pid)) {
+      scene.remove(r.g);
+      remotes.delete(pid);
+    }
+  }
+});
       if (pid === id) continue;
       seen.add(pid);
       let r = remotes.get(pid);
