@@ -10,6 +10,7 @@ app.use(express.static('public'));
 const SEED = Number(process.env.WORLD_SEED) || 12345;
 const MAX_PLAYERS = 10;
 const MAX_SPEED = 20; // units/sec (달리기 14 + 여유)
+const WORLD_LIMIT = 4650;
 const players = new Map();
 
 io.on('connection', (socket) => {
@@ -34,6 +35,17 @@ io.on('connection', (socket) => {
       if (d > MAX_SPEED * dt + 1) { // 서버 검증: 너무 빠르면 되돌림
         socket.emit('correct', { x: p.x, y: p.y, z: p.z });
         return;
+          if (
+    Math.abs(m.x) > WORLD_LIMIT ||
+    Math.abs(m.z) > WORLD_LIMIT
+  ) {
+    socket.emit('correct', {
+      x: p.x,
+      y: p.y,
+      z: p.z
+    });
+    return;
+  }
       }
     }
     Object.assign(p, { x: m.x, y: m.y, z: m.z, ry: m.ry, t: now, spawned: true });
