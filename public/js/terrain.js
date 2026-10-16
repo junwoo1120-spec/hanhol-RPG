@@ -39,6 +39,24 @@ export function makeTerrain(seed) {
     const mk = smooth(0.15, 0.55, c);                               // 산맥 마스크
     const ridge = Math.max(0, 1 - Math.abs((fbm(x * 0.003 + 50, z * 0.003 + 50, 4) - 0.5) * 3.5));
     h += mk * ridge * ridge * 110;                                  // 능선형 산
+    
+    // 맵 경계를 둘러싸는 거대한 산맥
+    const WORLD_HALF = 5000;
+    const BORDER_WIDTH = 700;
+
+    const edgeDist = Math.min(
+      WORLD_HALF - Math.abs(x),
+      WORLD_HALF - Math.abs(z)
+    );
+
+    // 경계에 가까울수록 산맥이 높아짐
+    const edge = 1 - smooth(0, BORDER_WIDTH, edgeDist);
+    const mountainNoise = fbm(x * 0.006, z * 0.006, 4);
+
+    h += edge * (100 + mountainNoise * 150);
+
+    return h;
+
     return h;
   }
 
