@@ -1,6 +1,6 @@
 
-import * as THREE from 'three';
-import { makeTerrain, WATER_LEVEL } from './terrain.js';
+import { makeTerrain, WATER_LEVEL, PLAY_RADIUS } from './terrain.js';
+import { buildVillage } from './village.js';
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
