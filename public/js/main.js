@@ -9,7 +9,7 @@ const VIEW = 5, UNLOAD = VIEW + 2;
 const WORLD_LIMIT = 4650;
 
 
-$('join').onclick = () => {
+document.getElementById('join').onclick = () => {
   $('join').disabled = true;
   const socket = io();
   socket.on('full', () => { $('msg').textContent = '서버가 가득 찼어요 (최대 10명)'; });
