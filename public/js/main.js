@@ -262,7 +262,7 @@ function boot(socket, { id, seed }) {
 
         let c = T.color(wx, wz, h);
 
-        const rock = 1 - Math.min(1, Math.max(0, (ny - 0.65) / 0.2));
+        const rock = 1 - Math.min(1, Math.max(0, (ny - 0.40) / 0.2));
 
         c = [
           c[0] + (0.45 - c[0]) * rock,
