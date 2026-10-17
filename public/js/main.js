@@ -10,12 +10,85 @@ const N = 32;            // 청크 분할 수
 const VIEW = 5;          // 로딩 반경(청크 단위)
 const UNLOAD = VIEW + 2;
 
-const SPEED_SCALE = 1.5; // 전체 이동속도 배율
-const FAST_MIN = 10;     // 속도 배율 최소
-const FAST_MAX = 100;    // 속도 배율 최대 (서버 한도도 100)
-const RES_HIGH = N;      // 평소 청크 해상도
-const RES_LOW = 8;       // 빠르게 이동할 때 청크 해상도
+const SPEED_SCALE = 1.5;  // 전체 이동속도 배율
+const RUN_MULT = 2;       // 달리기 배율
+const RUN_TOGGLE = true;  // true: Ctrl을 한 번 누르면 켜짐/꺼짐, false: 누르고 있는 동안만 달리기
+const GRAVITY = 26;       // 중력
+const JUMP_V = 10.5;      // 점프 힘
+
+const FAST_MIN = 10;      // 속도 배율 최소
+const FAST_MAX = 100;     // 속도 배율 최대 (서버 한도도 100)
+const RES_HIGH = N;       // 평소 청크 해상도
+const RES_LOW = 8;        // 빠르게 이동할 때 청크 해상도
 const PITCH_LIMIT = 1.45; // 위아래 회전 한계 (거의 수직까지)
+
+// ============ RPG 스타일 UI ============
+const GAME_CSS = `
+#login{background:radial-gradient(ellipse at 50% 25%,#2d2350 0%,#140e26 60%,#0a0716 100%)}
+#login h2{margin:0 0 6px;font:700 44px Georgia,'Noto Serif KR',serif;letter-spacing:8px;color:#f6e3a1;text-shadow:0 0 18px #c9922a,0 2px 0 #5b3d0a}
+#login input{width:230px;text-align:center;color:#f6e3a1;background:#0e0a1c;border:2px solid #b8913f;border-radius:10px;outline:none}
+#login input::placeholder{color:#8d7a4d}
+#login #msg{min-height:20px;color:#ffb4a8;font-size:14px}
+#modeBox{display:flex;flex-direction:column;align-items:center;gap:14px}
+.mode-title{color:#f6e3a1;font:600 18px sans-serif}
+.mode-row{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+.mode-note{color:#9b92b8;font:12px sans-serif}
+.rpg-btn{cursor:pointer;color:#f6e3a1;font:600 16px/1.2 Georgia,'Noto Serif KR',serif;padding:14px 20px;min-width:190px;border-radius:12px;border:2px solid #d9b25c;background:linear-gradient(#3a2d5c,#1b1432);box-shadow:0 0 0 2px #0b0816,inset 0 0 12px rgba(217,178,92,.25),0 6px 18px rgba(0,0,0,.5)}
+.rpg-btn small{display:block;margin-top:6px;font:400 12px sans-serif;color:#cdbf95}
+.rpg-btn:hover{filter:brightness(1.25)}
+body.touch,body.touch *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+
+.rpg-status{position:fixed;top:8px;left:8px;z-index:5;width:200px;display:flex;gap:8px;align-items:center;padding:6px 10px 6px 6px;border-radius:40px 12px 12px 40px;background:linear-gradient(90deg,rgba(20,14,38,.88),rgba(20,14,38,.55));border:1px solid rgba(217,178,92,.75);box-shadow:0 2px 10px rgba(0,0,0,.45);color:#f6e3a1;font:600 12px sans-serif;pointer-events:none}
+.rpg-lv{width:42px;height:42px;border-radius:50%;flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(circle at 35% 30%,#6b57a8,#271c47);border:2px solid #d9b25c;font:700 16px Georgia,serif;line-height:1}
+.rpg-lv small{font:600 8px sans-serif;opacity:.8}
+.rpg-bars{flex:1;min-width:0}
+.rpg-name{margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{position:relative;height:13px;border-radius:7px;background:#0b0816;border:1px solid #000;overflow:hidden;margin-top:3px}
+.bar i{position:absolute;inset:0;display:block}
+.bar.hp i{background:linear-gradient(#ff6b6b,#b3202a)}
+.bar.mp i{background:linear-gradient(#6bb8ff,#1f4fa8)}
+.bar span{position:relative;display:block;text-align:center;font:600 9px/13px sans-serif;color:#fff;text-shadow:0 0 3px #000}
+
+.speedpanel{position:fixed;top:8px;right:8px;z-index:5;width:190px;padding:8px;display:flex;flex-direction:column;gap:6px;border-radius:12px;background:rgba(20,14,38,.75);border:1px solid rgba(217,178,92,.75);color:#f6e3a1;font:600 13px sans-serif}
+.speedpanel button{padding:7px 10px;font:700 14px sans-serif;border:1px solid #d9b25c;border-radius:8px;color:#fff;cursor:pointer}
+.speedpanel .hint{font:400 11px sans-serif;opacity:.8}
+body.touch .rpg-status{width:176px}
+body.touch .speedpanel{width:150px}
+body.touch .speedpanel .hint{display:none}
+
+.hotbar{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);display:flex;gap:6px;z-index:5;pointer-events:none}
+.slot{width:48px;height:48px;border-radius:10px;position:relative;background:linear-gradient(#2a2145,#150f29);border:2px solid #b8913f;box-shadow:inset 0 0 8px rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;font-size:22px;transition:transform .12s,filter .12s}
+.slot b{position:absolute;top:1px;left:4px;font:700 10px sans-serif;color:#f6e3a1}
+.slot.flash{filter:brightness(1.8);transform:scale(1.1)}
+.chips{position:fixed;bottom:70px;left:50%;transform:translateX(-50%);display:flex;gap:6px;z-index:5;pointer-events:none}
+.chip{padding:3px 10px;border-radius:12px;font:600 12px sans-serif;background:rgba(20,14,38,.75);color:#8d8aa0;border:1px solid #4a3f72}
+.chip.on{color:#201500;background:linear-gradient(#f6e3a1,#d9b25c);border-color:#fff3c4}
+.hintbar{position:fixed;bottom:100px;left:50%;transform:translateX(-50%);z-index:5;pointer-events:none;color:#e9ddb4;font:12px sans-serif;text-shadow:0 0 3px #000;white-space:nowrap;opacity:.85}
+
+.joy-base{position:fixed;left:26px;bottom:28px;width:130px;height:130px;border-radius:50%;z-index:6;touch-action:none;background:radial-gradient(circle,rgba(20,14,38,.35) 55%,rgba(20,14,38,.65));border:3px solid rgba(217,178,92,.85);box-shadow:0 0 0 3px rgba(0,0,0,.35),inset 0 0 18px rgba(217,178,92,.25)}
+.joy-base::before{content:'';position:absolute;inset:18px;border-radius:50%;border:1px dashed rgba(217,178,92,.45)}
+.joy-knob{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#f6e3a1,#b8913f 70%);border:2px solid #fff3c4;box-shadow:0 3px 10px rgba(0,0,0,.6);pointer-events:none}
+.tbtn{position:fixed;z-index:6;touch-action:none;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#f6e3a1;font:700 11px sans-serif;background:radial-gradient(circle at 35% 30%,#4b3a7c,#1d1535);border:3px solid #d9b25c;box-shadow:0 0 0 3px rgba(0,0,0,.35),0 4px 14px rgba(0,0,0,.55),inset 0 0 12px rgba(217,178,92,.25)}
+.tbtn span{font-size:22px;line-height:1}
+.tbtn.press{transform:scale(.92);filter:brightness(1.5)}
+.tbtn.on{background:radial-gradient(circle at 35% 30%,#f6e3a1,#b8913f);color:#2a1a00}
+.tbtn.jump{right:28px;bottom:28px;width:92px;height:92px}
+.tbtn.jump span{font-size:30px}
+.tbtn.atk{right:36px;bottom:132px;width:64px;height:64px}
+.tbtn.skill{right:112px;bottom:112px;width:56px;height:56px}
+.tbtn.run{right:132px;bottom:34px;width:58px;height:58px}
+.tbtn.lock{right:38px;bottom:206px;width:52px;height:52px}
+
+.toast{position:fixed;left:50%;top:70px;transform:translateX(-50%);padding:6px 14px;border-radius:14px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font:600 13px sans-serif;z-index:9;pointer-events:none;opacity:0;transition:opacity .25s}
+.toast.show{opacity:1}
+.cross{position:fixed;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;border:2px solid rgba(255,255,255,.9);box-shadow:0 0 4px #000;z-index:5;pointer-events:none;display:none}
+`;
+
+(function injectStyles() {
+  const st = document.createElement('style');
+  st.textContent = GAME_CSS;
+  document.head.appendChild(st);
+})();
 
 // 플레이어 라벨
 function makeLabel(text) {
@@ -113,52 +186,108 @@ function parsePlayer(p) {
   return null;
 }
 
-// 입장
+// ============ 시작 화면: 닉네임 -> 조작 방식 선택 -> 접속 ============
+$('join').classList.add('rpg-btn');
+$('nick').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('join').click();
+});
+
+function resetLogin(message) {
+  $('login').style.display = 'flex';
+  $('nick').style.display = '';
+  $('join').style.display = '';
+  $('join').disabled = false;
+  const box = $('modeBox');
+  if (box) box.remove();
+  $('msg').textContent = message || '';
+}
+
+function showModeSelect(nick) {
+  $('nick').style.display = 'none';
+  $('join').style.display = 'none';
+  $('msg').textContent = '';
+
+  const box = document.createElement('div');
+  box.id = 'modeBox';
+
+  const title = document.createElement('div');
+  title.className = 'mode-title';
+  title.textContent = nick + '님, 조작 방식을 골라주세요';
+
+  const row = document.createElement('div');
+  row.className = 'mode-row';
+
+  const makeChoice = (icon, name, sub, mode) => {
+    const b = document.createElement('button');
+    b.className = 'rpg-btn';
+    const t = document.createElement('div');
+    t.textContent = icon + ' ' + name;
+    const s = document.createElement('small');
+    s.textContent = sub;
+    b.append(t, s);
+    b.addEventListener('click', () => {
+      box.style.display = 'none';
+      connect(nick, mode);
+    });
+    return b;
+  };
+
+  row.append(
+    makeChoice('⌨️', '키보드', 'WASD · 마우스 / 방향키', 'keyboard'),
+    makeChoice('📱', '터치스크린', '조이스틱 · 버튼', 'touch')
+  );
+
+  const note = document.createElement('div');
+  note.className = 'mode-note';
+  note.textContent = '터치스크린은 가로 화면을 추천해요';
+
+  box.append(title, row, note);
+  $('login').appendChild(box);
+}
+
 $('join').onclick = () => {
-  $('join').disabled = true;
+  showModeSelect($('nick').value.trim() || '플레이어');
+};
+
+function connect(nick, mode) {
   $('msg').textContent = '서버에 연결 중...';
 
   const socket = io();
 
   socket.on('connect', () => {
-    socket.emit('join', {
-      nick: $('nick').value.trim() || '플레이어'
-    });
+    socket.emit('join', { nick });
   });
 
   socket.on('connect_error', (err) => {
     console.error('서버 연결 오류:', err);
-    $('msg').textContent = '서버 연결에 실패했습니다.';
-    $('join').disabled = false;
+    resetLogin('서버 연결에 실패했습니다.');
   });
 
   socket.on('full', () => {
-    $('msg').textContent = '서버가 가득 찼어요 (최대 10명)';
-    $('join').disabled = false;
+    resetLogin('서버가 가득 찼어요 (최대 10명)');
   });
 
   socket.on('init', (data) => {
     if (!data || !data.id) {
       console.error('잘못된 init 데이터:', data);
-      $('msg').textContent = '캐릭터 초기화에 실패했습니다.';
-      $('join').disabled = false;
+      resetLogin('캐릭터 초기화에 실패했습니다.');
       return;
     }
 
     $('msg').textContent = '';
 
     try {
-      boot(socket, data);
+      boot(socket, data, nick, mode);
     } catch (err) {
       console.error('게임 시작 오류:', err);
-      $('login').style.display = 'flex';
-      $('msg').textContent = '게임 시작 오류: ' + err.message;
-      $('join').disabled = false;
+      resetLogin('게임 시작 오류: ' + err.message);
     }
   });
-};
+}
 
-function boot(socket, { id, seed }) {
+function boot(socket, { id, seed }, nick, mode) {
+  const touchMode = mode === 'touch';
+  document.body.classList.add(touchMode ? 'touch' : 'kbd');
   $('login').style.display = 'none';
 
   const T = makeTerrain(seed);
@@ -166,12 +295,13 @@ function boot(socket, { id, seed }) {
   // 렌더러
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, touchMode ? 1.5 : 2));
   document.body.appendChild(renderer.domElement);
 
   renderer.domElement.style.position = 'fixed';
   renderer.domElement.style.inset = '0';
   renderer.domElement.style.zIndex = '0';
+  renderer.domElement.style.touchAction = 'none';
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xa8c8e8);
@@ -494,21 +624,77 @@ function boot(socket, { id, seed }) {
     ry: 0
   };
 
+  // 점프/중력 상태
+  let vy = 0;
+  let grounded = true;
+  let jumpBuffer = 0;
+  let jumpHeld = false;
+
+  // 조작 상태
+  let shiftLock = false;   // 시프트락 (로블록스식)
+  let runOn = false;       // 달리기 켜짐
+  let idleTime = 0;
+  let slk = 0;             // 시프트락 카메라 이동 보간값
+
   const myAvatar = makeAvatar('', 0xffffff);
   myAvatar.children[1].visible = false;
   scene.add(myAvatar);
 
+  // ---------- 공통 UI: 상태창, 안내 문구, 조준점 ----------
+  const status = document.createElement('div');
+  status.className = 'rpg-status';
+  status.innerHTML =
+    '<div class="rpg-lv"><small>Lv</small>1</div>' +
+    '<div class="rpg-bars"><div class="rpg-name"></div>' +
+    '<div class="bar hp"><i></i><span>HP 120 / 120</span></div>' +
+    '<div class="bar mp"><i></i><span>MP 60 / 60</span></div></div>';
+  status.querySelector('.rpg-name').textContent = nick;
+  document.body.appendChild(status);
+
+  const toastEl = document.createElement('div');
+  toastEl.className = 'toast';
+  document.body.appendChild(toastEl);
+
+  let toastTimer = 0;
+  function toast(text) {
+    toastEl.textContent = text;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+  }
+
+  const cross = document.createElement('div');
+  cross.className = 'cross';
+  document.body.appendChild(cross);
+
+  let runBtn = null, lockBtn = null, runChip = null, lockChip = null;
+
+  function updateModeUI() {
+    if (runBtn) runBtn.classList.toggle('on', runOn);
+    if (lockBtn) lockBtn.classList.toggle('on', shiftLock);
+    if (runChip) runChip.classList.toggle('on', runOn);
+    if (lockChip) lockChip.classList.toggle('on', shiftLock);
+    cross.style.display = shiftLock ? 'block' : 'none';
+  }
+
+  function setRun(v) {
+    runOn = v;
+    updateModeUI();
+  }
+
+  function toggleShiftLock() {
+    shiftLock = !shiftLock;
+    if (shiftLock && !touchMode) {
+      try { renderer.domElement.requestPointerLock(); } catch (e) { /* 무시 */ }
+    }
+    updateModeUI();
+  }
+
   // ---------- 속도 배율 패널 (오른쪽 위) ----------
   const panel = document.createElement('div');
-  panel.style.cssText =
-    'position:fixed;top:8px;right:8px;z-index:5;width:190px;padding:8px;' +
-    'display:flex;flex-direction:column;gap:6px;border-radius:10px;' +
-    'background:rgba(0,0,0,.45);color:#fff;font:bold 13px sans-serif';
+  panel.className = 'speedpanel';
 
   const fastBtn = document.createElement('button');
-  fastBtn.style.cssText =
-    'padding:8px 10px;font-size:14px;font-weight:bold;border:0;' +
-    'border-radius:8px;color:#fff;cursor:pointer';
 
   const slider = document.createElement('input');
   slider.type = 'range';
@@ -518,7 +704,7 @@ function boot(socket, { id, seed }) {
   slider.value = String(fastMult);
 
   const hint = document.createElement('div');
-  hint.style.cssText = 'font-size:11px;font-weight:normal;opacity:.8';
+  hint.className = 'hint';
   hint.textContent = 'F: 켜기/끄기   [ ]: 배율 조절';
 
   panel.append(fastBtn, slider, hint);
@@ -527,7 +713,7 @@ function boot(socket, { id, seed }) {
   function refreshPanel() {
     fastBtn.textContent =
       `⚡ 속도 ×${fastMult} ${fast ? 'ON' : 'OFF'}`;
-    fastBtn.style.background = fast ? '#d33' : '#444';
+    fastBtn.style.background = fast ? '#d33' : '#3a2d5c';
     slider.value = String(fastMult);
   }
 
@@ -553,14 +739,14 @@ function boot(socket, { id, seed }) {
   const compass = document.createElement('div');
   compass.style.cssText =
     'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:5;' +
-    'width:min(760px,60vw);height:54px;overflow:hidden;border-radius:10px;' +
-    'background:rgba(0,0,0,.45);color:#fff;pointer-events:none;' +
-    'font-family:sans-serif;text-shadow:0 0 3px #000';
+    'width:min(' + (touchMode ? '420px,40vw' : '760px,56vw') + ');height:54px;overflow:hidden;border-radius:12px;' +
+    'background:rgba(20,14,38,.72);border:1px solid rgba(217,178,92,.75);' +
+    'color:#fff;pointer-events:none;font-family:sans-serif;text-shadow:0 0 3px #000';
 
   const tick = document.createElement('div');
   tick.style.cssText =
     'position:absolute;left:50%;top:0;width:2px;height:100%;' +
-    'background:rgba(255,255,255,.35);transform:translateX(-50%)';
+    'background:rgba(246,227,161,.45);transform:translateX(-50%)';
   compass.appendChild(tick);
 
   const compassItems = [];
@@ -626,37 +812,83 @@ function boot(socket, { id, seed }) {
     }
   }
 
-  // ---------- 키보드 및 마우스 ----------
+  // ---------- 키보드 / 마우스 ----------
   const keys = {};
   const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+  const GAME_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'Space'];
+  const slots = [];
 
   window.addEventListener('keydown', (e) => {
-    if (ARROWS.includes(e.code)) e.preventDefault();
+    if (touchMode) return;
+
+    if (ARROWS.includes(e.code) || e.code === 'Space') e.preventDefault();
+    if (e.ctrlKey && GAME_KEYS.includes(e.code)) e.preventDefault();
+
     keys[e.code] = true;
 
     if (e.repeat) return;
+
+    if (e.code === 'Space') jumpBuffer = 0.15;
     if (e.code === 'KeyF') setFast(!fast);
     if (e.code === 'BracketLeft') setMult(fastMult - 10);
     if (e.code === 'BracketRight') setMult(fastMult + 10);
+
+    if ((e.code === 'ControlLeft' || e.code === 'ControlRight') && RUN_TOGGLE) {
+      setRun(!runOn);
+    }
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+      toggleShiftLock();
+    }
+
+    const m = /^Digit([1-5])$/.exec(e.code);
+    if (m) {
+      const slot = slots[Number(m[1]) - 1];
+      if (slot) {
+        slot.classList.add('flash');
+        setTimeout(() => slot.classList.remove('flash'), 150);
+      }
+      toast('스킬은 아직 준비 중이에요');
+    }
   });
 
   window.addEventListener('keyup', (e) => {
     keys[e.code] = false;
   });
 
-  renderer.domElement.addEventListener('click', () => {
-    renderer.domElement.requestPointerLock();
+  window.addEventListener('blur', () => {
+    for (const k in keys) keys[k] = false;
+    jumpHeld = false;
   });
 
-  window.addEventListener('mousemove', (e) => {
-    if (document.pointerLockElement !== renderer.domElement) return;
+  if (!touchMode) {
+    renderer.domElement.addEventListener('click', () => {
+      renderer.domElement.requestPointerLock();
+    });
 
-    me.yaw -= e.movementX * 0.003;
-    me.pitch = Math.min(
-      PITCH_LIMIT,
-      Math.max(-PITCH_LIMIT, me.pitch + e.movementY * 0.003)
-    );
-  });
+    window.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement !== renderer.domElement) return;
+
+      me.yaw -= e.movementX * 0.003;
+      me.pitch = Math.min(
+        PITCH_LIMIT,
+        Math.max(-PITCH_LIMIT, me.pitch + e.movementY * 0.003)
+      );
+    });
+
+    // Esc로 마우스 잠금이 풀리면 시프트락도 해제
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement !== renderer.domElement && shiftLock) {
+        shiftLock = false;
+        updateModeUI();
+      }
+    });
+
+    document.addEventListener('pointerlockerror', () => {
+      shiftLock = false;
+      updateModeUI();
+      toast('화면을 한 번 클릭한 뒤 Shift를 눌러 주세요');
+    });
+  }
 
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -664,7 +896,155 @@ function boot(socket, { id, seed }) {
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // 다른 플레이어
+  // ---------- 키보드 모드 전용 UI: 단축바, 상태 표시, 안내 ----------
+  if (!touchMode) {
+    const hintbar = document.createElement('div');
+    hintbar.className = 'hintbar';
+    hintbar.textContent =
+      'WASD 이동 · Space 점프 · Ctrl 달리기 · Shift 시점고정 · 방향키/마우스 시점';
+    document.body.appendChild(hintbar);
+
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    runChip = document.createElement('div');
+    runChip.className = 'chip';
+    runChip.textContent = '🏃 달리기';
+    lockChip = document.createElement('div');
+    lockChip.className = 'chip';
+    lockChip.textContent = '🔒 시점고정';
+    chips.append(runChip, lockChip);
+    document.body.appendChild(chips);
+
+    const hotbar = document.createElement('div');
+    hotbar.className = 'hotbar';
+    ['⚔️', '🛡️', '✨', '🧪', '🍖'].forEach((icon, i) => {
+      const s = document.createElement('div');
+      s.className = 'slot';
+      const num = document.createElement('b');
+      num.textContent = String(i + 1);
+      s.append(num, document.createTextNode(icon));
+      hotbar.appendChild(s);
+      slots.push(s);
+    });
+    document.body.appendChild(hotbar);
+
+    toast('화면을 클릭하면 마우스로 시점을 돌릴 수 있어요 (방향키도 가능)');
+  }
+
+  // ---------- 터치 모드 전용 UI: 조이스틱, 버튼, 화면 드래그 ----------
+  const joy = { x: 0, y: 0 };
+
+  if (touchMode) {
+    // 조이스틱
+    const base = document.createElement('div');
+    base.className = 'joy-base';
+    const knob = document.createElement('div');
+    knob.className = 'joy-knob';
+    base.appendChild(knob);
+    document.body.appendChild(base);
+
+    const JOY_R = 44;
+    let joyId = null;
+
+    const joyMove = (e) => {
+      const rect = base.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      let dx = e.clientX - cx;
+      let dy = e.clientY - cy;
+      const d = Math.hypot(dx, dy);
+      const k = d > JOY_R ? JOY_R / d : 1;
+      dx *= k;
+      dy *= k;
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      joy.x = dx / JOY_R;
+      joy.y = -dy / JOY_R;
+    };
+
+    const joyEnd = (e) => {
+      if (e.pointerId !== joyId) return;
+      joyId = null;
+      joy.x = 0;
+      joy.y = 0;
+      knob.style.transform = 'translate(0, 0)';
+    };
+
+    base.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      joyId = e.pointerId;
+      base.setPointerCapture(e.pointerId);
+      joyMove(e);
+    });
+    base.addEventListener('pointermove', (e) => {
+      if (e.pointerId === joyId) joyMove(e);
+    });
+    base.addEventListener('pointerup', joyEnd);
+    base.addEventListener('pointercancel', joyEnd);
+
+    // 버튼
+    const makeBtn = (cls, icon, label, onDown, onUp) => {
+      const b = document.createElement('div');
+      b.className = 'tbtn ' + cls;
+      b.innerHTML = '<span>' + icon + '</span>' + (label || '');
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        b.classList.add('press');
+        if (onDown) onDown();
+      });
+      const up = () => {
+        b.classList.remove('press');
+        if (onUp) onUp();
+      };
+      b.addEventListener('pointerup', up);
+      b.addEventListener('pointercancel', up);
+      b.addEventListener('pointerleave', up);
+      document.body.appendChild(b);
+      return b;
+    };
+
+    makeBtn('jump', '⤒', '점프',
+      () => { jumpHeld = true; jumpBuffer = 0.15; },
+      () => { jumpHeld = false; });
+    makeBtn('atk', '⚔️', '공격', () => toast('공격은 아직 준비 중이에요'));
+    makeBtn('skill', '✨', '스킬', () => toast('스킬은 아직 준비 중이에요'));
+    runBtn = makeBtn('run', '🏃', '달리기', () => setRun(!runOn));
+    lockBtn = makeBtn('lock', '🔒', '', () => toggleShiftLock());
+
+    // 화면 드래그로 시점 회전 (조이스틱/버튼이 아닌 곳)
+    let lookId = null;
+    let lx = 0;
+    let ly = 0;
+    const canvas = renderer.domElement;
+
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' || lookId !== null) return;
+      lookId = e.pointerId;
+      lx = e.clientX;
+      ly = e.clientY;
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== lookId) return;
+      me.yaw -= (e.clientX - lx) * 0.005;
+      me.pitch = Math.min(
+        PITCH_LIMIT,
+        Math.max(-PITCH_LIMIT, me.pitch + (e.clientY - ly) * 0.005)
+      );
+      lx = e.clientX;
+      ly = e.clientY;
+    });
+    const lookEnd = (e) => {
+      if (e.pointerId === lookId) lookId = null;
+    };
+    canvas.addEventListener('pointerup', lookEnd);
+    canvas.addEventListener('pointercancel', lookEnd);
+
+    toast('왼쪽 조이스틱으로 이동, 화면을 드래그하면 시점이 돌아가요');
+  }
+
+  updateModeUI();
+
+  // ---------- 다른 플레이어 ----------
   const remotes = new Map();
 
   socket.on('state', (data) => {
@@ -724,7 +1104,7 @@ function boot(socket, { id, seed }) {
     if (Number.isFinite(p.z)) me.z = p.z;
   });
 
-  // 게임 루프
+  // ---------- 게임 루프 ----------
   let sendTimer = 0;
   let compassTimer = 0;
   const clock = new THREE.Clock();
@@ -741,42 +1121,43 @@ function boot(socket, { id, seed }) {
     if (keys.ArrowDown) me.pitch += 1.5 * dt;
     me.pitch = Math.min(PITCH_LIMIT, Math.max(-PITCH_LIMIT, me.pitch));
 
+    // 이동 입력 (앞뒤 inF, 좌우 inR)
+    let inF = 0;
+    let inR = 0;
+
+    if (touchMode) {
+      if (Math.hypot(joy.x, joy.y) > 0.12) {
+        inF = joy.y;
+        inR = joy.x;
+      }
+    } else {
+      inF = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+      inR = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+    }
+
+    const mag = Math.min(1, Math.hypot(inF, inR));
+
     const fx = -Math.sin(me.yaw);
     const fz = -Math.cos(me.yaw);
     const rx = Math.cos(me.yaw);
     const rz = -Math.sin(me.yaw);
 
-    let mx = 0;
-    let mz = 0;
-
-    if (keys.KeyW) {
-      mx += fx;
-      mz += fz;
-    }
-
-    if (keys.KeyS) {
-      mx -= fx;
-      mz -= fz;
-    }
-
-    if (keys.KeyD) {
-      mx += rx;
-      mz += rz;
-    }
-
-    if (keys.KeyA) {
-      mx -= rx;
-      mz -= rz;
-    }
-
+    const mx = fx * inF + rx * inR;
+    const mz = fz * inF + rz * inR;
     const len = Math.hypot(mx, mz);
 
-    if (len > 0) {
-      const speed =
-        (keys.ShiftLeft ? 14 : 7) * SPEED_SCALE * (fast ? fastMult : 1);
+    let moved = 0;
 
-      let px = me.x + (mx / len) * speed * dt;
-      let pz = me.z + (mz / len) * speed * dt;
+    if (len > 0.01) {
+      const running = RUN_TOGGLE ? runOn : (keys.ControlLeft || keys.ControlRight);
+      const speed =
+        7 * SPEED_SCALE * (running ? RUN_MULT : 1) * (fast ? fastMult : 1) * mag;
+
+      const dirX = mx / len;
+      const dirZ = mz / len;
+
+      let px = me.x + dirX * speed * dt;
+      let pz = me.z + dirZ * speed * dt;
 
       // 원형 활동 범위 제한
       const pr = Math.hypot(px, pz);
@@ -785,24 +1166,65 @@ function boot(socket, { id, seed }) {
         pz *= PLAY_RADIUS / pr;
       }
 
+      moved = Math.hypot(px - me.x, pz - me.z);
       me.x = px;
       me.z = pz;
-      me.ry = Math.atan2(mx, mz);
+
+      // 시프트락이 꺼져 있으면 가는 방향으로 몸을 돌림
+      if (!shiftLock) me.ry = Math.atan2(dirX, dirZ);
+      idleTime = 0;
+    } else {
+      idleTime += dt;
+      if (RUN_TOGGLE && runOn && idleTime > 0.4) setRun(false); // 멈추면 달리기 해제
     }
 
-    me.y = Math.max(T.height(me.x, me.z), WATER_LEVEL - 0.8);
+    // 시프트락: 항상 카메라가 보는 방향을 바라봄 (이동은 수평 이동)
+    if (shiftLock) me.ry = Math.atan2(fx, fz);
+
+    // 점프 / 중력
+    if (keys.Space || jumpHeld) jumpBuffer = Math.max(jumpBuffer, 0.1);
+    jumpBuffer = Math.max(0, jumpBuffer - dt);
+
+    const ground = Math.max(T.height(me.x, me.z), WATER_LEVEL - 0.8);
+    const stepTol = 0.6 + moved * 2.0;
+
+    if (grounded) {
+      if (me.y - ground > stepTol) grounded = false; // 절벽 끝에서 떨어짐
+      else me.y = ground;
+    }
+
+    if (grounded && jumpBuffer > 0) {
+      vy = JUMP_V;
+      grounded = false;
+      jumpBuffer = 0;
+    }
+
+    if (!grounded) {
+      vy -= GRAVITY * dt;
+      me.y += vy * dt;
+
+      if (me.y <= ground) {
+        me.y = ground;
+        if (vy < 0) {
+          vy = 0;
+          grounded = true;
+        }
+      }
+    }
 
     myAvatar.position.set(me.x, me.y, me.z);
     myAvatar.rotation.y = me.ry;
 
-    // 3인칭 카메라 (360도 궤도 회전)
-    const dist = 9;
+    // 3인칭 카메라 (360도 궤도 회전, 시프트락이면 어깨 너머 시점)
+    slk += ((shiftLock ? 1 : 0) - slk) * (1 - Math.exp(-10 * dt));
+    const side = 1.3 * slk;
+    const dist = 9 - 1.5 * slk;
 
-    const cx =
-      me.x + Math.sin(me.yaw) * Math.cos(me.pitch) * dist;
+    const tx = me.x + rx * side;
+    const tz = me.z + rz * side;
 
-    const cz =
-      me.z + Math.cos(me.yaw) * Math.cos(me.pitch) * dist;
+    const cx = tx + Math.sin(me.yaw) * Math.cos(me.pitch) * dist;
+    const cz = tz + Math.cos(me.yaw) * Math.cos(me.pitch) * dist;
 
     const cy = Math.max(
       me.y + Math.sin(me.pitch) * dist + 1.5,
@@ -810,7 +1232,7 @@ function boot(socket, { id, seed }) {
     );
 
     camera.position.set(cx, cy, cz);
-    camera.lookAt(me.x, me.y + 1.5, me.z);
+    camera.lookAt(tx, me.y + 1.5, tz);
 
     // 물과 지형
     water.position.x = me.x;
@@ -851,8 +1273,7 @@ function boot(socket, { id, seed }) {
 
     $('hud').textContent =
       `X ${me.x.toFixed(0)}  Z ${me.z.toFixed(0)}\n` +
-      `청크 ${chunks.size}  접속 ${remotes.size + 1}명\n` +
-      '클릭=마우스 잠금, WASD, Shift=달리기, 방향키=화면 회전';
+      `청크 ${chunks.size}  접속 ${remotes.size + 1}명`;
 
     renderer.render(scene, camera);
   }
