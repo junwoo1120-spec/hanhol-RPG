@@ -419,8 +419,9 @@ function boot(socket, { id, seed }) {
         pos.set([(x * S) / res, h, (z * S) / res], i * 3);
         nor.set([nx, ny, nz], i * 3);
                 col.set(c, i * 3);
-        det.set(T.detail(wx, wz, h), i * 3);
-        det.set(T.detail(wx, wz, h), i * 3);
+        const d = T.detail(wx, wz, h);
+        det.set([d[0], d[1], d[2]], i * 3);
+        det2.set([d[3], d[4]], i * 2);
       }
     }
 
