@@ -2,13 +2,14 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Open World</title>
 <style>
-  html, body { margin: 0; overflow: hidden; background: #a8c8e8; font-family: sans-serif; }
-  #login { position: fixed; inset: 0; display: flex; flex-direction: column; gap: 10px;
-           align-items: center; justify-content: center; background: #1b2a3a; color: #fff; z-index: 10; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #120d22; font-family: sans-serif; touch-action: none; }
+  #login { position: fixed; inset: 0; display: flex; flex-direction: column; gap: 12px;
+           align-items: center; justify-content: center; color: #fff; z-index: 10; }
   #login input, #login button { font-size: 18px; padding: 8px 14px; }
-  #hud { position: fixed; top: 8px; left: 8px; color: #fff; font-size: 13px;
+  #hud { position: fixed; top: 78px; left: 10px; color: #fff; font-size: 12px;
          text-shadow: 0 0 3px #000; white-space: pre; pointer-events: none; }
 </style>
 <script type="importmap">
