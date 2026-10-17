@@ -188,10 +188,11 @@ export function makeTerrain(seed) {
         if (m > 0) c = mix(c, LAVA, m);
       }
     }
-    
- // 마을 터는 흙바닥
+
+    // 마을 터는 흙바닥
     const vdist = Math.hypot(x - VILLAGE.x, z - VILLAGE.z);
     c = mix(c, DIRT, 1 - smooth(VILLAGE.r * 0.9, VILLAGE.r + VILLAGE.blend * 0.6, vdist));
+
     // 외곽 산맥: 바위색 + 꼭대기 눈
     const ring = smooth(1050, 1200, Math.hypot(x, z));
     if (ring > 0) {
@@ -201,18 +202,22 @@ export function makeTerrain(seed) {
     return c;
   }
 
-  // 잔디/흙 디테일 가중치: [잔디, 흙, 잔디 색 변화]
+  // 잔디/흙 디테일 가중치: [평원 잔디, 평원 흙 얼룩, 잔디 색 변화, 마을 흙, 정글 잔디]
   function detail(x, z, h) {
     const w = weights(x * K, z * K);
-  const land = smooth(2, 5, h);
+    const land = smooth(2, 5, h);                          // 해안·물속 제외
     const plain = w[0] * land;
+    const jungle = w[2] * land;
+
     const vdist = Math.hypot(x - VILLAGE.x, z - VILLAGE.z);
     const village = 1 - smooth(VILLAGE.r * 0.9, VILLAGE.r + VILLAGE.blend * 0.6, vdist);
+
     const patch = smooth(0.60, 0.70, fbm(x * 0.05 + 300, z * 0.05 - 300, 3)) * 0.85;
     const dirt = Math.min(1, patch * plain) * (1 - village);
     const grass = plain * (1 - dirt);
     const vari = fbm(x * 0.02 + 77, z * 0.02 - 77, 2);
-    return [grass, dirt, vari, village, w[2] * land];
+
+    return [grass, dirt, vari, village, jungle];
   }
 
   return { height, color, detail };
