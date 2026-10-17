@@ -218,7 +218,7 @@ function boot(socket, { id, seed }) {
     return indexCache[res];
   }
 
-    // 잔디/흙 텍스처
+  // 잔디/흙 텍스처
   const texLoader = new THREE.TextureLoader();
   const loadTex = (url) => {
     const t = texLoader.load(url);
@@ -227,9 +227,11 @@ function boot(socket, { id, seed }) {
     t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     return t;
   };
-  const texGrass = loadTex('/textures/grass.jpg');
-  const texGrass2 = loadTex('/textures/grass_dark.jpg');
-  const texDirt = loadTex('/textures/dirt.jpg');
+  const texGrass = loadTex('/textures/grass.jpg');           // 평원: 일반 잔디
+  const texGold = loadTex('/textures/grass_gold.jpg');       // 평원: 연한 누런 잔디
+  const texJungle = loadTex('/textures/grass_dark.jpg');     // 정글: 진한 잔디
+  const texDirt = loadTex('/textures/dirt.jpg');             // 평원: 흙 얼룩
+  const texVillage = loadTex('/textures/village_dirt.jpg');  // 마을 흙바닥
 
   const terrainMat = new THREE.MeshLambertMaterial({
     vertexColors: true
@@ -237,8 +239,81 @@ function boot(socket, { id, seed }) {
 
   terrainMat.onBeforeCompile = (shader) => {
     shader.uniforms.uGrass = { value: texGrass };
-    shader.uniforms.uGrass2 = { value: texGrass2 };
+    shader.uniforms.uGold = { value: texGold };
+    shader.uniforms.uJungle = { value: texJungle };
     shader.uniforms.uDirt = { value: texDirt };
+    shader.uniforms.uVillage = { value: texVillage };
+
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\n' +
+        'attribute vec3 detail;\n' +
+        'attribute vec2 detail2;\n' +
+        'varying vec3 vDetail;\n' +
+        'varying vec2 vDetail2;\n' +
+        'varying vec2 vWorldXZ;'
+      )
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n' +
+        'vDetail = detail;\n' +
+        'vDetail2 = detail2;\n' +
+        'vWorldXZ = (modelMatrix * vec4(position, 1.0)).xz;'
+      );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\n' +
+        'uniform sampler2D uGrass;\n' +
+        'uniform sampler2D uGold;\n' +
+        'uniform sampler2D uJungle;\n' +
+        'uniform sampler2D uDirt;\n' +
+        'uniform sampler2D uVillage;\n' +
+        'varying vec3 vDetail;\n' +
+        'varying vec2 vDetail2;\n' +
+        'varying vec2 vWorldXZ;'
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        {
+          vec2 p = vWorldXZ;
+
+          // 평원: 일반 잔디 + 연한 누런 잔디
+          vec3 a1 = texture2D(uGrass, p * 0.25).rgb;
+          float l1 = dot(texture2D(uGrass, p * 0.04).rgb, vec3(0.333));
+          vec3 g1 = a1 * (0.6 + 0.8 * l1);
+
+          vec3 a2 = texture2D(uGold, p * 0.22).rgb;
+          float l2 = dot(texture2D(uGold, p * 0.035).rgb, vec3(0.333));
+          vec3 g2 = a2 * (0.6 + 0.8 * l2);
+
+          vec3 plainCol = mix(g1, g2, smoothstep(0.35, 0.65, vDetail.z));
+
+          // 정글: 진한 잔디
+          vec3 a4 = texture2D(uJungle, p * 0.22).rgb;
+          float l4 = dot(texture2D(uJungle, p * 0.035).rgb, vec3(0.333));
+          vec3 jungleCol = a4 * (0.6 + 1.6 * l4);
+
+          // 평원 흙 얼룩
+          vec3 a3 = texture2D(uDirt, p * 0.2).rgb;
+          float l3 = dot(texture2D(uDirt, p * 0.033).rgb, vec3(0.333));
+          vec3 dirtCol = a3 * (0.6 + 1.1 * l3);
+
+          // 마을 흙바닥
+          vec3 a5 = texture2D(uVillage, p * 0.15).rgb;
+          float l5 = dot(texture2D(uVillage, p * 0.03).rgb, vec3(0.333));
+          vec3 villageCol = a5 * (0.7 + 0.6 * l5);
+
+          diffuseColor.rgb = mix(diffuseColor.rgb, plainCol, clamp(vDetail.x, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, jungleCol, clamp(vDetail2.y, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, dirtCol, clamp(vDetail.y, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, villageCol, clamp(vDetail2.x, 0.0, 1.0));
+        }`
+      );
+  };
 
     shader.vertexShader = shader.vertexShader
       .replace(
