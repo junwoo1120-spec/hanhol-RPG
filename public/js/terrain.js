@@ -204,7 +204,8 @@ export function makeTerrain(seed) {
   // 잔디/흙 디테일 가중치: [잔디, 흙, 잔디 색 변화]
   function detail(x, z, h) {
     const w = weights(x * K, z * K);
-    const plain = w[0] * smooth(2, 5, h);                       // 해안·물속 제외
+  const land = smooth(2, 5, h);
+    const plain = w[0] * land;
     const vdist = Math.hypot(x - VILLAGE.x, z - VILLAGE.z);
     const village = 1 - smooth(VILLAGE.r * 0.9, VILLAGE.r + VILLAGE.blend * 0.6, vdist);
     const patch = smooth(0.60, 0.70, fbm(x * 0.05 + 300, z * 0.05 - 300, 3)) * 0.85;
