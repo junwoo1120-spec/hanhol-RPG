@@ -10,6 +10,7 @@ const N = 32;            // 청크 분할 수
 const VIEW = 5;          // 로딩 반경(청크 단위)
 const UNLOAD = VIEW + 2;
 
+const SPEED_SCALE = 1.5; // 전체 이동속도 배율
 const FAST_MIN = 10;     // 속도 배율 최소
 const FAST_MAX = 100;    // 속도 배율 최대 (서버 한도도 100)
 const RES_HIGH = N;      // 평소 청크 해상도
@@ -226,7 +227,7 @@ function boot(socket, { id, seed }) {
     return indexCache[res];
   }
 
-  // 잔디/흙 텍스처
+  // 잔디/흙/모래 텍스처
   const texLoader = new THREE.TextureLoader();
   const loadTex = (url) => {
     const t = texLoader.load(url);
@@ -240,6 +241,7 @@ function boot(socket, { id, seed }) {
   const texJungle = loadTex('/textures/grass_dark.jpg');     // 정글: 진한 잔디
   const texDirt = loadTex('/textures/dirt.jpg');             // 평원: 흙 얼룩
   const texVillage = loadTex('/textures/village_dirt.jpg');  // 마을 흙바닥
+  const texSand = loadTex('/textures/desert_sand.jpg');      // 사막 모래
 
   const terrainMat = new THREE.MeshLambertMaterial({
     vertexColors: true
@@ -251,15 +253,16 @@ function boot(socket, { id, seed }) {
     shader.uniforms.uJungle = { value: texJungle };
     shader.uniforms.uDirt = { value: texDirt };
     shader.uniforms.uVillage = { value: texVillage };
+    shader.uniforms.uSand = { value: texSand };
 
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
         '#include <common>\n' +
         'attribute vec3 detail;\n' +
-        'attribute vec2 detail2;\n' +
+        'attribute vec3 detail2;\n' +
         'varying vec3 vDetail;\n' +
-        'varying vec2 vDetail2;\n' +
+        'varying vec3 vDetail2;\n' +
         'varying vec2 vWorldXZ;'
       )
       .replace(
@@ -279,8 +282,9 @@ function boot(socket, { id, seed }) {
         'uniform sampler2D uJungle;\n' +
         'uniform sampler2D uDirt;\n' +
         'uniform sampler2D uVillage;\n' +
+        'uniform sampler2D uSand;\n' +
         'varying vec3 vDetail;\n' +
-        'varying vec2 vDetail2;\n' +
+        'varying vec3 vDetail2;\n' +
         'varying vec2 vWorldXZ;'
       )
       .replace(
@@ -305,6 +309,11 @@ function boot(socket, { id, seed }) {
           float l4 = dot(texture2D(uJungle, p * 0.035).rgb, vec3(0.333));
           vec3 jungleCol = a4 * (0.6 + 1.6 * l4);
 
+          // 사막: 모래
+          vec3 a6 = texture2D(uSand, p * 0.2).rgb;
+          float l6 = dot(texture2D(uSand, p * 0.03).rgb, vec3(0.333));
+          vec3 sandCol = a6 * (0.75 + 0.35 * l6);
+
           // 평원 흙 얼룩
           vec3 a3 = texture2D(uDirt, p * 0.2).rgb;
           float l3 = dot(texture2D(uDirt, p * 0.033).rgb, vec3(0.333));
@@ -317,6 +326,7 @@ function boot(socket, { id, seed }) {
 
           diffuseColor.rgb = mix(diffuseColor.rgb, plainCol, clamp(vDetail.x, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, jungleCol, clamp(vDetail2.y, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, sandCol, clamp(vDetail2.z, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, dirtCol, clamp(vDetail.y, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, villageCol, clamp(vDetail2.x, 0.0, 1.0));
         }`
@@ -343,7 +353,7 @@ function boot(socket, { id, seed }) {
     const nor = new Float32Array(V * 3);
     const col = new Float32Array(V * 3);
     const det = new Float32Array(V * 3);
-    const det2 = new Float32Array(V * 2);
+    const det2 = new Float32Array(V * 3);
 
     let i = 0;
 
@@ -379,7 +389,7 @@ function boot(socket, { id, seed }) {
 
         const d = T.detail(wx, wz, h);
         det.set([d[0], d[1], d[2]], i * 3);
-        det2.set([d[3], d[4]], i * 2);
+        det2.set([d[3], d[4], d[5]], i * 3);
       }
     }
 
@@ -389,7 +399,7 @@ function boot(socket, { id, seed }) {
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.setAttribute('detail', new THREE.BufferAttribute(det, 3));
-    geo.setAttribute('detail2', new THREE.BufferAttribute(det2, 2));
+    geo.setAttribute('detail2', new THREE.BufferAttribute(det2, 3));
     geo.setIndex(getIndex(res));
     geo.computeBoundingSphere();
 
@@ -762,7 +772,8 @@ function boot(socket, { id, seed }) {
     const len = Math.hypot(mx, mz);
 
     if (len > 0) {
-      const speed = (keys.ShiftLeft ? 14 : 7) * (fast ? fastMult : 1);
+      const speed =
+        (keys.ShiftLeft ? 14 : 7) * SPEED_SCALE * (fast ? fastMult : 1);
 
       let px = me.x + (mx / len) * speed * dt;
       let pz = me.z + (mz / len) * speed * dt;
