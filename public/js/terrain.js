@@ -48,7 +48,7 @@ const REGIONS = [
   { t: 0, x: 1580,  z: 2300,  rx: 1000, rz: 1250 },  // 남동 평원
   { t: 1, x: 2950,  z: 0,     rx: 1250, rz: 2000 },  // 사막
   { t: 2, x: -2800, z: -700,  rx: 1300, rz: 900 },   // 정글
-  { t: 3, x: -2500, z: 900,   rx: 1350, rz: 850 },   // 화산지대
+  { t: 3, x: -2500, z: 900,   rx: 2025, rz: 1275 },  // 화산지대 (1.5배 확대)
   { t: 4, x: -1000, z: 2750,  rx: 2000, rz: 1400 },  // 설원
   { t: 5, x: -380,  z: -2850, rx: 3300, rz: 1100 },  // 바다·해안
 ];
@@ -88,12 +88,12 @@ export function makeTerrain(seed) {
     return sum / norm;
   };
 
-  // ---- 지역 가중치 (경계는 노이즈로 구불구불, 부드럽게 섞임) ----
+  // ---- 지역 가중치 (경계는 완만하게 구불구불, 떨어진 조각이 생기지 않도록 왜곡을 약하게) ----
   const W = new Float64Array(6);
   const D = new Float64Array(REGIONS.length);
   function weights(x, z) {
-    const wx = x + (fbm(x * 0.0012 + 90, z * 0.0012 + 90, 3) - 0.5) * 2400;
-    const wz = z + (fbm(x * 0.0012 - 90, z * 0.0012 - 40, 3) - 0.5) * 2400;
+    const wx = x + (fbm(x * 0.0012 + 90, z * 0.0012 + 90, 2) - 0.5) * 900;
+    const wz = z + (fbm(x * 0.0012 - 90, z * 0.0012 - 40, 2) - 0.5) * 900;
     let dmin = Infinity;
     for (let i = 0; i < REGIONS.length; i++) {
       const r = REGIONS[i];
@@ -118,8 +118,9 @@ export function makeTerrain(seed) {
   const desertH = (x, z) =>
     14 + (fbm(x * 0.004 + 200, z * 0.004, 3) - 0.5) * 32 + (fbm(x * 0.02, z * 0.02, 2) - 0.5) * 8;
 
+  // 정글: 굴곡 완화 (완만한 구릉)
   const jungleH = (x, z) =>
-    20 + (fbm(x * 0.005 - 70, z * 0.005 + 70, 4) - 0.5) * 70 + (fbm(x * 0.03, z * 0.03, 2) - 0.5) * 6;
+    22 + (fbm(x * 0.004 - 70, z * 0.004 + 70, 3) - 0.5) * 26 + (fbm(x * 0.02, z * 0.02, 2) - 0.5) * 2;
 
   const coneH = (c, x, z) => {
     const r = Math.hypot(x - c.x, z - c.z);
@@ -202,12 +203,13 @@ export function makeTerrain(seed) {
     return c;
   }
 
-  // 잔디/흙 디테일 가중치: [평원 잔디, 평원 흙 얼룩, 잔디 색 변화, 마을 흙, 정글 잔디]
+  // 텍스처 가중치: [평원 잔디, 평원 흙 얼룩, 잔디 색 변화, 마을 흙, 정글 잔디, 사막 모래]
   function detail(x, z, h) {
     const w = weights(x * K, z * K);
     const land = smooth(2, 5, h);                          // 해안·물속 제외
     const plain = w[0] * land;
     const jungle = w[2] * land;
+    const desert = w[1] * land;
 
     const vdist = Math.hypot(x - VILLAGE.x, z - VILLAGE.z);
     const village = 1 - smooth(VILLAGE.r * 0.9, VILLAGE.r + VILLAGE.blend * 0.6, vdist);
@@ -217,7 +219,7 @@ export function makeTerrain(seed) {
     const grass = plain * (1 - dirt);
     const vari = fbm(x * 0.02 + 77, z * 0.02 - 77, 2);
 
-    return [grass, dirt, vari, village, jungle];
+    return [grass, dirt, vari, village, jungle, desert];
   }
 
   return { height, color, detail };
