@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeTerrain, WATER_LEVEL, PLAY_RADIUS } from './terrain.js';
+import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS } from './terrain.js';
 import { buildVillage } from './village.js';
 
 // HTML 요소 선택 도우미
@@ -10,9 +10,11 @@ const N = 32;            // 청크 분할 수
 const VIEW = 5;          // 로딩 반경(청크 단위)
 const UNLOAD = VIEW + 2;
 
-const FAST_MULT = 100;   // 속도 배율
+const FAST_MIN = 10;     // 속도 배율 최소
+const FAST_MAX = 100;    // 속도 배율 최대 (서버 한도도 100)
 const RES_HIGH = N;      // 평소 청크 해상도
 const RES_LOW = 8;       // 빠르게 이동할 때 청크 해상도
+const PITCH_LIMIT = 1.45; // 위아래 회전 한계 (거의 수직까지)
 
 // 플레이어 라벨
 function makeLabel(text) {
@@ -223,6 +225,7 @@ function boot(socket, { id, seed }) {
   const chunks = new Map();
   const E = 0.5;
   let fast = false;
+  let fastMult = FAST_MAX;
 
   // 청크 생성 (res가 클수록 정밀)
   function buildChunk(cx, cz, res) {
@@ -307,9 +310,11 @@ function boot(socket, { id, seed }) {
       }
     }
 
-    const wantRes = fast ? RES_LOW : RES_HIGH;
+    // 배율 30 이상으로 빠르게 이동할 때만 거친 해상도 사용
+    const lowMode = fast && fastMult >= 30;
+    const wantRes = lowMode ? RES_LOW : RES_HIGH;
     const t0 = performance.now();
-    const budget = fast ? 8 : 0; // 빠른 모드: 프레임당 8ms까지, 평소: 1개씩
+    const budget = lowMode ? 8 : 0; // 거친 모드: 프레임당 8ms까지, 평소: 1개씩
 
     do {
       let best = null;
@@ -374,11 +379,146 @@ function boot(socket, { id, seed }) {
   myAvatar.children[1].visible = false;
   scene.add(myAvatar);
 
-  // 키보드 및 마우스
+  // ---------- 속도 배율 패널 (오른쪽 위) ----------
+  const panel = document.createElement('div');
+  panel.style.cssText =
+    'position:fixed;top:8px;right:8px;z-index:5;width:190px;padding:8px;' +
+    'display:flex;flex-direction:column;gap:6px;border-radius:10px;' +
+    'background:rgba(0,0,0,.45);color:#fff;font:bold 13px sans-serif';
+
+  const fastBtn = document.createElement('button');
+  fastBtn.style.cssText =
+    'padding:8px 10px;font-size:14px;font-weight:bold;border:0;' +
+    'border-radius:8px;color:#fff;cursor:pointer';
+
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = String(FAST_MIN);
+  slider.max = String(FAST_MAX);
+  slider.step = '5';
+  slider.value = String(fastMult);
+
+  const hint = document.createElement('div');
+  hint.style.cssText = 'font-size:11px;font-weight:normal;opacity:.8';
+  hint.textContent = 'F: 켜기/끄기   [ ]: 배율 조절';
+
+  panel.append(fastBtn, slider, hint);
+  document.body.appendChild(panel);
+
+  function refreshPanel() {
+    fastBtn.textContent =
+      `⚡ 속도 ×${fastMult} ${fast ? 'ON' : 'OFF'}`;
+    fastBtn.style.background = fast ? '#d33' : '#444';
+    slider.value = String(fastMult);
+  }
+
+  function setFast(v) {
+    fast = v;
+    refreshPanel();
+    socket.emit('fast', fast);
+    fastBtn.blur();
+  }
+
+  function setMult(m) {
+    fastMult = Math.max(FAST_MIN, Math.min(FAST_MAX, Math.round(m)));
+    refreshPanel();
+  }
+
+  fastBtn.addEventListener('click', () => setFast(!fast));
+  slider.addEventListener('input', () => setMult(Number(slider.value)));
+  slider.addEventListener('change', () => slider.blur());
+  refreshPanel();
+  socket.emit('fast', false);
+
+  // ---------- 나침반 (위쪽 가운데) ----------
+  const compass = document.createElement('div');
+  compass.style.cssText =
+    'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:5;' +
+    'width:min(760px,60vw);height:54px;overflow:hidden;border-radius:10px;' +
+    'background:rgba(0,0,0,.45);color:#fff;pointer-events:none;' +
+    'font-family:sans-serif;text-shadow:0 0 3px #000';
+
+  const tick = document.createElement('div');
+  tick.style.cssText =
+    'position:absolute;left:50%;top:0;width:2px;height:100%;' +
+    'background:rgba(255,255,255,.35);transform:translateX(-50%)';
+  compass.appendChild(tick);
+
+  const compassItems = [];
+
+  function addCompassItem(text, bearing, style, landmark) {
+    const el = document.createElement('div');
+    el.style.cssText =
+      'position:absolute;transform:translateX(-50%);white-space:nowrap;' +
+      'display:none;' + style;
+    el.textContent = text;
+    compass.appendChild(el);
+    compassItems.push({ el, bearing, landmark, last: '' });
+  }
+
+  // 동서남북 (북쪽 = -z, 동쪽 = +x)
+  addCompassItem('N', 0, 'top:3px;font-size:20px;font-weight:bold;color:#ff5555');
+  addCompassItem('E', Math.PI / 2, 'top:3px;font-size:20px;font-weight:bold');
+  addCompassItem('S', Math.PI, 'top:3px;font-size:20px;font-weight:bold');
+  addCompassItem('W', Math.PI * 1.5, 'top:3px;font-size:20px;font-weight:bold');
+
+  // 지형 이름
+  for (const lm of LANDMARKS) {
+    addCompassItem(lm.name, 0, 'top:30px;font-size:13px;font-weight:bold;color:#ffe9a0', lm);
+  }
+
+  document.body.appendChild(compass);
+
+  function updateCompass() {
+    const heading = -me.yaw; // 바라보는 방향 (북쪽 기준, 시계 방향)
+
+    for (const item of compassItems) {
+      let bearing = item.bearing;
+      let label = null;
+
+      if (item.landmark) {
+        const dx = item.landmark.x - me.x;
+        const dz = item.landmark.z - me.z;
+        bearing = Math.atan2(dx, -dz);
+
+        const dist = Math.hypot(dx, dz);
+        const distText = dist >= 1000
+          ? (dist / 1000).toFixed(1) + 'km'
+          : Math.round(dist) + 'm';
+        label = `${item.landmark.name} ${distText}`;
+      }
+
+      let diff = bearing - heading;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      const deg = (diff * 180) / Math.PI;
+
+      if (Math.abs(deg) > 95) {
+        item.el.style.display = 'none';
+        continue;
+      }
+
+      item.el.style.display = 'block';
+      item.el.style.left = (50 + (deg / 100) * 50) + '%';
+
+      if (label !== null && label !== item.last) {
+        item.el.textContent = label;
+        item.last = label;
+      }
+    }
+  }
+
+  // ---------- 키보드 및 마우스 ----------
   const keys = {};
+  const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
 
   window.addEventListener('keydown', (e) => {
+    if (ARROWS.includes(e.code)) e.preventDefault();
     keys[e.code] = true;
+
+    if (e.repeat) return;
+    if (e.code === 'KeyF') setFast(!fast);
+    if (e.code === 'BracketLeft') setMult(fastMult - 10);
+    if (e.code === 'BracketRight') setMult(fastMult + 10);
   });
 
   window.addEventListener('keyup', (e) => {
@@ -394,8 +534,8 @@ function boot(socket, { id, seed }) {
 
     me.yaw -= e.movementX * 0.003;
     me.pitch = Math.min(
-      1.2,
-      Math.max(0.1, me.pitch + e.movementY * 0.003)
+      PITCH_LIMIT,
+      Math.max(-PITCH_LIMIT, me.pitch + e.movementY * 0.003)
     );
   });
 
@@ -404,32 +544,6 @@ function boot(socket, { id, seed }) {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
-
-  // 속도 배율 버튼 (오른쪽 위)
-  const fastBtn = document.createElement('button');
-  fastBtn.style.cssText =
-    'position:fixed;top:8px;right:8px;z-index:5;padding:8px 14px;' +
-    'font-size:15px;font-weight:bold;border:0;border-radius:8px;' +
-    'color:#fff;cursor:pointer;opacity:.9';
-  document.body.appendChild(fastBtn);
-
-  function setFast(v) {
-    fast = v;
-    fastBtn.textContent = fast
-      ? `⚡ 속도 ×${FAST_MULT} ON (F)`
-      : `⚡ 속도 ×${FAST_MULT} OFF (F)`;
-    fastBtn.style.background = fast ? '#d33' : '#444';
-    socket.emit('fast', fast);
-    fastBtn.blur();
-  }
-
-  fastBtn.addEventListener('click', () => setFast(!fast));
-
-  window.addEventListener('keydown', (e) => {
-    if (e.code === 'KeyF') setFast(!fast);
-  });
-
-  setFast(false);
 
   // 다른 플레이어
   const remotes = new Map();
@@ -493,12 +607,20 @@ function boot(socket, { id, seed }) {
 
   // 게임 루프
   let sendTimer = 0;
+  let compassTimer = 0;
   const clock = new THREE.Clock();
 
   function loop() {
     requestAnimationFrame(loop);
 
     const dt = Math.min(clock.getDelta(), 0.1);
+
+    // 방향키로 화면 회전 (좌우 무제한, 위아래는 거의 수직까지)
+    if (keys.ArrowLeft) me.yaw += 1.8 * dt;
+    if (keys.ArrowRight) me.yaw -= 1.8 * dt;
+    if (keys.ArrowUp) me.pitch -= 1.5 * dt;
+    if (keys.ArrowDown) me.pitch += 1.5 * dt;
+    me.pitch = Math.min(PITCH_LIMIT, Math.max(-PITCH_LIMIT, me.pitch));
 
     const fx = -Math.sin(me.yaw);
     const fz = -Math.cos(me.yaw);
@@ -531,7 +653,7 @@ function boot(socket, { id, seed }) {
     const len = Math.hypot(mx, mz);
 
     if (len > 0) {
-      const speed = (keys.ShiftLeft ? 14 : 7) * (fast ? FAST_MULT : 1);
+      const speed = (keys.ShiftLeft ? 14 : 7) * (fast ? fastMult : 1);
 
       let px = me.x + (mx / len) * speed * dt;
       let pz = me.z + (mz / len) * speed * dt;
@@ -553,7 +675,7 @@ function boot(socket, { id, seed }) {
     myAvatar.position.set(me.x, me.y, me.z);
     myAvatar.rotation.y = me.ry;
 
-    // 3인칭 카메라
+    // 3인칭 카메라 (360도 궤도 회전)
     const dist = 9;
 
     const cx =
@@ -575,6 +697,13 @@ function boot(socket, { id, seed }) {
     water.position.z = me.z;
 
     updateChunks(me.x, me.z);
+
+    // 나침반 (0.1초마다)
+    compassTimer += dt;
+    if (compassTimer > 0.1) {
+      compassTimer = 0;
+      updateCompass();
+    }
 
     // 다른 플레이어 위치 보간
     for (const remote of remotes.values()) {
@@ -603,7 +732,7 @@ function boot(socket, { id, seed }) {
     $('hud').textContent =
       `X ${me.x.toFixed(0)}  Z ${me.z.toFixed(0)}\n` +
       `청크 ${chunks.size}  접속 ${remotes.size + 1}명\n` +
-      '클릭=마우스 잠금, WASD, Shift=달리기, F=속도 ×' + FAST_MULT;
+      '클릭=마우스 잠금, WASD, Shift=달리기, 방향키=화면 회전';
 
     renderer.render(scene, camera);
   }
@@ -612,6 +741,7 @@ function boot(socket, { id, seed }) {
   updateChunks(me.x, me.z);
   updateChunks(me.x, me.z);
   updateChunks(me.x, me.z);
+  updateCompass();
 
   loop();
 }
