@@ -33,7 +33,7 @@ export function buildVillage(scene) {
   const X = VILLAGE.x, Z = VILLAGE.z;
 
   // 바깥 원 (마을 경계)
-  const R = 270, SEG = 72;
+  const R = 135, SEG = 72;
   for (let i = 0; i < SEG; i++) {
     const a1 = (i / SEG) * Math.PI * 2, a2 = ((i + 1) / SEG) * Math.PI * 2;
     line(X + Math.cos(a1) * R, Z + Math.sin(a1) * R,
@@ -44,11 +44,11 @@ export function buildVillage(scene) {
 
   for (let i = 0; i < 6; i++) {                            // 안쪽 집터 6개
     const a = (i / 6) * Math.PI * 2;
-    rect(X + Math.cos(a) * 110, Z + Math.sin(a) * 110, 18, 14, a + Math.PI / 2);
+    rect(X + Math.cos(a) * 55, Z + Math.sin(a) * 55, 18, 14, a + Math.PI / 2);
   }
   for (let i = 0; i < 10; i++) {                           // 바깥 집터 10개
     const a = (i / 10) * Math.PI * 2 + 0.3;
-    rect(X + Math.cos(a) * 190, Z + Math.sin(a) * 190, 16, 12, a + Math.PI / 2);
+    rect(X + Math.cos(a) * 95, Z + Math.sin(a) * 95, 16, 12, a + Math.PI / 2);
   }
 
   scene.add(group);
