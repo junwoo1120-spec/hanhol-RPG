@@ -344,6 +344,7 @@ function boot(socket, { id, seed }) {
         nor.set([nx, ny, nz], i * 3);
                 col.set(c, i * 3);
         det.set(T.detail(wx, wz, h), i * 3);
+        det.set(T.detail(wx, wz, h), i * 3);
       }
     }
 
