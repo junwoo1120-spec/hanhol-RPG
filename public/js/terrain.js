@@ -212,7 +212,7 @@ export function makeTerrain(seed) {
     const dirt = Math.min(1, patch * plain) * (1 - village);
     const grass = plain * (1 - dirt);
     const vari = fbm(x * 0.02 + 77, z * 0.02 - 77, 2);
-    return [grass, dirt, vari];
+    return [grass, dirt, vari, village, w[2] * land];
   }
 
   return { height, color, detail };
