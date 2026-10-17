@@ -209,7 +209,7 @@ export function makeTerrain(seed) {
     const vdist = Math.hypot(x - VILLAGE.x, z - VILLAGE.z);
     const village = 1 - smooth(VILLAGE.r * 0.9, VILLAGE.r + VILLAGE.blend * 0.6, vdist);
     const patch = smooth(0.60, 0.70, fbm(x * 0.05 + 300, z * 0.05 - 300, 3)) * 0.85;
-    const dirt = Math.min(1, Math.max(village, patch * plain));
+    const dirt = Math.min(1, patch * plain) * (1 - village);
     const grass = plain * (1 - dirt);
     const vari = fbm(x * 0.02 + 77, z * 0.02 - 77, 2);
     return [grass, dirt, vari];
