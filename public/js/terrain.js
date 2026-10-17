@@ -1,6 +1,20 @@
 export const WATER_LEVEL = 0;
-export const PLAY_RADIUS = 5000;                      // 플레이어가 갈 수 있는 최대 반지름
-export const VILLAGE = { x: 0, z: 0, r: 300, blend: 220, h: 16 };
+export const PLAY_RADIUS = 2500;                       // 활동 반지름 (지름 약 5km)
+export const VILLAGE = { x: 0, z: 0, r: 150, blend: 110, h: 10 };
+
+const K = 2;               // 실제 좌표 -> 설계 좌표 배율 (맵 크기 1/2)
+const HEIGHT_SCALE = 0.6;  // 지형 높이 배율
+
+// 나침반에 표시할 지형 (실제 좌표)
+export const LANDMARKS = [
+  { name: '시작마을', x: 0,     z: 0 },
+  { name: '바다',     x: -190,  z: -1425 },
+  { name: '정글',     x: -1400, z: -350 },
+  { name: '화산',     x: -1250, z: 450 },
+  { name: '설원',     x: -500,  z: 1375 },
+  { name: '평원',     x: 790,   z: 1150 },
+  { name: '사막',     x: 1475,  z: 0 },
+];
 
 const smooth = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -20,7 +34,7 @@ const PAL = [
 const SAND = [0.80, 0.74, 0.50], FLOOR = [0.10, 0.22, 0.32];
 const ROCK = [0.50, 0.50, 0.52], SNOW = [0.95, 0.97, 1.0], LAVA = [0.95, 0.30, 0.05];
 
-// 지역 배치 (중심 x, z / 가로·세로 반경)
+// 지역 배치 (설계 좌표: 중심 x, z / 가로·세로 반경)
 const REGIONS = [
   { t: 0, x: 150,   z: -250,  rx: 1750, rz: 1850 },  // 중앙 평원
   { t: 0, x: 1580,  z: 2300,  rx: 1000, rz: 1250 },  // 남동 평원
@@ -87,7 +101,7 @@ export function makeTerrain(seed) {
     return W;
   }
 
-  // ---- 지역별 높이 ----
+  // ---- 지역별 높이 (설계 좌표 기준) ----
   const plainH = (x, z) =>
     16 + (fbm(x * 0.0035 + 10, z * 0.0035, 3) - 0.5) * 44 + (fbm(x * 0.015, z * 0.015, 2) - 0.5) * 5;
 
@@ -124,18 +138,19 @@ export function makeTerrain(seed) {
   const FN = [plainH, desertH, jungleH, volcanoH, snowH, seaH];
 
   function height(x, z) {
-    const w = weights(x, z);
+    const u = x * K, v = z * K;                       // 설계 좌표
+    const w = weights(u, v);
     let h = 0, sum = 0;
     for (let t = 0; t < 6; t++) {
-      if (w[t] > 0.01) { h += w[t] * FN[t](x, z); sum += w[t]; }
+      if (w[t] > 0.01) { h += w[t] * FN[t](u, v); sum += w[t]; }
     }
-    h /= sum;
+    h = (h / sum) * HEIGHT_SCALE;
 
-    // 맵 경계 산맥 (지름 10km 원형)
+    // 외곽 산맥: 굴곡 적고 낮게, 바깥은 넘을 수 없는 벽
     const rr = Math.hypot(x, z);
-    const edge = smooth(4500, 5000, rr);
-    if (edge > 0) h += edge * (300 + fbm(x * 0.006 + 999, z * 0.006, 4) * 250);
-    h += smooth(5000, 5400, rr) * 400;
+    const edge = smooth(2250, 2500, rr);
+    if (edge > 0) h += edge * (110 + (fbm(u * 0.006 + 999, v * 0.006, 3) - 0.5) * 40);
+    h += smooth(2500, 2700, rr) * 250;
 
     // 시작마을 평평한 터
     const vd = Math.hypot(x - VILLAGE.x, z - VILLAGE.z);
@@ -146,7 +161,8 @@ export function makeTerrain(seed) {
   }
 
   function color(x, z, h) {
-    const w = weights(x, z);
+    const u = x * K, v = z * K;
+    const w = weights(u, v);
     let c = [0, 0, 0];
     for (let t = 0; t < 6; t++) {
       c[0] += w[t] * PAL[t][0]; c[1] += w[t] * PAL[t][1]; c[2] += w[t] * PAL[t][2];
@@ -158,17 +174,17 @@ export function makeTerrain(seed) {
     const vw = w[3];
     if (vw > 0.05) {
       for (const cone of CONES) {
-        const r = Math.hypot(x - cone.x, z - cone.z);
+        const r = Math.hypot(u - cone.x, v - cone.z);
         const m = (1 - smooth(cone.crater * 0.55, cone.crater, r)) * vw;
         if (m > 0) c = mix(c, LAVA, m);
       }
     }
 
-    // 경계 산맥: 바위색 + 꼭대기 눈
-     const ring = smooth(4500, 4900, Math.hypot(x, z));
+    // 외곽 산맥: 바위색 + 꼭대기 눈
+    const ring = smooth(2250, 2450, Math.hypot(x, z));
     if (ring > 0) {
       c = mix(c, ROCK, ring);
-      c = mix(c, SNOW, smooth(250, 340, h) * ring);
+      c = mix(c, SNOW, smooth(90, 130, h) * ring);
     }
     return c;
   }
