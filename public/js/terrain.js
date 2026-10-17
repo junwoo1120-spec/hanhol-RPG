@@ -40,6 +40,7 @@ const PAL = [
 ];
 const SAND = [0.80, 0.74, 0.50], FLOOR = [0.10, 0.22, 0.32];
 const ROCK = [0.50, 0.50, 0.52], SNOW = [0.95, 0.97, 1.0], LAVA = [1.0, 0.65, 0.10];
+const DIRT = [0.45, 0.33, 0.20];
 
 // 지역 배치 (설계 좌표: 중심 x, z / 가로·세로 반경)
 const REGIONS = [
@@ -187,7 +188,10 @@ export function makeTerrain(seed) {
         if (m > 0) c = mix(c, LAVA, m);
       }
     }
-
+    
+ // 마을 터는 흙바닥
+    const vdist = Math.hypot(x - VILLAGE.x, z - VILLAGE.z);
+    c = mix(c, DIRT, 1 - smooth(VILLAGE.r * 0.9, VILLAGE.r + VILLAGE.blend * 0.6, vdist));
     // 외곽 산맥: 바위색 + 꼭대기 눈
     const ring = smooth(1050, 1200, Math.hypot(x, z));
     if (ring > 0) {
@@ -197,5 +201,18 @@ export function makeTerrain(seed) {
     return c;
   }
 
-  return { height, color };
+  // 잔디/흙 디테일 가중치: [잔디, 흙, 잔디 색 변화]
+  function detail(x, z, h) {
+    const w = weights(x * K, z * K);
+    const plain = w[0] * smooth(2, 5, h);                       // 해안·물속 제외
+    const vdist = Math.hypot(x - VILLAGE.x, z - VILLAGE.z);
+    const village = 1 - smooth(VILLAGE.r * 0.9, VILLAGE.r + VILLAGE.blend * 0.6, vdist);
+    const patch = smooth(0.60, 0.70, fbm(x * 0.05 + 300, z * 0.05 - 300, 3)) * 0.85;
+    const dirt = Math.min(1, Math.max(village, patch * plain));
+    const grass = plain * (1 - dirt);
+    const vari = fbm(x * 0.02 + 77, z * 0.02 - 77, 2);
+    return [grass, dirt, vari];
+  }
+
+  return { height, color, detail };
 }
