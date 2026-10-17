@@ -385,7 +385,8 @@ function boot(socket, { id, seed }) {
     const pos = new Float32Array(V * 3);
     const nor = new Float32Array(V * 3);
     const col = new Float32Array(V * 3);
-    const det = new Float32Array(V * 3);
+        const det = new Float32Array(V * 3);
+    const det2 = new Float32Array(V * 2);
 
     let i = 0;
 
