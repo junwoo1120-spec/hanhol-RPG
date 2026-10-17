@@ -218,9 +218,78 @@ function boot(socket, { id, seed }) {
     return indexCache[res];
   }
 
+    // 잔디/흙 텍스처
+  const texLoader = new THREE.TextureLoader();
+  const loadTex = (url) => {
+    const t = texLoader.load(url);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    return t;
+  };
+  const texGrass = loadTex('/textures/grass.jpg');
+  const texGrass2 = loadTex('/textures/grass_dark.jpg');
+  const texDirt = loadTex('/textures/dirt.jpg');
+
   const terrainMat = new THREE.MeshLambertMaterial({
     vertexColors: true
   });
+
+  terrainMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uGrass = { value: texGrass };
+    shader.uniforms.uGrass2 = { value: texGrass2 };
+    shader.uniforms.uDirt = { value: texDirt };
+
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\n' +
+        'attribute vec3 detail;\n' +
+        'varying vec3 vDetail;\n' +
+        'varying vec2 vWorldXZ;'
+      )
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n' +
+        'vDetail = detail;\n' +
+        'vWorldXZ = (modelMatrix * vec4(position, 1.0)).xz;'
+      );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\n' +
+        'uniform sampler2D uGrass;\n' +
+        'uniform sampler2D uGrass2;\n' +
+        'uniform sampler2D uDirt;\n' +
+        'varying vec3 vDetail;\n' +
+        'varying vec2 vWorldXZ;'
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        {
+          vec2 p = vWorldXZ;
+
+          vec3 a1 = texture2D(uGrass, p * 0.25).rgb;
+          float l1 = dot(texture2D(uGrass, p * 0.04).rgb, vec3(0.333));
+          vec3 g1 = a1 * (0.6 + 0.8 * l1);
+
+          vec3 a2 = texture2D(uGrass2, p * 0.22).rgb;
+          float l2 = dot(texture2D(uGrass2, p * 0.035).rgb, vec3(0.333));
+          vec3 g2 = a2 * (0.6 + 1.6 * l2);
+
+          vec3 gr = mix(g1, g2, smoothstep(0.35, 0.65, vDetail.z));
+
+          vec3 a3 = texture2D(uDirt, p * 0.2).rgb;
+          float l3 = dot(texture2D(uDirt, p * 0.033).rgb, vec3(0.333));
+          vec3 dt = a3 * (0.6 + 1.1 * l3);
+
+          diffuseColor.rgb = mix(diffuseColor.rgb, gr, clamp(vDetail.x, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, dt, clamp(vDetail.y, 0.0, 1.0));
+        }`
+      );
+  };
 
   const chunks = new Map();
   const E = 0.5;
