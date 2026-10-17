@@ -145,7 +145,15 @@ $('join').onclick = () => {
     }
 
     $('msg').textContent = '';
-    boot(socket, data);
+
+    try {
+      boot(socket, data);
+    } catch (err) {
+      console.error('게임 시작 오류:', err);
+      $('login').style.display = 'flex';
+      $('msg').textContent = '게임 시작 오류: ' + err.message;
+      $('join').disabled = false;
+    }
   });
 };
 
@@ -315,57 +323,6 @@ function boot(socket, { id, seed }) {
       );
   };
 
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        '#include <common>\n' +
-        'attribute vec3 detail;\n' +
-        'varying vec3 vDetail;\n' +
-        'varying vec2 vWorldXZ;'
-      )
-      .replace(
-        '#include <begin_vertex>',
-        '#include <begin_vertex>\n' +
-        'vDetail = detail;\n' +
-        'vWorldXZ = (modelMatrix * vec4(position, 1.0)).xz;'
-      );
-
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        '#include <common>',
-        '#include <common>\n' +
-        'uniform sampler2D uGrass;\n' +
-        'uniform sampler2D uGrass2;\n' +
-        'uniform sampler2D uDirt;\n' +
-        'varying vec3 vDetail;\n' +
-        'varying vec2 vWorldXZ;'
-      )
-      .replace(
-        '#include <color_fragment>',
-        `#include <color_fragment>
-        {
-          vec2 p = vWorldXZ;
-
-          vec3 a1 = texture2D(uGrass, p * 0.25).rgb;
-          float l1 = dot(texture2D(uGrass, p * 0.04).rgb, vec3(0.333));
-          vec3 g1 = a1 * (0.6 + 0.8 * l1);
-
-          vec3 a2 = texture2D(uGrass2, p * 0.22).rgb;
-          float l2 = dot(texture2D(uGrass2, p * 0.035).rgb, vec3(0.333));
-          vec3 g2 = a2 * (0.6 + 1.6 * l2);
-
-          vec3 gr = mix(g1, g2, smoothstep(0.35, 0.65, vDetail.z));
-
-          vec3 a3 = texture2D(uDirt, p * 0.2).rgb;
-          float l3 = dot(texture2D(uDirt, p * 0.033).rgb, vec3(0.333));
-          vec3 dt = a3 * (0.6 + 1.1 * l3);
-
-          diffuseColor.rgb = mix(diffuseColor.rgb, gr, clamp(vDetail.x, 0.0, 1.0));
-          diffuseColor.rgb = mix(diffuseColor.rgb, dt, clamp(vDetail.y, 0.0, 1.0));
-        }`
-      );
-  };
-
   const chunks = new Map();
   const E = 0.5;
   let fast = false;
@@ -385,7 +342,7 @@ function boot(socket, { id, seed }) {
     const pos = new Float32Array(V * 3);
     const nor = new Float32Array(V * 3);
     const col = new Float32Array(V * 3);
-        const det = new Float32Array(V * 3);
+    const det = new Float32Array(V * 3);
     const det2 = new Float32Array(V * 2);
 
     let i = 0;
@@ -418,7 +375,8 @@ function boot(socket, { id, seed }) {
 
         pos.set([(x * S) / res, h, (z * S) / res], i * 3);
         nor.set([nx, ny, nz], i * 3);
-                col.set(c, i * 3);
+        col.set(c, i * 3);
+
         const d = T.detail(wx, wz, h);
         det.set([d[0], d[1], d[2]], i * 3);
         det2.set([d[3], d[4]], i * 2);
@@ -429,8 +387,8 @@ function boot(socket, { id, seed }) {
 
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-       geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-        geo.setAttribute('detail', new THREE.BufferAttribute(det, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('detail', new THREE.BufferAttribute(det, 3));
     geo.setAttribute('detail2', new THREE.BufferAttribute(det2, 2));
     geo.setIndex(getIndex(res));
     geo.computeBoundingSphere();
