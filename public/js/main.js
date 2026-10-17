@@ -430,7 +430,8 @@ function boot(socket, { id, seed }) {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
        geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    geo.setAttribute('detail', new THREE.BufferAttribute(det, 3));
+        geo.setAttribute('detail', new THREE.BufferAttribute(det, 3));
+    geo.setAttribute('detail2', new THREE.BufferAttribute(det2, 2));
     geo.setIndex(getIndex(res));
     geo.computeBoundingSphere();
 
