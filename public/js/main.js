@@ -1503,9 +1503,10 @@ function boot(socket, { id, seed }, nick, mode) {
     camera.position.set(cx, cy, cz);
     camera.lookAt(tx, me.y + 1.5, tz);
 
-    // 물과 지형
-    water.position.x = me.x;
-    water.position.z = me.z;
+        // 물: 격자에 맞춰 움직여서 파도가 떨리지 않게 하고, 시간을 흘려보냄
+    water.position.x = Math.round(me.x / WATER_STEP) * WATER_STEP;
+    water.position.z = Math.round(me.z / WATER_STEP) * WATER_STEP;
+    waterUniforms.uTime.value += dt;
 
     updateChunks(me.x, me.z);
 
