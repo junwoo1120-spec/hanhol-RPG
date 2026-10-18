@@ -390,14 +390,105 @@ function boot(socket, { id, seed }, nick, mode) {
   sun.position.set(80, 120, 40);
   scene.add(sun);
 
-  // 물은 플레이어 주변에 배치
+  // 물: 텍스처 + 물살(흐르는 무늬) + 작은 파도
+  const WATER_SEG = 150;
+  const WATER_STEP = 1200 / WATER_SEG; // 격자 한 칸 크기
+
+  const waterLoader = new THREE.TextureLoader();
+  const loadWaterTex = (url) => {
+    const t = waterLoader.load(url);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    return t;
+  };
+
+  const waterUniforms = {
+    uTime: { value: 0 },
+    uRipple: { value: loadWaterTex('/textures/water_ripple.jpg') },
+    uBlotch: { value: loadWaterTex('/textures/water_blotch.jpg') },
+  };
+
+  const waterMat = new THREE.MeshLambertMaterial({
+    color: 0x2f6fb5,
+    transparent: true,
+    opacity: 0.82
+  });
+
+  waterMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = waterUniforms.uTime;
+    shader.uniforms.uRipple = waterUniforms.uRipple;
+    shader.uniforms.uBlotch = waterUniforms.uBlotch;
+
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\n' +
+        'uniform float uTime;\n' +
+        'varying vec2 vWaterXZ;'
+      )
+      .replace(
+        '#include <beginnormal_vertex>',
+        `vec3 wp0 = (modelMatrix * vec4(position, 1.0)).xyz;
+        float a1 = wp0.x * 0.07 + uTime * 0.9;
+        float a2 = wp0.z * 0.09 - uTime * 1.1;
+        float a3 = (wp0.x + wp0.z) * 0.05 + uTime * 0.6;
+        float wdx = (cos(a1) * 0.07 * 0.10 + cos(a3) * 0.05 * 0.12) * 4.0;
+        float wdz = (cos(a2) * 0.09 * 0.08 + cos(a3) * 0.05 * 0.12) * 4.0;
+        vec3 objectNormal = normalize(vec3(-wdx, 1.0, -wdz));`
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        transformed.y += sin(a1) * 0.10 + sin(a2) * 0.08 + sin(a3) * 0.12;
+        vWaterXZ = wp0.xz;`
+      );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\n' +
+        'uniform float uTime;\n' +
+        'uniform sampler2D uRipple;\n' +
+        'uniform sampler2D uBlotch;\n' +
+        'varying vec2 vWaterXZ;'
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        vec2 wq1 = vWaterXZ * 0.055 + vec2(uTime * 0.020, uTime * 0.012);
+        vec2 wq2 = vWaterXZ * 0.085 + vec2(-uTime * 0.016, uTime * 0.024) + vec2(0.37, 0.61);
+        vec2 wq3 = vWaterXZ * 0.030 + vec2(uTime * 0.008, -uTime * 0.006);
+        vec3 wr1 = texture2D(uRipple, wq1).rgb;
+        vec3 wr2 = texture2D(uRipple, wq2).rgb;
+        vec3 wb = texture2D(uBlotch, wq3).rgb;
+        float wl1 = dot(wr1, vec3(0.333));
+        float wl2 = dot(wr2, vec3(0.333));
+        vec3 wtex = mix((wr1 + wr2) * 0.5, wb, 0.35);
+        float wspark = smoothstep(0.68, 0.9, max(wl1, wl2));
+        diffuseColor.rgb = mix(diffuseColor.rgb, wtex, 0.85) + vec3(wspark * 0.3);`
+      )
+      .replace(
+        '#include <normal_fragment_begin>',
+        `#include <normal_fragment_begin>
+        {
+          float we = 1.5 / 512.0;
+          float h1x = dot(texture2D(uRipple, wq1 + vec2(we, 0.0)).rgb, vec3(0.333));
+          float h1z = dot(texture2D(uRipple, wq1 + vec2(0.0, we)).rgb, vec3(0.333));
+          float h2x = dot(texture2D(uRipple, wq2 + vec2(we, 0.0)).rgb, vec3(0.333));
+          float h2z = dot(texture2D(uRipple, wq2 + vec2(0.0, we)).rgb, vec3(0.333));
+          float gx = clamp(((h1x - wl1) * 0.055 + (h2x - wl2) * 0.085) / we, -2.0, 2.0);
+          float gz = clamp(((h1z - wl1) * 0.055 + (h2z - wl2) * 0.085) / we, -2.0, 2.0);
+          vec3 nw = normalize(vec3(-gx * 0.5, 1.0, -gz * 0.5));
+          normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz);
+        }`
+      );
+  };
+
+  // 물은 플레이어 주변에 배치 (파도를 위해 촘촘하게 나눔)
   const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(1200, 1200).rotateX(-Math.PI / 2),
-    new THREE.MeshLambertMaterial({
-      color: 0x2f6fb5,
-      transparent: true,
-      opacity: 0.72
-    })
+    new THREE.PlaneGeometry(1200, 1200, WATER_SEG, WATER_SEG).rotateX(-Math.PI / 2),
+    waterMat
   );
 
   water.position.y = WATER_LEVEL;
