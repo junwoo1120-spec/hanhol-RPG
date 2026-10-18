@@ -390,9 +390,11 @@ function boot(socket, { id, seed }, nick, mode) {
   sun.position.set(80, 120, 40);
   scene.add(sun);
 
-  // 물: 텍스처 + 물살(흐르는 무늬) + 작은 파도
-  const WATER_SEG = 150;
-  const WATER_STEP = 1200 / WATER_SEG; // 격자 한 칸 크기
+  // 물: 텍스처 + 물살(흐르는 무늬) + 위아래로 출렁이는 파도
+  // 안개가 152 밖은 가리므로 물 판은 플레이어 주변 400칸이면 충분 (촘촘하게 나눠 파도를 표현)
+  const WATER_SIZE = 400;
+  const WATER_SEG = 200;
+  const WATER_STEP = WATER_SIZE / WATER_SEG; // 격자 한 칸 크기
 
   const waterLoader = new THREE.TextureLoader();
   const loadWaterTex = (url) => {
@@ -426,23 +428,35 @@ function boot(socket, { id, seed }, nick, mode) {
         '#include <common>',
         '#include <common>\n' +
         'uniform float uTime;\n' +
-        'varying vec2 vWaterXZ;'
+        'varying vec2 vWaterXZ;\n' +
+        'varying vec2 vWaveSlope;\n' +
+        'varying float vWaveH;'
       )
       .replace(
         '#include <beginnormal_vertex>',
         `vec3 wp0 = (modelMatrix * vec4(position, 1.0)).xyz;
-        float a1 = wp0.x * 0.07 + uTime * 0.9;
-        float a2 = wp0.z * 0.09 - uTime * 1.1;
-        float a3 = (wp0.x + wp0.z) * 0.05 + uTime * 0.6;
-        float wdx = (cos(a1) * 0.07 * 0.10 + cos(a3) * 0.05 * 0.12) * 4.0;
-        float wdz = (cos(a2) * 0.09 * 0.08 + cos(a3) * 0.05 * 0.12) * 4.0;
+        vec2 wxz = wp0.xz;
+        // 방향과 크기가 다른 파도 4겹 (파장 약 39, 22, 12, 7)
+        float ph1 = dot(wxz, vec2( 0.80,  0.60)) * 0.16 + uTime * 1.2;
+        float ph2 = dot(wxz, vec2(-0.55,  0.83)) * 0.29 + uTime * 1.6;
+        float ph3 = dot(wxz, vec2( 0.30, -0.95)) * 0.52 + uTime * 2.1;
+        float ph4 = dot(wxz, vec2(-0.95, -0.30)) * 0.90 + uTime * 2.7;
+        float wh = sin(ph1) * 0.28 + sin(ph2) * 0.16 + sin(ph3) * 0.08 + sin(ph4) * 0.04;
+        float c1 = cos(ph1) * 0.28 * 0.16;
+        float c2 = cos(ph2) * 0.16 * 0.29;
+        float c3 = cos(ph3) * 0.08 * 0.52;
+        float c4 = cos(ph4) * 0.04 * 0.90;
+        float wdx = (c1 * 0.80 - c2 * 0.55 + c3 * 0.30 - c4 * 0.95) * 2.5;
+        float wdz = (c1 * 0.60 + c2 * 0.83 - c3 * 0.95 - c4 * 0.30) * 2.5;
         vec3 objectNormal = normalize(vec3(-wdx, 1.0, -wdz));`
       )
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-        transformed.y += sin(a1) * 0.10 + sin(a2) * 0.08 + sin(a3) * 0.12;
-        vWaterXZ = wp0.xz;`
+        transformed.y += wh;
+        vWaterXZ = wxz;
+        vWaveSlope = vec2(wdx, wdz);
+        vWaveH = wh;`
       );
 
     shader.fragmentShader = shader.fragmentShader
@@ -452,7 +466,9 @@ function boot(socket, { id, seed }, nick, mode) {
         'uniform float uTime;\n' +
         'uniform sampler2D uRipple;\n' +
         'uniform sampler2D uBlotch;\n' +
-        'varying vec2 vWaterXZ;'
+        'varying vec2 vWaterXZ;\n' +
+        'varying vec2 vWaveSlope;\n' +
+        'varying float vWaveH;'
       )
       .replace(
         '#include <color_fragment>',
@@ -469,7 +485,10 @@ function boot(socket, { id, seed }, nick, mode) {
         float wl2 = dot(wr2, vec3(0.333));
         vec3 wtex = mix((wr1 + wr2) * 0.5, wb, 0.2) * 1.3;
         float wspark = smoothstep(0.68, 0.9, max(wl1, wl2));
-        diffuseColor.rgb = mix(diffuseColor.rgb, wtex, 0.9) + vec3(wspark * 0.25);`
+        diffuseColor.rgb = mix(diffuseColor.rgb, wtex, 0.9) + vec3(wspark * 0.25);
+        // 파도 마루는 살짝 밝고 골은 살짝 어둡게
+        diffuseColor.rgb *= 1.0 + vWaveH * 0.25;
+        diffuseColor.rgb += vec3(smoothstep(0.30, 0.50, vWaveH) * 0.10);`
       )
       .replace(
         '#include <normal_fragment_begin>',
@@ -482,15 +501,15 @@ function boot(socket, { id, seed }, nick, mode) {
           float h2z = dot(texture2D(uRipple, wq2 + vec2(0.0, we)).rgb, vec3(0.333));
           float gx = clamp(((h1x - wl1) * WS1 + (h2x - wl2) * WS2) / we, -2.0, 2.0);
           float gz = clamp(((h1z - wl1) * WS1 + (h2z - wl2) * WS2) / we, -2.0, 2.0);
-          vec3 nw = normalize(vec3(-gx * 0.4, 1.0, -gz * 0.4));
+          vec3 nw = normalize(vec3(-gx * 0.4 - vWaveSlope.x, 1.0, -gz * 0.4 - vWaveSlope.y));
           normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz);
         }`
       );
   };
 
-  // 물은 플레이어 주변에 배치 (파도를 위해 촘촘하게 나눔)
+  // 물은 플레이어 주변에 배치
   const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(1200, 1200, WATER_SEG, WATER_SEG).rotateX(-Math.PI / 2),
+    new THREE.PlaneGeometry(WATER_SIZE, WATER_SIZE, WATER_SEG, WATER_SEG).rotateX(-Math.PI / 2),
     waterMat
   );
 
@@ -560,6 +579,7 @@ function boot(socket, { id, seed }, nick, mode) {
       .replace(
         '#include <common>',
         '#include <common>\n' +
+        'uniform float uTime;\n' +
         'attribute vec3 detail;\n' +
         'attribute vec3 detail2;\n' +
         'attribute vec3 detail3;\n' +
@@ -570,11 +590,19 @@ function boot(socket, { id, seed }, nick, mode) {
       )
       .replace(
         '#include <begin_vertex>',
-        '#include <begin_vertex>\n' +
-        'vDetail = detail;\n' +
-        'vDetail2 = detail2;\n' +
-        'vDetail3 = detail3;\n' +
-        'vWorldXZ = (modelMatrix * vec4(position, 1.0)).xz;'
+        `#include <begin_vertex>
+        vDetail = detail;
+        vDetail2 = detail2;
+        vDetail3 = detail3;
+        vec3 wpL = (modelMatrix * vec4(position, 1.0)).xyz;
+        vWorldXZ = wpL.xz;
+        // 분화구 용암 표면이 위아래로 일렁임 (용암 가장자리는 0이라 땅과 갈라지지 않음)
+        float lpV = clamp(detail3.z, 0.0, 1.0);
+        transformed.y += lpV * (
+          sin(wpL.x * 0.55 + uTime * 1.4) * 0.07 +
+          sin(wpL.z * 0.47 - uTime * 1.2) * 0.07 +
+          sin((wpL.x + wpL.z) * 0.33 + uTime * 0.9) * 0.05
+        );`
       );
 
     shader.fragmentShader = shader.fragmentShader
@@ -650,13 +678,17 @@ function boot(socket, { id, seed }, nick, mode) {
           float vein = smoothstep(0.35, 0.75, lr.r) * lrMix * volc;
           lavaGlow += lr * vein * 0.7;
 
-          // 분출구 용암 (천천히 흐르고 살짝 맥동)
-          vec2 lq1 = p * 0.045 + vec2(uTime * 0.012, uTime * 0.008);
-          vec2 lq2 = p * 0.07 + vec2(-uTime * 0.010, uTime * 0.014) + vec2(0.31, 0.57);
-          vec3 lavaCol = (texture2D(uLava, lq1).rgb + texture2D(uLava, lq2).rgb) * 0.5
-                         * (0.92 + 0.08 * sin(uTime * 1.5));
+          // 분출구 용암: 액체처럼 출렁이며 흐르고 밝기가 맥동함
+          vec2 lw = vec2(sin(p.y * 0.30 + uTime * 0.9), cos(p.x * 0.27 + uTime * 0.8)) * 0.035;
+          vec2 lq1 = p * 0.040 + lw + vec2(uTime * 0.018, uTime * 0.010);
+          vec2 lq2 = p * 0.065 - lw * 1.4 + vec2(-uTime * 0.014, uTime * 0.022) + vec2(0.31, 0.57);
+          vec3 lava1 = texture2D(uLava, lq1).rgb;
+          vec3 lava2 = texture2D(uLava, lq2).rgb;
+          vec3 lavaCol = mix(lava1, lava2, 0.5);
+          float lflow = dot(lavaCol, vec3(0.333));
+          lavaCol *= 0.85 + 0.25 * sin(uTime * 1.3 + lflow * 6.0);
           float lp = clamp(vDetail3.z, 0.0, 1.0);
-          lavaGlow += lavaCol * lp * 0.75;
+          lavaGlow += lavaCol * lp * 0.9;
 
           diffuseColor.rgb = mix(diffuseColor.rgb, plainCol, clamp(vDetail.x, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, jungleCol, clamp(vDetail2.y, 0.0, 1.0));
