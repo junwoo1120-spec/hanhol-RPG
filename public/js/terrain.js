@@ -54,9 +54,10 @@ const REGIONS = [
   { t: 5, x: -380,  z: -2850, rx: 3300, rz: 1100 },  // 바다·해안
 ];
 
-// 화산: 큰 화산 하나만 (crater = 분화구 크기, 용암이 고이는 곳)
+// 화산: 큰 화산 하나만 (1.3배)
+// R = 산 폭, H = 산 높이, crater = 분화구 반지름 (용암이 고이는 곳)
 const CONES = [
-  { x: -2500, z: 900, R: 722, H: 340, crater: 110 },
+  { x: -2500, z: 900, R: 939, H: 442, crater: 143 },
 ];
 
 // 설원 산: 2개, 낮게
@@ -123,10 +124,13 @@ export function makeTerrain(seed) {
   const jungleH = (x, z) =>
     22 + (fbm(x * 0.004 - 70, z * 0.004 + 70, 3) - 0.5) * 26 + (fbm(x * 0.02, z * 0.02, 2) - 0.5) * 2;
 
+  // 화산: 가장자리가 솟은 분화구 + 평평한 바닥 (가운데가 볼록하지 않음)
   const coneH = (c, x, z) => {
     const r = Math.hypot(x - c.x, z - c.z);
-    const t = Math.max(0, 1 - r / c.R);
-    return c.H * Math.pow(t, 1.5) - c.H * 0.2 * (1 - smooth(0, c.crater, r));
+    const t = Math.max(0, 1 - Math.max(r, c.crater) / c.R);   // 분화구 안쪽은 가장자리 높이로 평평하게 취급
+    const rim = c.H * Math.pow(t, 1.5);
+    const bowl = c.H * 0.07 * (1 - smooth(c.crater * 0.6, c.crater, r)); // 안쪽 벽 + 평평한 바닥
+    return rim - bowl;
   };
   // 화산지대: 평지 + 큰 화산 하나
   const volcanoH = (x, z) => {
@@ -181,12 +185,12 @@ export function makeTerrain(seed) {
     c = mix(c, SAND, 1 - smooth(1, 4, h));       // 해안은 모래
     c = mix(c, FLOOR, smooth(-1, -6, h));        // 물속은 어둡게
 
-    // 화산 분화구 용암색 (텍스처가 없을 때를 위한 기본색)
+    // 화산 분화구 바닥 용암색 (텍스처가 없을 때를 위한 기본색)
     const vw = w[3];
     if (vw > 0.05) {
       for (const cone of CONES) {
         const r = Math.hypot(u - cone.x, v - cone.z);
-        const m = (1 - smooth(cone.crater * 0.55, cone.crater, r)) * vw;
+        const m = (1 - smooth(cone.crater * 0.5, cone.crater * 0.68, r)) * vw;
         if (m > 0) c = mix(c, LAVA, m);
       }
     }
@@ -223,17 +227,19 @@ export function makeTerrain(seed) {
     const grass = plain * (1 - dirt);
     const vari = fbm(x * 0.02 + 77, z * 0.02 - 77, 2);
 
-    // 화산: 일반 돌 + 군데군데 용암 섞인 돌 + 분화구 용암
+    // 화산: 일반 돌 + 군데군데 용암 섞인 돌 + 분화구 바닥 용암
     const volc = w[3] * land;
-    let rc = Infinity, crater = 110;
+    let rc = Infinity, crater = 143;
     for (const cone of CONES) {
       const r = Math.hypot(u - cone.x, v - cone.z);
       if (r < rc) { rc = r; crater = cone.crater; }
     }
-    const nearCone = 1 - smooth(crater * 1.4, crater * 4.5, rc);
-    const lavaPatch = smooth(0.58, 0.65, fbm(x * 0.03 + 500, z * 0.03 - 500, 3));
-    const lavaRock = Math.min(1, lavaPatch * 0.85 + nearCone * 0.7);
-    const pool = (1 - smooth(crater * 0.65, crater * 0.98, rc)) * w[3];
+    // 분화구 바로 주변에는 용암 섞인 돌이 없고, 조금 떨어진 곳부터 나타남
+    const rimClear = smooth(crater * 1.0, crater * 1.8, rc);
+    const lavaPatch = smooth(0.58, 0.72, fbm(x * 0.03 + 500, z * 0.03 - 500, 3));
+    const lavaRock = Math.min(1, lavaPatch * 0.85) * rimClear;
+    // 용암은 평평한 분화구 바닥과 안쪽 벽 아래쪽에만
+    const pool = (1 - smooth(crater * 0.5, crater * 0.68, rc)) * w[3];
 
     return [grass, dirt, vari, village, jungle, desert, volc, lavaRock, pool];
   }
