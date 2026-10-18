@@ -456,7 +456,7 @@ function boot(socket, { id, seed }, nick, mode) {
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
-               const float WS1 = 0.020;
+        const float WS1 = 0.020;
         const float WS2 = 0.030;
         vec2 wq1 = vWaterXZ * WS1 + vec2(uTime * 0.008, uTime * 0.005);
         vec2 wq2 = vWaterXZ * WS2 + vec2(-uTime * 0.007, uTime * 0.010) + vec2(0.37, 0.61);
@@ -468,7 +468,7 @@ function boot(socket, { id, seed }, nick, mode) {
         float wl2 = dot(wr2, vec3(0.333));
         vec3 wtex = mix((wr1 + wr2) * 0.5, wb, 0.2) * 1.3;
         float wspark = smoothstep(0.68, 0.9, max(wl1, wl2));
-        diffuseColor.rgb = mix(diffuseColor.rgb, wtex, 0.9) + vec3(wspark * 0.25);
+        diffuseColor.rgb = mix(diffuseColor.rgb, wtex, 0.9) + vec3(wspark * 0.25);`
       )
       .replace(
         '#include <normal_fragment_begin>',
@@ -479,7 +479,7 @@ function boot(socket, { id, seed }, nick, mode) {
           float h1z = dot(texture2D(uRipple, wq1 + vec2(0.0, we)).rgb, vec3(0.333));
           float h2x = dot(texture2D(uRipple, wq2 + vec2(we, 0.0)).rgb, vec3(0.333));
           float h2z = dot(texture2D(uRipple, wq2 + vec2(0.0, we)).rgb, vec3(0.333));
-                    float gx = clamp(((h1x - wl1) * WS1 + (h2x - wl2) * WS2) / we, -2.0, 2.0);
+          float gx = clamp(((h1x - wl1) * WS1 + (h2x - wl2) * WS2) / we, -2.0, 2.0);
           float gz = clamp(((h1z - wl1) * WS1 + (h2z - wl2) * WS2) / we, -2.0, 2.0);
           vec3 nw = normalize(vec3(-gx * 0.4, 1.0, -gz * 0.4));
           normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz);
@@ -1505,7 +1505,7 @@ function boot(socket, { id, seed }, nick, mode) {
     camera.position.set(cx, cy, cz);
     camera.lookAt(tx, me.y + 1.5, tz);
 
-        // 물: 격자에 맞춰 움직여서 파도가 떨리지 않게 하고, 시간을 흘려보냄
+    // 물: 격자에 맞춰 움직여서 파도가 떨리지 않게 하고, 시간을 흘려보냄
     water.position.x = Math.round(me.x / WATER_STEP) * WATER_STEP;
     water.position.z = Math.round(me.z / WATER_STEP) * WATER_STEP;
     waterUniforms.uTime.value += dt;
