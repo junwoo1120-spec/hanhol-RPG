@@ -412,7 +412,7 @@ function boot(socket, { id, seed }, nick, mode) {
   const waterMat = new THREE.MeshLambertMaterial({
     color: 0x2f6fb5,
     transparent: true,
-    opacity: 0.82
+    opacity: 0.9
   });
 
   waterMat.onBeforeCompile = (shader) => {
