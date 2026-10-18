@@ -231,7 +231,7 @@ export function makeTerrain(seed) {
       if (r < rc) { rc = r; crater = cone.crater; }
     }
     const nearCone = 1 - smooth(crater * 1.4, crater * 4.5, rc);
-    const lavaPatch = smooth(0.58, 0.72, fbm(x * 0.03 + 500, z * 0.03 - 500, 3));
+    const lavaPatch = smooth(0.58, 0.65, fbm(x * 0.03 + 500, z * 0.03 - 500, 3));
     const lavaRock = Math.min(1, lavaPatch * 0.85 + nearCone * 0.7);
     const pool = (1 - smooth(crater * 0.65, crater * 0.98, rc)) * w[3];
 
