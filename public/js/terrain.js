@@ -236,7 +236,7 @@ export function makeTerrain(seed) {
     }
     // 분화구 바로 주변에는 용암 섞인 돌이 없고, 조금 떨어진 곳부터 나타남
     const rimClear = smooth(crater * 1.0, crater * 1.8, rc);
-    const lavaPatch = smooth(0.58, 0.72, fbm(x * 0.03 + 500, z * 0.03 - 500, 3));
+    const lavaPatch = smooth(0.58, 0.65, fbm(x * 0.03 + 500, z * 0.03 - 500, 3));
     const lavaRock = Math.min(1, lavaPatch * 0.85) * rimClear;
     // 용암은 평평한 분화구 바닥과 안쪽 벽 아래쪽에만
     const pool = (1 - smooth(crater * 0.5, crater * 0.68, rc)) * w[3];
