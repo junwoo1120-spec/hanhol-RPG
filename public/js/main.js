@@ -403,6 +403,7 @@ function boot(socket, { id, seed }, nick, mode) {
     return t;
   };
 
+  // 시간 값 (물과 용암이 같이 씀)
   const waterUniforms = {
     uTime: { value: 0 },
     uRipple: { value: loadWaterTex('/textures/water_ripple.jpg') },
@@ -520,7 +521,7 @@ function boot(socket, { id, seed }, nick, mode) {
     return indexCache[res];
   }
 
-  // 잔디/흙/모래 텍스처
+  // 땅 텍스처 (잔디/흙/모래/돌/용암)
   const texLoader = new THREE.TextureLoader();
   const loadTex = (url) => {
     const t = texLoader.load(url);
@@ -535,6 +536,9 @@ function boot(socket, { id, seed }, nick, mode) {
   const texDirt = loadTex('/textures/dirt.jpg');             // 평원: 흙 얼룩
   const texVillage = loadTex('/textures/village_dirt.jpg');  // 마을 흙바닥
   const texSand = loadTex('/textures/desert_sand.jpg');      // 사막 모래
+  const texRock = loadTex('/textures/rock.jpg');             // 화산: 일반 돌
+  const texLavaRock = loadTex('/textures/lava_rock.jpg');    // 화산: 용암 섞인 돌
+  const texLava = loadTex('/textures/lava.jpg');             // 화산: 분출구 용암
 
   const terrainMat = new THREE.MeshLambertMaterial({
     vertexColors: true
@@ -547,6 +551,10 @@ function boot(socket, { id, seed }, nick, mode) {
     shader.uniforms.uDirt = { value: texDirt };
     shader.uniforms.uVillage = { value: texVillage };
     shader.uniforms.uSand = { value: texSand };
+    shader.uniforms.uRock = { value: texRock };
+    shader.uniforms.uLavaRock = { value: texLavaRock };
+    shader.uniforms.uLava = { value: texLava };
+    shader.uniforms.uTime = waterUniforms.uTime;
 
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -554,8 +562,10 @@ function boot(socket, { id, seed }, nick, mode) {
         '#include <common>\n' +
         'attribute vec3 detail;\n' +
         'attribute vec3 detail2;\n' +
+        'attribute vec3 detail3;\n' +
         'varying vec3 vDetail;\n' +
         'varying vec3 vDetail2;\n' +
+        'varying vec3 vDetail3;\n' +
         'varying vec2 vWorldXZ;'
       )
       .replace(
@@ -563,6 +573,7 @@ function boot(socket, { id, seed }, nick, mode) {
         '#include <begin_vertex>\n' +
         'vDetail = detail;\n' +
         'vDetail2 = detail2;\n' +
+        'vDetail3 = detail3;\n' +
         'vWorldXZ = (modelMatrix * vec4(position, 1.0)).xz;'
       );
 
@@ -570,19 +581,25 @@ function boot(socket, { id, seed }, nick, mode) {
       .replace(
         '#include <common>',
         '#include <common>\n' +
+        'uniform float uTime;\n' +
         'uniform sampler2D uGrass;\n' +
         'uniform sampler2D uGold;\n' +
         'uniform sampler2D uJungle;\n' +
         'uniform sampler2D uDirt;\n' +
         'uniform sampler2D uVillage;\n' +
         'uniform sampler2D uSand;\n' +
+        'uniform sampler2D uRock;\n' +
+        'uniform sampler2D uLavaRock;\n' +
+        'uniform sampler2D uLava;\n' +
         'varying vec3 vDetail;\n' +
         'varying vec3 vDetail2;\n' +
+        'varying vec3 vDetail3;\n' +
         'varying vec2 vWorldXZ;'
       )
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
+        vec3 lavaGlow = vec3(0.0);
         {
           vec2 p = vWorldXZ;
 
@@ -617,12 +634,43 @@ function boot(socket, { id, seed }, nick, mode) {
           float l5 = dot(texture2D(uVillage, p * 0.03).rgb, vec3(0.333));
           vec3 villageCol = a5 * (0.7 + 0.6 * l5);
 
+          // 화산: 일반 돌 + 용암 섞인 돌
+          vec3 rk = texture2D(uRock, p * 0.12).rgb;
+          float rkl = dot(texture2D(uRock, p * 0.02).rgb, vec3(0.333));
+          vec3 rockCol = rk * (1.4 + 2.0 * rkl);
+
+          vec3 lr = texture2D(uLavaRock, p * 0.09).rgb;
+          vec3 lavaRockCol = lr * 1.4;
+
+          float lrMix = clamp(vDetail3.y, 0.0, 1.0);
+          float volc = clamp(vDetail3.x, 0.0, 1.0);
+          vec3 volcCol = mix(rockCol, lavaRockCol, lrMix);
+
+          // 용암 섞인 돌의 주황 균열은 스스로 빛남
+          float vein = smoothstep(0.35, 0.75, lr.r) * lrMix * volc;
+          lavaGlow += lr * vein * 0.7;
+
+          // 분출구 용암 (천천히 흐르고 살짝 맥동)
+          vec2 lq1 = p * 0.045 + vec2(uTime * 0.012, uTime * 0.008);
+          vec2 lq2 = p * 0.07 + vec2(-uTime * 0.010, uTime * 0.014) + vec2(0.31, 0.57);
+          vec3 lavaCol = (texture2D(uLava, lq1).rgb + texture2D(uLava, lq2).rgb) * 0.5
+                         * (0.92 + 0.08 * sin(uTime * 1.5));
+          float lp = clamp(vDetail3.z, 0.0, 1.0);
+          lavaGlow += lavaCol * lp * 0.75;
+
           diffuseColor.rgb = mix(diffuseColor.rgb, plainCol, clamp(vDetail.x, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, jungleCol, clamp(vDetail2.y, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, sandCol, clamp(vDetail2.z, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, dirtCol, clamp(vDetail.y, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, villageCol, clamp(vDetail2.x, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, volcCol, volc);
+          diffuseColor.rgb = mix(diffuseColor.rgb, lavaCol * 0.45, lp);
         }`
+      )
+      .replace(
+        '#include <emissivemap_fragment>',
+        '#include <emissivemap_fragment>\n' +
+        'totalEmissiveRadiance += lavaGlow;'
       );
   };
 
@@ -647,6 +695,7 @@ function boot(socket, { id, seed }, nick, mode) {
     const col = new Float32Array(V * 3);
     const det = new Float32Array(V * 3);
     const det2 = new Float32Array(V * 3);
+    const det3 = new Float32Array(V * 3);
 
     let i = 0;
 
@@ -683,6 +732,7 @@ function boot(socket, { id, seed }, nick, mode) {
         const d = T.detail(wx, wz, h);
         det.set([d[0], d[1], d[2]], i * 3);
         det2.set([d[3], d[4], d[5]], i * 3);
+        det3.set([d[6], d[7], d[8]], i * 3);
       }
     }
 
@@ -693,6 +743,7 @@ function boot(socket, { id, seed }, nick, mode) {
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.setAttribute('detail', new THREE.BufferAttribute(det, 3));
     geo.setAttribute('detail2', new THREE.BufferAttribute(det2, 3));
+    geo.setAttribute('detail3', new THREE.BufferAttribute(det3, 3));
     geo.setIndex(getIndex(res));
     geo.computeBoundingSphere();
 
@@ -1505,7 +1556,7 @@ function boot(socket, { id, seed }, nick, mode) {
     camera.position.set(cx, cy, cz);
     camera.lookAt(tx, me.y + 1.5, tz);
 
-    // 물: 격자에 맞춰 움직여서 파도가 떨리지 않게 하고, 시간을 흘려보냄
+    // 물: 격자에 맞춰 움직여서 파도가 떨리지 않게 하고, 시간을 흘려보냄 (용암도 같은 시간 사용)
     water.position.x = Math.round(me.x / WATER_STEP) * WATER_STEP;
     water.position.z = Math.round(me.z / WATER_STEP) * WATER_STEP;
     waterUniforms.uTime.value += dt;
