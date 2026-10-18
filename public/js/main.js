@@ -10,7 +10,7 @@ const N = 32;            // 청크 분할 수
 const VIEW = 5;          // 로딩 반경(청크 단위)
 const UNLOAD = VIEW + 2;
 
-const SPEED_SCALE = 1.5;  // 전체 이동속도 배율
+const SPEED_SCALE = 1.05; // 전체 이동속도 배율 (이전 1.5의 0.7배)
 const RUN_MULT = 2;       // 달리기 배율
 const RUN_TOGGLE = true;  // true: Ctrl을 한 번 누르면 켜짐/꺼짐, false: 누르고 있는 동안만 달리기
 const GRAVITY = 26;       // 중력
@@ -21,6 +21,32 @@ const FAST_MAX = 100;     // 속도 배율 최대 (서버 한도도 100)
 const RES_HIGH = N;       // 평소 청크 해상도
 const RES_LOW = 8;        // 빠르게 이동할 때 청크 해상도
 const PITCH_LIMIT = 1.45; // 위아래 회전 한계 (거의 수직까지)
+
+// 조작법 창에 표시할 내용 [키 목록, 설명]
+const HELP_KEYBOARD = [
+  [['W', 'A', 'S', 'D'], '이동'],
+  [['Space'], '점프'],
+  [['Ctrl'], '달리기 켜기/끄기'],
+  [['Shift'], '시점 고정 켜기/끄기'],
+  [['←', '→', '↑', '↓'], '화면 회전'],
+  [['마우스'], '화면 회전 (화면 클릭 후)'],
+  [['터치'], '화면 드래그로 회전'],
+  [['F'], '속도 배율 켜기/끄기'],
+  [['[', ']'], '속도 배율 -10 / +10'],
+  [['1', '2', '3', '4'], '인벤토리·장비·스킬·특성'],
+  [['H'], '조작법 열기/닫기'],
+  [['Esc'], '마우스 잠금 해제'],
+];
+const HELP_TOUCH = [
+  [['조이스틱'], '이동 (왼쪽 아래)'],
+  [['화면 드래그'], '화면 회전'],
+  [['⤒'], '점프'],
+  [['🏃'], '달리기 켜기/끄기'],
+  [['🔒'], '시점 고정 켜기/끄기'],
+  [['⚔️', '✨'], '공격·스킬 (준비 중)'],
+  [['속도 패널'], '속도 배율 ×10~100'],
+  [['하단 메뉴'], '인벤토리·장비·스킬·특성'],
+];
 
 // ============ RPG 스타일 UI ============
 const GAME_CSS = `
@@ -40,11 +66,25 @@ body.touch,body.touch *{-webkit-user-select:none;user-select:none;-webkit-touch-
 
 .rpg-status{position:fixed;top:8px;left:8px;z-index:5;max-width:200px;padding:6px 16px;border-radius:12px;background:linear-gradient(90deg,rgba(20,14,38,.88),rgba(20,14,38,.55));border:1px solid rgba(217,178,92,.75);box-shadow:0 2px 10px rgba(0,0,0,.45);color:#f6e3a1;font:600 13px sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 
-.speedpanel{position:fixed;top:8px;right:8px;z-index:5;width:190px;padding:8px;display:flex;flex-direction:column;gap:6px;border-radius:12px;background:rgba(20,14,38,.75);border:1px solid rgba(217,178,92,.75);color:#f6e3a1;font:600 13px sans-serif}
+.rt-stack{position:fixed;top:8px;right:8px;z-index:5;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.speedpanel{width:190px;padding:8px;display:flex;flex-direction:column;gap:6px;border-radius:12px;background:rgba(20,14,38,.75);border:1px solid rgba(217,178,92,.75);color:#f6e3a1;font:600 13px sans-serif}
 .speedpanel button{padding:7px 10px;font:700 14px sans-serif;border:1px solid #d9b25c;border-radius:8px;color:#fff;cursor:pointer}
 .speedpanel .hint{font:400 11px sans-serif;opacity:.8}
 body.touch .speedpanel{width:150px}
 body.touch .speedpanel .hint{display:none}
+
+.helpbtn{display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 12px 4px 8px;border-radius:8px;background:linear-gradient(#2a1f16,#150f0b);border:2px solid #8a6b3a;box-shadow:0 0 0 2px #0a0705,0 3px 10px rgba(0,0,0,.5);color:#f1dba4;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-weight:700;font-size:13px;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
+.helpbtn img{height:38px;width:auto;filter:drop-shadow(0 2px 3px rgba(0,0,0,.7))}
+.helpbtn:hover{filter:brightness(1.25)}
+.helppanel{display:none;box-sizing:border-box;width:250px;max-height:calc(100vh - 240px);overflow-y:auto;padding:10px 10px 8px;border-radius:6px;background:linear-gradient(#251b14,#16100c);border:3px solid #8a6b3a;box-shadow:0 0 0 2px #0a0705,inset 0 0 0 1px #4a3a22,0 6px 16px rgba(0,0,0,.55);color:#e8d3a0;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-size:12px;line-height:1.4}
+.helppanel h4{margin:0 0 6px;text-align:center;font-size:15px;letter-spacing:3px;color:#f6e3a1;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
+.hrow{display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px dashed rgba(138,107,58,.5)}
+.hrow.first{border-top:0}
+.hk{flex:none;width:96px;display:flex;flex-wrap:wrap;gap:3px}
+.kcap{padding:1px 5px;border-radius:3px;background:#3a2e20;border:1px solid #8a6b3a;border-bottom-width:3px;color:#fff3c4;font-size:11px;white-space:nowrap}
+.hd{flex:1}
+body.touch .helppanel{width:210px;font-size:11px}
+body.touch .hk{width:76px}
 
 .chips{display:flex;gap:6px;pointer-events:none}
 .chip{padding:3px 10px;border-radius:12px;font:600 12px sans-serif;background:rgba(20,14,38,.75);color:#8d8aa0;border:1px solid #4a3f72}
@@ -263,7 +303,7 @@ function showModeSelect(nick) {
   };
 
   row.append(
-    makeChoice('⌨️', '키보드', 'WASD · 마우스 / 방향키', 'keyboard'),
+    makeChoice('⌨️', '키보드', 'WASD · 마우스 / 방향키 / 터치', 'keyboard'),
     makeChoice('📱', '터치스크린', '조이스틱 · 버튼', 'touch')
   );
 
@@ -715,7 +755,10 @@ function boot(socket, { id, seed }, nick, mode) {
     updateModeUI();
   }
 
-  // ---------- 속도 배율 패널 (오른쪽 위) ----------
+  // ---------- 오른쪽 위: 속도 배율 패널 + 조작법 ----------
+  const stack = document.createElement('div');
+  stack.className = 'rt-stack';
+
   const panel = document.createElement('div');
   panel.className = 'speedpanel';
 
@@ -733,7 +776,58 @@ function boot(socket, { id, seed }, nick, mode) {
   hint.textContent = 'F: 켜기/끄기   [ ]: 배율 조절';
 
   panel.append(fastBtn, slider, hint);
-  document.body.appendChild(panel);
+
+  // 조작법 버튼 (책 아이콘) + 조작법 창
+  const helpBtn = document.createElement('div');
+  helpBtn.className = 'helpbtn';
+  const helpImg = document.createElement('img');
+  helpImg.src = '/ui/book.png';
+  helpImg.alt = '';
+  helpImg.draggable = false;
+  const helpLabel = document.createElement('span');
+  helpLabel.textContent = touchMode ? '조작법' : '조작법 (H)';
+  helpBtn.append(helpImg, helpLabel);
+
+  const helpPanel = document.createElement('div');
+  helpPanel.className = 'helppanel';
+  const helpTitle = document.createElement('h4');
+  helpTitle.textContent = '조작법';
+  helpPanel.appendChild(helpTitle);
+
+  (touchMode ? HELP_TOUCH : HELP_KEYBOARD).forEach(([keyList, desc], idx) => {
+    const row = document.createElement('div');
+    row.className = 'hrow' + (idx === 0 ? ' first' : '');
+    const hk = document.createElement('div');
+    hk.className = 'hk';
+    for (const k of keyList) {
+      const cap = document.createElement('span');
+      cap.className = 'kcap';
+      cap.textContent = k;
+      hk.appendChild(cap);
+    }
+    const hd = document.createElement('div');
+    hd.className = 'hd';
+    hd.textContent = desc;
+    row.append(hk, hd);
+    helpPanel.appendChild(row);
+  });
+
+  let helpOpen = false;
+  function setHelp(v) {
+    helpOpen = v;
+    helpPanel.style.display = helpOpen ? 'block' : 'none';
+  }
+  function toggleHelp() {
+    setHelp(!helpOpen);
+  }
+  helpBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    toggleHelp();
+  });
+  setHelp(!touchMode); // 키보드 모드는 처음에 열어둠
+
+  stack.append(panel, helpBtn, helpPanel);
+  document.body.appendChild(stack);
 
   function refreshPanel() {
     fastBtn.textContent =
@@ -840,7 +934,7 @@ function boot(socket, { id, seed }, nick, mode) {
   // ---------- 키보드 / 마우스 ----------
   const keys = {};
   const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
-  const GAME_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'Space'];
+  const GAME_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyH', 'Space'];
 
   window.addEventListener('keydown', (e) => {
     if (touchMode) return;
@@ -854,6 +948,7 @@ function boot(socket, { id, seed }, nick, mode) {
 
     if (e.code === 'Space') jumpBuffer = 0.15;
     if (e.code === 'KeyF') setFast(!fast);
+    if (e.code === 'KeyH') toggleHelp();
     if (e.code === 'BracketLeft') setMult(fastMult - 10);
     if (e.code === 'BracketRight') setMult(fastMult + 10);
 
@@ -878,7 +973,8 @@ function boot(socket, { id, seed }, nick, mode) {
   });
 
   if (!touchMode) {
-    renderer.domElement.addEventListener('click', () => {
+    renderer.domElement.addEventListener('click', (e) => {
+      if (e.pointerType === 'touch') return; // 터치로 누른 건 마우스 잠금을 하지 않음
       renderer.domElement.requestPointerLock();
     });
 
@@ -907,6 +1003,37 @@ function boot(socket, { id, seed }, nick, mode) {
     });
   }
 
+  // ---------- 화면 터치/드래그로 시점 회전 (키보드 모드에서도 가능) ----------
+  {
+    let lookId = null;
+    let lx = 0;
+    let ly = 0;
+    const canvas = renderer.domElement;
+
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' || lookId !== null) return;
+      lookId = e.pointerId;
+      lx = e.clientX;
+      ly = e.clientY;
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== lookId) return;
+      me.yaw -= (e.clientX - lx) * 0.005;
+      me.pitch = Math.min(
+        PITCH_LIMIT,
+        Math.max(-PITCH_LIMIT, me.pitch + (e.clientY - ly) * 0.005)
+      );
+      lx = e.clientX;
+      ly = e.clientY;
+    });
+    const lookEnd = (e) => {
+      if (e.pointerId === lookId) lookId = null;
+    };
+    canvas.addEventListener('pointerup', lookEnd);
+    canvas.addEventListener('pointercancel', lookEnd);
+  }
+
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -918,7 +1045,7 @@ function boot(socket, { id, seed }, nick, mode) {
     const hintbar = document.createElement('div');
     hintbar.className = 'hintbar';
     hintbar.textContent =
-      'WASD 이동 · Space 점프 · Ctrl 달리기 · Shift 시점고정 · 방향키/마우스 시점';
+      'WASD 이동 · Space 점프 · Ctrl 달리기 · Shift 시점고정 · 방향키/마우스/터치 시점';
     document.body.appendChild(hintbar);
 
     const chips = document.createElement('div');
@@ -932,10 +1059,10 @@ function boot(socket, { id, seed }, nick, mode) {
     chips.append(runChip, lockChip);
     document.body.appendChild(chips);
 
-    toast('화면을 클릭하면 마우스로 시점을 돌릴 수 있어요 (방향키도 가능)');
+    toast('화면을 클릭하면 마우스로 시점을 돌릴 수 있어요 (방향키, 터치도 가능)');
   }
 
-  // ---------- 터치 모드 전용 UI: 조이스틱, 버튼, 화면 드래그 ----------
+  // ---------- 터치 모드 전용 UI: 조이스틱, 버튼 ----------
   const joy = { x: 0, y: 0 };
 
   if (touchMode) {
@@ -1013,35 +1140,6 @@ function boot(socket, { id, seed }, nick, mode) {
     makeBtn('skill', '✨', '스킬', () => toast('스킬은 아직 준비 중이에요'));
     runBtn = makeBtn('run', '🏃', '달리기', () => setRun(!runOn));
     lockBtn = makeBtn('lock', '🔒', '', () => toggleShiftLock());
-
-    // 화면 드래그로 시점 회전 (조이스틱/버튼이 아닌 곳)
-    let lookId = null;
-    let lx = 0;
-    let ly = 0;
-    const canvas = renderer.domElement;
-
-    canvas.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' || lookId !== null) return;
-      lookId = e.pointerId;
-      lx = e.clientX;
-      ly = e.clientY;
-      canvas.setPointerCapture(e.pointerId);
-    });
-    canvas.addEventListener('pointermove', (e) => {
-      if (e.pointerId !== lookId) return;
-      me.yaw -= (e.clientX - lx) * 0.005;
-      me.pitch = Math.min(
-        PITCH_LIMIT,
-        Math.max(-PITCH_LIMIT, me.pitch + (e.clientY - ly) * 0.005)
-      );
-      lx = e.clientX;
-      ly = e.clientY;
-    });
-    const lookEnd = (e) => {
-      if (e.pointerId === lookId) lookId = null;
-    };
-    canvas.addEventListener('pointerup', lookEnd);
-    canvas.addEventListener('pointercancel', lookEnd);
 
     toast('왼쪽 조이스틱으로 이동, 화면을 드래그하면 시점이 돌아가요');
   }
