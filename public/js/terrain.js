@@ -1,14 +1,15 @@
 export const WATER_LEVEL = 0;
 
-const K = 4;               // 실제 좌표 -> 설계 좌표 배율 (클수록 맵이 작아짐)
-const HEIGHT_SCALE = 0.6;  // 지형 높이 배율
+const MAP_SCALE = 1.25;       // 맵 크기 배율 (1이면 이전 크기, 2면 두 배)
+const K = 4 / MAP_SCALE;      // 실제 좌표 -> 설계 좌표 배율
+const HEIGHT_SCALE = 0.6;     // 지형 높이 배율
 
 // 외곽 산맥 (한 겹의 매끈한 높은 벽)
-const RING_START = 1100;   // 벽이 솟기 시작하는 반지름
-const RING_END = 1300;     // 벽이 최대 높이에 도달하는 반지름
-const RING_H = 700;        // 벽 높이
+const RING_START = 1100 * MAP_SCALE;   // 벽이 솟기 시작하는 반지름
+const RING_END = 1300 * MAP_SCALE;     // 벽이 최대 높이에 도달하는 반지름
+const RING_H = 700;                    // 벽 높이
 
-export const PLAY_RADIUS = 1130;   // 플레이어가 갈 수 있는 최대 반지름
+export const PLAY_RADIUS = Math.round(1130 * MAP_SCALE);   // 플레이어가 갈 수 있는 최대 반지름
 export const VILLAGE = { x: 0, z: 0, r: 150, blend: 110, h: 10 };
 
 // 나침반에 표시할 지형 (설계 좌표를 실제 좌표로 자동 변환)
@@ -34,7 +35,7 @@ const PAL = [
   [0.36, 0.62, 0.25],
   [0.86, 0.74, 0.44],
   [0.07, 0.32, 0.11],
-  [0.80, 0.12, 0.07],   // 화산지대: 빨간색
+  [0.18, 0.16, 0.15],   // 화산지대: 어두운 돌 색 (텍스처가 덮어씀)
   [0.94, 0.97, 1.0],
   [0.80, 0.74, 0.50],
 ];
@@ -53,7 +54,7 @@ const REGIONS = [
   { t: 5, x: -380,  z: -2850, rx: 3300, rz: 1100 },  // 바다·해안
 ];
 
-// 화산: 큰 화산 하나만 (0.85배)
+// 화산: 큰 화산 하나만 (crater = 분화구 크기, 용암이 고이는 곳)
 const CONES = [
   { x: -2500, z: 900, R: 722, H: 340, crater: 110 },
 ];
@@ -180,7 +181,7 @@ export function makeTerrain(seed) {
     c = mix(c, SAND, 1 - smooth(1, 4, h));       // 해안은 모래
     c = mix(c, FLOOR, smooth(-1, -6, h));        // 물속은 어둡게
 
-    // 화산 분화구 용암색
+    // 화산 분화구 용암색 (텍스처가 없을 때를 위한 기본색)
     const vw = w[3];
     if (vw > 0.05) {
       for (const cone of CONES) {
@@ -195,7 +196,7 @@ export function makeTerrain(seed) {
     c = mix(c, DIRT, 1 - smooth(VILLAGE.r * 0.9, VILLAGE.r + VILLAGE.blend * 0.6, vdist));
 
     // 외곽 산맥: 바위색 + 꼭대기 눈
-    const ring = smooth(1050, 1200, Math.hypot(x, z));
+    const ring = smooth(RING_START - 50, RING_START + 100, Math.hypot(x, z));
     if (ring > 0) {
       c = mix(c, ROCK, ring);
       c = mix(c, SNOW, smooth(450, 650, h) * ring);
@@ -203,9 +204,12 @@ export function makeTerrain(seed) {
     return c;
   }
 
-  // 텍스처 가중치: [평원 잔디, 평원 흙 얼룩, 잔디 색 변화, 마을 흙, 정글 잔디, 사막 모래]
+  // 텍스처 가중치 9개:
+  // [평원 잔디, 평원 흙 얼룩, 잔디 색 변화, 마을 흙, 정글 잔디, 사막 모래,
+  //  화산 일반 돌, 용암 섞인 돌, 분출구 용암]
   function detail(x, z, h) {
-    const w = weights(x * K, z * K);
+    const u = x * K, v = z * K;
+    const w = weights(u, v);
     const land = smooth(2, 5, h);                          // 해안·물속 제외
     const plain = w[0] * land;
     const jungle = w[2] * land;
@@ -219,7 +223,19 @@ export function makeTerrain(seed) {
     const grass = plain * (1 - dirt);
     const vari = fbm(x * 0.02 + 77, z * 0.02 - 77, 2);
 
-    return [grass, dirt, vari, village, jungle, desert];
+    // 화산: 일반 돌 + 군데군데 용암 섞인 돌 + 분화구 용암
+    const volc = w[3] * land;
+    let rc = Infinity, crater = 110;
+    for (const cone of CONES) {
+      const r = Math.hypot(u - cone.x, v - cone.z);
+      if (r < rc) { rc = r; crater = cone.crater; }
+    }
+    const nearCone = 1 - smooth(crater * 1.4, crater * 4.5, rc);
+    const lavaPatch = smooth(0.58, 0.72, fbm(x * 0.03 + 500, z * 0.03 - 500, 3));
+    const lavaRock = Math.min(1, lavaPatch * 0.85 + nearCone * 0.7);
+    const pool = (1 - smooth(crater * 0.65, crater * 0.98, rc)) * w[3];
+
+    return [grass, dirt, vari, village, jungle, desert, volc, lavaRock, pool];
   }
 
   return { height, color, detail };
