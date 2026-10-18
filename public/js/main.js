@@ -456,17 +456,19 @@ function boot(socket, { id, seed }, nick, mode) {
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
-        vec2 wq1 = vWaterXZ * 0.055 + vec2(uTime * 0.020, uTime * 0.012);
-        vec2 wq2 = vWaterXZ * 0.085 + vec2(-uTime * 0.016, uTime * 0.024) + vec2(0.37, 0.61);
-        vec2 wq3 = vWaterXZ * 0.030 + vec2(uTime * 0.008, -uTime * 0.006);
+               const float WS1 = 0.020;
+        const float WS2 = 0.030;
+        vec2 wq1 = vWaterXZ * WS1 + vec2(uTime * 0.008, uTime * 0.005);
+        vec2 wq2 = vWaterXZ * WS2 + vec2(-uTime * 0.007, uTime * 0.010) + vec2(0.37, 0.61);
+        vec2 wq3 = vWaterXZ * 0.012 + vec2(uTime * 0.004, -uTime * 0.003);
         vec3 wr1 = texture2D(uRipple, wq1).rgb;
         vec3 wr2 = texture2D(uRipple, wq2).rgb;
         vec3 wb = texture2D(uBlotch, wq3).rgb;
         float wl1 = dot(wr1, vec3(0.333));
         float wl2 = dot(wr2, vec3(0.333));
-        vec3 wtex = mix((wr1 + wr2) * 0.5, wb, 0.35);
+        vec3 wtex = mix((wr1 + wr2) * 0.5, wb, 0.2) * 1.3;
         float wspark = smoothstep(0.68, 0.9, max(wl1, wl2));
-        diffuseColor.rgb = mix(diffuseColor.rgb, wtex, 0.85) + vec3(wspark * 0.3);`
+        diffuseColor.rgb = mix(diffuseColor.rgb, wtex, 0.9) + vec3(wspark * 0.25);
       )
       .replace(
         '#include <normal_fragment_begin>',
