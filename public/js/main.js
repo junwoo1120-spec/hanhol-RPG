@@ -479,9 +479,9 @@ function boot(socket, { id, seed }, nick, mode) {
           float h1z = dot(texture2D(uRipple, wq1 + vec2(0.0, we)).rgb, vec3(0.333));
           float h2x = dot(texture2D(uRipple, wq2 + vec2(we, 0.0)).rgb, vec3(0.333));
           float h2z = dot(texture2D(uRipple, wq2 + vec2(0.0, we)).rgb, vec3(0.333));
-          float gx = clamp(((h1x - wl1) * 0.055 + (h2x - wl2) * 0.085) / we, -2.0, 2.0);
-          float gz = clamp(((h1z - wl1) * 0.055 + (h2z - wl2) * 0.085) / we, -2.0, 2.0);
-          vec3 nw = normalize(vec3(-gx * 0.5, 1.0, -gz * 0.5));
+                    float gx = clamp(((h1x - wl1) * WS1 + (h2x - wl2) * WS2) / we, -2.0, 2.0);
+          float gz = clamp(((h1z - wl1) * WS1 + (h2z - wl2) * WS2) / we, -2.0, 2.0);
+          vec3 nw = normalize(vec3(-gx * 0.4, 1.0, -gz * 0.4));
           normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz);
         }`
       );
