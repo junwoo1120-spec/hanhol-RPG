@@ -455,4 +455,914 @@ function boot(socket, { id, seed }, nick, mode) {
 
           // 평원: 일반 잔디 + 연한 누런 잔디
           vec3 a1 = texture2D(uGrass, p * 0.25).rgb;
-          float l1 =
+          float l1 = dot(texture2D(uGrass, p * 0.04).rgb, vec3(0.333));
+          vec3 g1 = a1 * (0.6 + 0.8 * l1);
+
+          vec3 a2 = texture2D(uGold, p * 0.22).rgb;
+          float l2 = dot(texture2D(uGold, p * 0.035).rgb, vec3(0.333));
+          vec3 g2 = a2 * (0.6 + 0.8 * l2);
+
+          vec3 plainCol = mix(g1, g2, smoothstep(0.35, 0.65, vDetail.z));
+
+          // 정글: 진한 잔디
+          vec3 a4 = texture2D(uJungle, p * 0.22).rgb;
+          float l4 = dot(texture2D(uJungle, p * 0.035).rgb, vec3(0.333));
+          vec3 jungleCol = a4 * (0.6 + 1.6 * l4);
+
+          // 사막: 모래
+          vec3 a6 = texture2D(uSand, p * 0.2).rgb;
+          float l6 = dot(texture2D(uSand, p * 0.03).rgb, vec3(0.333));
+          vec3 sandCol = a6 * (0.75 + 0.35 * l6);
+
+          // 평원 흙 얼룩
+          vec3 a3 = texture2D(uDirt, p * 0.2).rgb;
+          float l3 = dot(texture2D(uDirt, p * 0.033).rgb, vec3(0.333));
+          vec3 dirtCol = a3 * (0.6 + 1.1 * l3);
+
+          // 마을 흙바닥
+          vec3 a5 = texture2D(uVillage, p * 0.15).rgb;
+          float l5 = dot(texture2D(uVillage, p * 0.03).rgb, vec3(0.333));
+          vec3 villageCol = a5 * (0.7 + 0.6 * l5);
+
+          diffuseColor.rgb = mix(diffuseColor.rgb, plainCol, clamp(vDetail.x, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, jungleCol, clamp(vDetail2.y, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, sandCol, clamp(vDetail2.z, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, dirtCol, clamp(vDetail.y, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, villageCol, clamp(vDetail2.x, 0.0, 1.0));
+        }`
+      );
+  };
+
+  const chunks = new Map();
+  const E = 0.5;
+  let fast = false;
+  let fastMult = FAST_MAX;
+
+  // 청크 생성 (res가 클수록 정밀)
+  function buildChunk(cx, cz, res) {
+    const key = `${cx},${cz}`;
+
+    const old = chunks.get(key);
+    if (old) {
+      scene.remove(old);
+      old.geometry.dispose();
+    }
+
+    const V = (res + 1) * (res + 1);
+    const pos = new Float32Array(V * 3);
+    const nor = new Float32Array(V * 3);
+    const col = new Float32Array(V * 3);
+    const det = new Float32Array(V * 3);
+    const det2 = new Float32Array(V * 3);
+
+    let i = 0;
+
+    for (let z = 0; z <= res; z++) {
+      for (let x = 0; x <= res; x++, i++) {
+        const wx = cx * S + (x * S) / res;
+        const wz = cz * S + (z * S) / res;
+
+        const h = T.height(wx, wz);
+
+        let nx = T.height(wx - E, wz) - T.height(wx + E, wz);
+        let ny = 2 * E;
+        let nz = T.height(wx, wz - E) - T.height(wx, wz + E);
+
+        const len = Math.hypot(nx, ny, nz) || 1;
+        nx /= len;
+        ny /= len;
+        nz /= len;
+
+        let c = T.color(wx, wz, h);
+
+        const rock = 1 - Math.min(1, Math.max(0, (ny - 0.40) / 0.2));
+
+        c = [
+          c[0] + (0.45 - c[0]) * rock,
+          c[1] + (0.43 - c[1]) * rock,
+          c[2] + (0.40 - c[2]) * rock
+        ];
+
+        pos.set([(x * S) / res, h, (z * S) / res], i * 3);
+        nor.set([nx, ny, nz], i * 3);
+        col.set(c, i * 3);
+
+        const d = T.detail(wx, wz, h);
+        det.set([d[0], d[1], d[2]], i * 3);
+        det2.set([d[3], d[4], d[5]], i * 3);
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('detail', new THREE.BufferAttribute(det, 3));
+    geo.setAttribute('detail2', new THREE.BufferAttribute(det2, 3));
+    geo.setIndex(getIndex(res));
+    geo.computeBoundingSphere();
+
+    const mesh = new THREE.Mesh(geo, terrainMat);
+    mesh.position.set(cx * S, 0, cz * S);
+    mesh.userData = { cx, cz, res };
+
+    scene.add(mesh);
+    chunks.set(key, mesh);
+  }
+
+  // 주변 청크 로딩 및 먼 청크 제거
+  function updateChunks(px, pz) {
+    const pcx = Math.floor(px / S);
+    const pcz = Math.floor(pz / S);
+
+    for (const [key, mesh] of chunks) {
+      const distance = Math.max(
+        Math.abs(mesh.userData.cx - pcx),
+        Math.abs(mesh.userData.cz - pcz)
+      );
+
+      if (distance > UNLOAD) {
+        scene.remove(mesh);
+        mesh.geometry.dispose();
+        chunks.delete(key);
+      }
+    }
+
+    // 배율 30 이상으로 빠르게 이동할 때만 거친 해상도 사용
+    const lowMode = fast && fastMult >= 30;
+    const wantRes = lowMode ? RES_LOW : RES_HIGH;
+    const t0 = performance.now();
+    const budget = lowMode ? 8 : 0; // 거친 모드: 프레임당 8ms까지, 평소: 1개씩
+
+    do {
+      let best = null;
+      let bestDistance = Infinity;
+
+      for (let dz = -VIEW; dz <= VIEW; dz++) {
+        for (let dx = -VIEW; dx <= VIEW; dx++) {
+          const distance = dx * dx + dz * dz;
+
+          if (distance > VIEW * VIEW) continue;
+          if (distance >= bestDistance) continue;
+
+          const existing = chunks.get(`${pcx + dx},${pcz + dz}`);
+          if (existing && existing.userData.res >= wantRes) continue;
+
+          bestDistance = distance;
+          best = [pcx + dx, pcz + dz];
+        }
+      }
+
+      if (!best) break;
+      buildChunk(best[0], best[1], wantRes);
+    } while (performance.now() - t0 < budget);
+  }
+
+  // 육지 스폰 위치 찾기
+  let sx = 0;
+  let sz = 0;
+  let foundLand = false;
+
+  search:
+  for (let r = 0; r < 400; r += 8) {
+    for (let a = 0; a < Math.PI * 2; a += 0.5) {
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+
+      if (T.height(x, z) > WATER_LEVEL + 1) {
+        sx = x;
+        sz = z;
+        foundLand = true;
+        break search;
+      }
+    }
+  }
+
+  if (!foundLand) {
+    console.warn(
+      '스폰 주변에서 물보다 높은 지형을 찾지 못했습니다. terrain.js를 확인하세요.'
+    );
+  }
+
+  const me = {
+    x: sx,
+    z: sz,
+    y: T.height(sx, sz),
+    yaw: 0,
+    pitch: 0.45,
+    ry: 0
+  };
+
+  // 점프/중력 상태
+  let vy = 0;
+  let grounded = true;
+  let jumpBuffer = 0;
+  let jumpHeld = false;
+
+  // 조작 상태
+  let shiftLock = false;   // 시프트락 (로블록스식)
+  let runOn = false;       // 달리기 켜짐
+  let idleTime = 0;
+  let slk = 0;             // 시프트락 카메라 이동 보간값
+
+  const myAvatar = makeAvatar('', 0xffffff);
+  myAvatar.children[1].visible = false;
+  scene.add(myAvatar);
+
+  // ---------- 공통 UI: 닉네임 표시, 안내 메시지, 조준점 ----------
+  const status = document.createElement('div');
+  status.className = 'rpg-status';
+  status.textContent = nick;
+  document.body.appendChild(status);
+
+  const toastEl = document.createElement('div');
+  toastEl.className = 'toast';
+  document.body.appendChild(toastEl);
+
+  let toastTimer = 0;
+  function toast(text) {
+    toastEl.textContent = text;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+  }
+
+  const cross = document.createElement('div');
+  cross.className = 'cross';
+  document.body.appendChild(cross);
+
+  let runBtn = null, lockBtn = null, runChip = null, lockChip = null;
+
+  function updateModeUI() {
+    if (runBtn) runBtn.classList.toggle('on', runOn);
+    if (lockBtn) lockBtn.classList.toggle('on', shiftLock);
+    if (runChip) runChip.classList.toggle('on', runOn);
+    if (lockChip) lockChip.classList.toggle('on', shiftLock);
+    cross.style.display = shiftLock ? 'block' : 'none';
+  }
+
+  function setRun(v) {
+    runOn = v;
+    updateModeUI();
+  }
+
+  function toggleShiftLock() {
+    shiftLock = !shiftLock;
+    if (shiftLock && !touchMode) {
+      try { renderer.domElement.requestPointerLock(); } catch (e) { /* 무시 */ }
+    }
+    updateModeUI();
+  }
+
+  // ---------- 속도 배율 패널 (오른쪽 위) ----------
+  const panel = document.createElement('div');
+  panel.className = 'speedpanel';
+
+  const fastBtn = document.createElement('button');
+
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = String(FAST_MIN);
+  slider.max = String(FAST_MAX);
+  slider.step = '5';
+  slider.value = String(fastMult);
+
+  const hint = document.createElement('div');
+  hint.className = 'hint';
+  hint.textContent = 'F: 켜기/끄기   [ ]: 배율 조절';
+
+  panel.append(fastBtn, slider, hint);
+  document.body.appendChild(panel);
+
+  function refreshPanel() {
+    fastBtn.textContent =
+      `⚡ 속도 ×${fastMult} ${fast ? 'ON' : 'OFF'}`;
+    fastBtn.style.background = fast ? '#d33' : '#3a2d5c';
+    slider.value = String(fastMult);
+  }
+
+  function setFast(v) {
+    fast = v;
+    refreshPanel();
+    socket.emit('fast', fast);
+    fastBtn.blur();
+  }
+
+  function setMult(m) {
+    fastMult = Math.max(FAST_MIN, Math.min(FAST_MAX, Math.round(m)));
+    refreshPanel();
+  }
+
+  fastBtn.addEventListener('click', () => setFast(!fast));
+  slider.addEventListener('input', () => setMult(Number(slider.value)));
+  slider.addEventListener('change', () => slider.blur());
+  refreshPanel();
+  socket.emit('fast', false);
+
+  // ---------- 나침반 (위쪽 가운데) ----------
+  const compass = document.createElement('div');
+  compass.style.cssText =
+    'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:5;' +
+    'width:min(' + (touchMode ? '420px,40vw' : '760px,56vw') + ');height:54px;overflow:hidden;border-radius:12px;' +
+    'background:rgba(20,14,38,.72);border:1px solid rgba(217,178,92,.75);' +
+    'color:#fff;pointer-events:none;font-family:sans-serif;text-shadow:0 0 3px #000';
+
+  const tick = document.createElement('div');
+  tick.style.cssText =
+    'position:absolute;left:50%;top:0;width:2px;height:100%;' +
+    'background:rgba(246,227,161,.45);transform:translateX(-50%)';
+  compass.appendChild(tick);
+
+  const compassItems = [];
+
+  function addCompassItem(text, bearing, style, landmark) {
+    const el = document.createElement('div');
+    el.style.cssText =
+      'position:absolute;transform:translateX(-50%);white-space:nowrap;' +
+      'display:none;' + style;
+    el.textContent = text;
+    compass.appendChild(el);
+    compassItems.push({ el, bearing, landmark, last: '' });
+  }
+
+  // 동서남북 (북쪽 = -z, 동쪽 = +x)
+  addCompassItem('N', 0, 'top:3px;font-size:20px;font-weight:bold;color:#ff5555');
+  addCompassItem('E', Math.PI / 2, 'top:3px;font-size:20px;font-weight:bold');
+  addCompassItem('S', Math.PI, 'top:3px;font-size:20px;font-weight:bold');
+  addCompassItem('W', Math.PI * 1.5, 'top:3px;font-size:20px;font-weight:bold');
+
+  // 지형 이름
+  for (const lm of LANDMARKS) {
+    addCompassItem(lm.name, 0, 'top:30px;font-size:13px;font-weight:bold;color:#ffe9a0', lm);
+  }
+
+  document.body.appendChild(compass);
+
+  function updateCompass() {
+    const heading = -me.yaw; // 바라보는 방향 (북쪽 기준, 시계 방향)
+
+    for (const item of compassItems) {
+      let bearing = item.bearing;
+      let label = null;
+
+      if (item.landmark) {
+        const dx = item.landmark.x - me.x;
+        const dz = item.landmark.z - me.z;
+        bearing = Math.atan2(dx, -dz);
+
+        const dist = Math.hypot(dx, dz);
+        const distText = dist >= 1000
+          ? (dist / 1000).toFixed(1) + 'km'
+          : Math.round(dist) + 'm';
+        label = `${item.landmark.name} ${distText}`;
+      }
+
+      let diff = bearing - heading;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      const deg = (diff * 180) / Math.PI;
+
+      if (Math.abs(deg) > 95) {
+        item.el.style.display = 'none';
+        continue;
+      }
+
+      item.el.style.display = 'block';
+      item.el.style.left = (50 + (deg / 100) * 50) + '%';
+
+      if (label !== null && label !== item.last) {
+        item.el.textContent = label;
+        item.last = label;
+      }
+    }
+  }
+
+  // ---------- 키보드 / 마우스 ----------
+  const keys = {};
+  const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+  const GAME_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'Space'];
+
+  window.addEventListener('keydown', (e) => {
+    if (touchMode) return;
+
+    if (ARROWS.includes(e.code) || e.code === 'Space') e.preventDefault();
+    if (e.ctrlKey && GAME_KEYS.includes(e.code)) e.preventDefault();
+
+    keys[e.code] = true;
+
+    if (e.repeat) return;
+
+    if (e.code === 'Space') jumpBuffer = 0.15;
+    if (e.code === 'KeyF') setFast(!fast);
+    if (e.code === 'BracketLeft') setMult(fastMult - 10);
+    if (e.code === 'BracketRight') setMult(fastMult + 10);
+
+    if ((e.code === 'ControlLeft' || e.code === 'ControlRight') && RUN_TOGGLE) {
+      setRun(!runOn);
+    }
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+      toggleShiftLock();
+    }
+
+    const m = /^Digit([1-4])$/.exec(e.code);
+    if (m) menuPress(Number(m[1]) - 1);
+  });
+
+  window.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+  });
+
+  window.addEventListener('blur', () => {
+    for (const k in keys) keys[k] = false;
+    jumpHeld = false;
+  });
+
+  if (!touchMode) {
+    renderer.domElement.addEventListener('click', () => {
+      renderer.domElement.requestPointerLock();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement !== renderer.domElement) return;
+
+      me.yaw -= e.movementX * 0.003;
+      me.pitch = Math.min(
+        PITCH_LIMIT,
+        Math.max(-PITCH_LIMIT, me.pitch + e.movementY * 0.003)
+      );
+    });
+
+    // Esc로 마우스 잠금이 풀리면 시프트락도 해제
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement !== renderer.domElement && shiftLock) {
+        shiftLock = false;
+        updateModeUI();
+      }
+    });
+
+    document.addEventListener('pointerlockerror', () => {
+      shiftLock = false;
+      updateModeUI();
+      toast('화면을 한 번 클릭한 뒤 Shift를 눌러 주세요');
+    });
+  }
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---------- 키보드 모드 전용 UI: 조작 안내, 달리기/시점고정 표시 ----------
+  if (!touchMode) {
+    const hintbar = document.createElement('div');
+    hintbar.className = 'hintbar';
+    hintbar.textContent =
+      'WASD 이동 · Space 점프 · Ctrl 달리기 · Shift 시점고정 · 방향키/마우스 시점';
+    document.body.appendChild(hintbar);
+
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    runChip = document.createElement('div');
+    runChip.className = 'chip';
+    runChip.textContent = '🏃 달리기';
+    lockChip = document.createElement('div');
+    lockChip.className = 'chip';
+    lockChip.textContent = '🔒 시점고정';
+    chips.append(runChip, lockChip);
+    document.body.appendChild(chips);
+
+    toast('화면을 클릭하면 마우스로 시점을 돌릴 수 있어요 (방향키도 가능)');
+  }
+
+  // ---------- 터치 모드 전용 UI: 조이스틱, 버튼, 화면 드래그 ----------
+  const joy = { x: 0, y: 0 };
+
+  if (touchMode) {
+    // 조이스틱
+    const base = document.createElement('div');
+    base.className = 'joy-base';
+    const knob = document.createElement('div');
+    knob.className = 'joy-knob';
+    base.appendChild(knob);
+    document.body.appendChild(base);
+
+    const JOY_R = 44;
+    let joyId = null;
+
+    const joyMove = (e) => {
+      const rect = base.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      let dx = e.clientX - cx;
+      let dy = e.clientY - cy;
+      const d = Math.hypot(dx, dy);
+      const k = d > JOY_R ? JOY_R / d : 1;
+      dx *= k;
+      dy *= k;
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      joy.x = dx / JOY_R;
+      joy.y = -dy / JOY_R;
+    };
+
+    const joyEnd = (e) => {
+      if (e.pointerId !== joyId) return;
+      joyId = null;
+      joy.x = 0;
+      joy.y = 0;
+      knob.style.transform = 'translate(0, 0)';
+    };
+
+    base.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      joyId = e.pointerId;
+      base.setPointerCapture(e.pointerId);
+      joyMove(e);
+    });
+    base.addEventListener('pointermove', (e) => {
+      if (e.pointerId === joyId) joyMove(e);
+    });
+    base.addEventListener('pointerup', joyEnd);
+    base.addEventListener('pointercancel', joyEnd);
+
+    // 버튼
+    const makeBtn = (cls, icon, label, onDown, onUp) => {
+      const b = document.createElement('div');
+      b.className = 'tbtn ' + cls;
+      b.innerHTML = '<span>' + icon + '</span>' + (label || '');
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        b.classList.add('press');
+        if (onDown) onDown();
+      });
+      const up = () => {
+        b.classList.remove('press');
+        if (onUp) onUp();
+      };
+      b.addEventListener('pointerup', up);
+      b.addEventListener('pointercancel', up);
+      b.addEventListener('pointerleave', up);
+      document.body.appendChild(b);
+      return b;
+    };
+
+    makeBtn('jump', '⤒', '점프',
+      () => { jumpHeld = true; jumpBuffer = 0.15; },
+      () => { jumpHeld = false; });
+    makeBtn('atk', '⚔️', '공격', () => toast('공격은 아직 준비 중이에요'));
+    makeBtn('skill', '✨', '스킬', () => toast('스킬은 아직 준비 중이에요'));
+    runBtn = makeBtn('run', '🏃', '달리기', () => setRun(!runOn));
+    lockBtn = makeBtn('lock', '🔒', '', () => toggleShiftLock());
+
+    // 화면 드래그로 시점 회전 (조이스틱/버튼이 아닌 곳)
+    let lookId = null;
+    let lx = 0;
+    let ly = 0;
+    const canvas = renderer.domElement;
+
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' || lookId !== null) return;
+      lookId = e.pointerId;
+      lx = e.clientX;
+      ly = e.clientY;
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== lookId) return;
+      me.yaw -= (e.clientX - lx) * 0.005;
+      me.pitch = Math.min(
+        PITCH_LIMIT,
+        Math.max(-PITCH_LIMIT, me.pitch + (e.clientY - ly) * 0.005)
+      );
+      lx = e.clientX;
+      ly = e.clientY;
+    });
+    const lookEnd = (e) => {
+      if (e.pointerId === lookId) lookId = null;
+    };
+    canvas.addEventListener('pointerup', lookEnd);
+    canvas.addEventListener('pointercancel', lookEnd);
+
+    toast('왼쪽 조이스틱으로 이동, 화면을 드래그하면 시점이 돌아가요');
+  }
+
+  updateModeUI();
+
+  // ---------- 하단 중앙 UI (레벨, HP/MP, 메뉴 버튼) ----------
+  // 지금은 모양만 있는 임시 값이에요. 나중에 실제 값으로 바꾸면 돼요.
+  const PLAYER = { level: 1, hp: 100, hpMax: 100, mp: 50, mpMax: 50 };
+
+  const fmt = (n) => {
+    if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.?0+$/, '') + 'M';
+    if (n >= 1e4) return (n / 1e3).toFixed(1).replace(/\.?0+$/, '') + 'K';
+    return String(n);
+  };
+  const pct = (a, b) => Math.max(0, Math.min(100, (a / b) * 100));
+
+  const bottomWrap = document.createElement('div');
+  bottomWrap.className = 'bottom-wrap';
+
+  // 키보드 모드의 조작 안내와 달리기/시점고정 표시를 패널 위로 옮김
+  for (const sel of ['.hintbar', '.chips']) {
+    const el = document.querySelector(sel);
+    if (el) bottomWrap.appendChild(el);
+  }
+
+  const hpmp = (cls, icon, cur, max) =>
+    '<div class="hpmp ' + cls + '">' +
+      '<div class="hpmp-ic"><img src="' + icon + '" alt="" draggable="false"></div>' +
+      '<div class="hpmp-bar"><div class="hpmp-in">' +
+        '<i style="width:' + pct(cur, max) + '%"></i>' +
+        '<span>' + fmt(cur) + ' / ' + fmt(max) + '</span>' +
+      '</div></div>' +
+    '</div>';
+
+  const bui = document.createElement('div');
+  bui.className = 'bui';
+  bui.innerHTML =
+    '<div class="bui-lv"><span>Lv.' + PLAYER.level + '</span></div>' +
+    hpmp('hp', '/ui/icon_heart.png', PLAYER.hp, PLAYER.hpMax) +
+    hpmp('mp', '/ui/icon_drop.png', PLAYER.mp, PLAYER.mpMax) +
+    '<div class="bui-menu"></div>';
+
+  const MENUS = [
+    ['/ui/icon_bag.png', '인벤토리'],
+    ['/ui/icon_gear.png', '장비'],
+    ['/ui/icon_skill.png', '스킬'],
+    ['/ui/icon_trait.png', '특성'],
+  ];
+  const menuSlots = [];
+  const menuEl = bui.querySelector('.bui-menu');
+
+  MENUS.forEach(([icon, name], i) => {
+    const b = document.createElement('div');
+    b.className = 'mbtn';
+    const img = document.createElement('img');
+    img.src = icon;
+    img.alt = '';
+    img.draggable = false;
+    const label = document.createElement('b');
+    label.textContent = name;
+    b.append(img, label);
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      menuPress(i);
+    });
+    menuEl.appendChild(b);
+    menuSlots.push(b);
+  });
+
+  bottomWrap.appendChild(bui);
+  document.body.appendChild(bottomWrap);
+
+  function menuPress(i) {
+    const b = menuSlots[i];
+    if (!b) return;
+    b.classList.add('flash');
+    setTimeout(() => b.classList.remove('flash'), 150);
+    toast(MENUS[i][1] + ' 기능은 아직 준비 중이에요');
+  }
+
+  // ---------- 다른 플레이어 ----------
+  const remotes = new Map();
+
+  socket.on('state', (data) => {
+    const list = normalizePlayers(data);
+    const seen = new Set();
+
+    for (const rawPlayer of list) {
+      const p = parsePlayer(rawPlayer);
+
+      if (
+        !p ||
+        p.id == null ||
+        !Number.isFinite(Number(p.x)) ||
+        !Number.isFinite(Number(p.z))
+      ) {
+        continue;
+      }
+
+      const pid = p.id;
+      const x = Number(p.x);
+      const y = Number(p.y) || 0;
+      const z = Number(p.z);
+      const ry = Number(p.ry) || 0;
+
+      if (String(pid) === String(id)) continue;
+
+      seen.add(pid);
+
+      let remote = remotes.get(pid);
+
+      if (!remote) {
+        remote = {
+          g: makeAvatar(p.nick || '플레이어', 0xffa040),
+          t: { x, y, z, ry }
+        };
+
+        remote.g.position.set(x, y, z);
+        scene.add(remote.g);
+        remotes.set(pid, remote);
+      }
+
+      remote.t = { x, y, z, ry };
+    }
+
+    for (const [pid, remote] of remotes) {
+      if (!seen.has(pid)) {
+        scene.remove(remote.g);
+        remotes.delete(pid);
+      }
+    }
+  });
+
+  socket.on('correct', (p) => {
+    if (!p) return;
+
+    if (Number.isFinite(p.x)) me.x = p.x;
+    if (Number.isFinite(p.z)) me.z = p.z;
+  });
+
+  // ---------- 게임 루프 ----------
+  let sendTimer = 0;
+  let compassTimer = 0;
+  const clock = new THREE.Clock();
+
+  function loop() {
+    requestAnimationFrame(loop);
+
+    const dt = Math.min(clock.getDelta(), 0.1);
+
+    // 방향키로 화면 회전 (좌우 무제한, 위아래는 거의 수직까지)
+    if (keys.ArrowLeft) me.yaw += 1.8 * dt;
+    if (keys.ArrowRight) me.yaw -= 1.8 * dt;
+    if (keys.ArrowUp) me.pitch -= 1.5 * dt;
+    if (keys.ArrowDown) me.pitch += 1.5 * dt;
+    me.pitch = Math.min(PITCH_LIMIT, Math.max(-PITCH_LIMIT, me.pitch));
+
+    // 이동 입력 (앞뒤 inF, 좌우 inR)
+    let inF = 0;
+    let inR = 0;
+
+    if (touchMode) {
+      if (Math.hypot(joy.x, joy.y) > 0.12) {
+        inF = joy.y;
+        inR = joy.x;
+      }
+    } else {
+      inF = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+      inR = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+    }
+
+    const mag = Math.min(1, Math.hypot(inF, inR));
+
+    const fx = -Math.sin(me.yaw);
+    const fz = -Math.cos(me.yaw);
+    const rx = Math.cos(me.yaw);
+    const rz = -Math.sin(me.yaw);
+
+    const mx = fx * inF + rx * inR;
+    const mz = fz * inF + rz * inR;
+    const len = Math.hypot(mx, mz);
+
+    let moved = 0;
+
+    if (len > 0.01) {
+      const running = RUN_TOGGLE ? runOn : (keys.ControlLeft || keys.ControlRight);
+      const speed =
+        7 * SPEED_SCALE * (running ? RUN_MULT : 1) * (fast ? fastMult : 1) * mag;
+
+      const dirX = mx / len;
+      const dirZ = mz / len;
+
+      let px = me.x + dirX * speed * dt;
+      let pz = me.z + dirZ * speed * dt;
+
+      // 원형 활동 범위 제한
+      const pr = Math.hypot(px, pz);
+      if (pr > PLAY_RADIUS) {
+        px *= PLAY_RADIUS / pr;
+        pz *= PLAY_RADIUS / pr;
+      }
+
+      moved = Math.hypot(px - me.x, pz - me.z);
+      me.x = px;
+      me.z = pz;
+
+      // 시프트락이 꺼져 있으면 가는 방향으로 몸을 돌림
+      if (!shiftLock) me.ry = Math.atan2(dirX, dirZ);
+      idleTime = 0;
+    } else {
+      idleTime += dt;
+      if (RUN_TOGGLE && runOn && idleTime > 0.4) setRun(false); // 멈추면 달리기 해제
+    }
+
+    // 시프트락: 항상 카메라가 보는 방향을 바라봄 (이동은 수평 이동)
+    if (shiftLock) me.ry = Math.atan2(fx, fz);
+
+    // 점프 / 중력
+    if (keys.Space || jumpHeld) jumpBuffer = Math.max(jumpBuffer, 0.1);
+    jumpBuffer = Math.max(0, jumpBuffer - dt);
+
+    const ground = Math.max(T.height(me.x, me.z), WATER_LEVEL - 0.8);
+    const stepTol = 0.6 + moved * 2.0;
+
+    if (grounded) {
+      if (me.y - ground > stepTol) grounded = false; // 절벽 끝에서 떨어짐
+      else me.y = ground;
+    }
+
+    if (grounded && jumpBuffer > 0) {
+      vy = JUMP_V;
+      grounded = false;
+      jumpBuffer = 0;
+    }
+
+    if (!grounded) {
+      vy -= GRAVITY * dt;
+      me.y += vy * dt;
+
+      if (me.y <= ground) {
+        me.y = ground;
+        if (vy < 0) {
+          vy = 0;
+          grounded = true;
+        }
+      }
+    }
+
+    myAvatar.position.set(me.x, me.y, me.z);
+    myAvatar.rotation.y = me.ry;
+
+    // 3인칭 카메라 (360도 궤도 회전, 시프트락이면 어깨 너머 시점)
+    slk += ((shiftLock ? 1 : 0) - slk) * (1 - Math.exp(-10 * dt));
+    const side = 1.3 * slk;
+    const dist = 9 - 1.5 * slk;
+
+    const tx = me.x + rx * side;
+    const tz = me.z + rz * side;
+
+    const cx = tx + Math.sin(me.yaw) * Math.cos(me.pitch) * dist;
+    const cz = tz + Math.cos(me.yaw) * Math.cos(me.pitch) * dist;
+
+    const cy = Math.max(
+      me.y + Math.sin(me.pitch) * dist + 1.5,
+      T.height(cx, cz) + 1.5
+    );
+
+    camera.position.set(cx, cy, cz);
+    camera.lookAt(tx, me.y + 1.5, tz);
+
+    // 물과 지형
+    water.position.x = me.x;
+    water.position.z = me.z;
+
+    updateChunks(me.x, me.z);
+
+    // 나침반 (0.1초마다)
+    compassTimer += dt;
+    if (compassTimer > 0.1) {
+      compassTimer = 0;
+      updateCompass();
+    }
+
+    // 다른 플레이어 위치 보간
+    for (const remote of remotes.values()) {
+      const k = 1 - Math.exp(-12 * dt);
+
+      remote.g.position.x += (remote.t.x - remote.g.position.x) * k;
+      remote.g.position.y += (remote.t.y - remote.g.position.y) * k;
+      remote.g.position.z += (remote.t.z - remote.g.position.z) * k;
+      remote.g.rotation.y = remote.t.ry;
+    }
+
+    // 서버로 이동 정보 전송
+    sendTimer += dt;
+
+    if (sendTimer > 0.05) {
+      sendTimer = 0;
+
+      socket.emit('move', {
+        x: me.x,
+        y: me.y,
+        z: me.z,
+        ry: me.ry
+      });
+    }
+
+    $('hud').textContent =
+      `X ${me.x.toFixed(0)}  Z ${me.z.toFixed(0)}\n` +
+      `청크 ${chunks.size}  접속 ${remotes.size + 1}명`;
+
+    renderer.render(scene, camera);
+  }
+
+  // 초기 청크를 빠르게 생성
+  updateChunks(me.x, me.z);
+  updateChunks(me.x, me.z);
+  updateChunks(me.x, me.z);
+  updateCompass();
+
+  loop();
+}
