@@ -571,6 +571,8 @@ function boot(socket, { id, seed }, nick, mode) {
   const texRock = loadTex('/textures/rock.jpg');             // 화산: 일반 돌
   const texLavaRock = loadTex('/textures/lava_rock.jpg');    // 화산: 용암 섞인 돌
   const texLava = loadTex('/textures/lava.jpg');             // 화산: 분출구 용암
+  const texSnow = loadTex('/textures/snow.jpg');               // 설원: 눈 덮인 지면
+  const texIce = loadTex('/textures/ice.jpg');                 // 설원: 얼음 결정 지면
 
   const terrainMat = new THREE.MeshLambertMaterial({
     vertexColors: true
@@ -586,6 +588,8 @@ function boot(socket, { id, seed }, nick, mode) {
     shader.uniforms.uRock = { value: texRock };
     shader.uniforms.uLavaRock = { value: texLavaRock };
     shader.uniforms.uLava = { value: texLava };
+    shader.uniforms.uSnow = { value: texSnow };
+    shader.uniforms.uIce = { value: texIce };
     shader.uniforms.uTime = waterUniforms.uTime;
 
     shader.vertexShader = shader.vertexShader
@@ -595,10 +599,10 @@ function boot(socket, { id, seed }, nick, mode) {
         'uniform float uTime;\n' +
         'attribute vec3 detail;\n' +
         'attribute vec3 detail2;\n' +
-        'attribute vec3 detail3;\n' +
+        'attribute vec4 detail3;\n' +
         'varying vec3 vDetail;\n' +
         'varying vec3 vDetail2;\n' +
-        'varying vec3 vDetail3;\n' +
+        'varying vec4 vDetail3;\n' +
         'varying vec2 vWorldXZ;'
       )
       .replace(
@@ -632,9 +636,11 @@ function boot(socket, { id, seed }, nick, mode) {
         'uniform sampler2D uRock;\n' +
         'uniform sampler2D uLavaRock;\n' +
         'uniform sampler2D uLava;\n' +
+        'uniform sampler2D uSnow;\n' +
+        'uniform sampler2D uIce;\n' +
         'varying vec3 vDetail;\n' +
         'varying vec3 vDetail2;\n' +
-        'varying vec3 vDetail3;\n' +
+        'varying vec4 vDetail3;\n' +
         'varying vec2 vWorldXZ;'
       )
       .replace(
@@ -708,7 +714,7 @@ function boot(socket, { id, seed }, nick, mode) {
           diffuseColor.rgb = mix(diffuseColor.rgb, sandCol, clamp(vDetail2.z, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, dirtCol, clamp(vDetail.y, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, villageCol, clamp(vDetail2.x, 0.0, 1.0));
-          diffuseColor.rgb = mix(diffuseColor.rgb, volcCol, volc);
+          diffuseColor.rgb = mix(diffuseColor.rgb, volcCol, volc);\n          diffuseColor.rgb = mix(diffuseColor.rgb, snowCol, snowMix);
           diffuseColor.rgb = mix(diffuseColor.rgb, lavaCol * 0.45, lp);
         }`
       )
@@ -740,7 +746,7 @@ function boot(socket, { id, seed }, nick, mode) {
     const col = new Float32Array(V * 3);
     const det = new Float32Array(V * 3);
     const det2 = new Float32Array(V * 3);
-    const det3 = new Float32Array(V * 3);
+    const det3 = new Float32Array(V * 4);
 
     let i = 0;
 
@@ -777,7 +783,7 @@ function boot(socket, { id, seed }, nick, mode) {
         const d = T.detail(wx, wz, h);
         det.set([d[0], d[1], d[2]], i * 3);
         det2.set([d[3], d[4], d[5]], i * 3);
-        det3.set([d[6], d[7], d[8]], i * 3);
+        det3.set([d[6], d[7], d[8], d[9]], i * 4);
       }
     }
 
@@ -788,7 +794,7 @@ function boot(socket, { id, seed }, nick, mode) {
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.setAttribute('detail', new THREE.BufferAttribute(det, 3));
     geo.setAttribute('detail2', new THREE.BufferAttribute(det2, 3));
-    geo.setAttribute('detail3', new THREE.BufferAttribute(det3, 3));
+    geo.setAttribute('detail3', new THREE.BufferAttribute(det3, 4));
     geo.setIndex(getIndex(res));
     geo.computeBoundingSphere();
 
