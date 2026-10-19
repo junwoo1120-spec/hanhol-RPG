@@ -172,6 +172,7 @@ function computeUiScale() {
   const shortSide = Math.min(window.innerWidth, window.innerHeight);
   return Math.max(0.75, Math.min(1.6, shortSide / 400));
 }
+
 // 플레이어 라벨
 function makeLabel(text) {
   const canvas = document.createElement('canvas');
@@ -553,7 +554,7 @@ function boot(socket, { id, seed }, nick, mode) {
     return indexCache[res];
   }
 
-  // 땅 텍스처 (잔디/흙/모래/돌/용암)
+  // 땅 텍스처 (잔디/흙/모래/돌/용암/눈/얼음)
   const texLoader = new THREE.TextureLoader();
   const loadTex = (url) => {
     const t = texLoader.load(url);
@@ -571,6 +572,9 @@ function boot(socket, { id, seed }, nick, mode) {
   const texRock = loadTex('/textures/rock.jpg');             // 화산: 일반 돌
   const texLavaRock = loadTex('/textures/lava_rock.jpg');    // 화산: 용암 섞인 돌
   const texLava = loadTex('/textures/lava.jpg');             // 화산: 분출구 용암
+  const texSnow = loadTex('/textures/snow.jpg');             // 설원: 눈
+  const texSnowRock = loadTex('/textures/snow_rock.jpg');    // 설원: 눈 덮힌 바위
+  const texIce = loadTex('/textures/ice.jpg');               // 설원: 얼음
 
   const terrainMat = new THREE.MeshLambertMaterial({
     vertexColors: true
@@ -586,6 +590,9 @@ function boot(socket, { id, seed }, nick, mode) {
     shader.uniforms.uRock = { value: texRock };
     shader.uniforms.uLavaRock = { value: texLavaRock };
     shader.uniforms.uLava = { value: texLava };
+    shader.uniforms.uSnow = { value: texSnow };
+    shader.uniforms.uSnowRock = { value: texSnowRock };
+    shader.uniforms.uIce = { value: texIce };
     shader.uniforms.uTime = waterUniforms.uTime;
 
     shader.vertexShader = shader.vertexShader
@@ -596,9 +603,12 @@ function boot(socket, { id, seed }, nick, mode) {
         'attribute vec3 detail;\n' +
         'attribute vec3 detail2;\n' +
         'attribute vec3 detail3;\n' +
+        'attribute vec3 detail4;\n' +
         'varying vec3 vDetail;\n' +
         'varying vec3 vDetail2;\n' +
         'varying vec3 vDetail3;\n' +
+        'varying vec3 vDetail4;\n' +
+        'varying float vNy;\n' +
         'varying vec2 vWorldXZ;'
       )
       .replace(
@@ -607,6 +617,8 @@ function boot(socket, { id, seed }, nick, mode) {
         vDetail = detail;
         vDetail2 = detail2;
         vDetail3 = detail3;
+        vDetail4 = detail4;
+        vNy = normal.y;
         vec3 wpL = (modelMatrix * vec4(position, 1.0)).xyz;
         vWorldXZ = wpL.xz;
         // 분화구 용암 표면이 위아래로 일렁임 (용암 가장자리는 0이라 땅과 갈라지지 않음)
@@ -632,9 +644,14 @@ function boot(socket, { id, seed }, nick, mode) {
         'uniform sampler2D uRock;\n' +
         'uniform sampler2D uLavaRock;\n' +
         'uniform sampler2D uLava;\n' +
+        'uniform sampler2D uSnow;\n' +
+        'uniform sampler2D uSnowRock;\n' +
+        'uniform sampler2D uIce;\n' +
         'varying vec3 vDetail;\n' +
         'varying vec3 vDetail2;\n' +
         'varying vec3 vDetail3;\n' +
+        'varying vec3 vDetail4;\n' +
+        'varying float vNy;\n' +
         'varying vec2 vWorldXZ;'
       )
       .replace(
@@ -703,6 +720,27 @@ function boot(socket, { id, seed }, nick, mode) {
           float lp = clamp(vDetail3.z, 0.0, 1.0);
           lavaGlow += lavaCol * lp * 0.9;
 
+          // 설원: 눈 / 눈 덮힌 바위 / 얼음
+          // (반복 무늬가 티 나지 않도록 각도와 크기를 달리해 두 번 읽어서 섞음)
+          vec2 pr = vec2(p.x * 0.8 - p.y * 0.6, p.x * 0.6 + p.y * 0.8);
+          float tb = smoothstep(0.35, 0.65, vDetail.z);
+
+          vec3 snowCol = texture2D(uSnow, p * 0.10).rgb * 0.92;
+
+          vec3 srA = texture2D(uSnowRock, p * 0.085).rgb;
+          vec3 srB = texture2D(uSnowRock, pr * 0.061 + vec2(0.23, 0.47)).rgb;
+          vec3 snowRockCol = mix(srA, srB, tb) * 1.7;
+
+          vec3 icA = texture2D(uIce, p * 0.055).rgb;
+          vec3 icB = texture2D(uIce, pr * 0.038 + vec2(0.61, 0.17)).rgb;
+          vec3 iceCol = mix(icA, icB, tb) * 1.15;
+
+          // 가파른 곳은 바위, 바위 덩어리의 평평한 윗면은 눈이 쌓임
+          float slopeRock = 1.0 - smoothstep(0.55, 0.85, vNy);
+          float patchRock = clamp(vDetail4.y, 0.0, 1.0) * (1.0 - smoothstep(0.82, 0.95, vNy));
+          float rockAmt = clamp(max(slopeRock, patchRock), 0.0, 1.0);
+          vec3 snowGround = mix(snowCol, snowRockCol, rockAmt);
+
           diffuseColor.rgb = mix(diffuseColor.rgb, plainCol, clamp(vDetail.x, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, jungleCol, clamp(vDetail2.y, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, sandCol, clamp(vDetail2.z, 0.0, 1.0));
@@ -710,6 +748,8 @@ function boot(socket, { id, seed }, nick, mode) {
           diffuseColor.rgb = mix(diffuseColor.rgb, villageCol, clamp(vDetail2.x, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, volcCol, volc);
           diffuseColor.rgb = mix(diffuseColor.rgb, lavaCol * 0.45, lp);
+          diffuseColor.rgb = mix(diffuseColor.rgb, snowGround, clamp(vDetail4.x, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, iceCol, clamp(vDetail4.z, 0.0, 1.0));
         }`
       )
       .replace(
@@ -741,6 +781,7 @@ function boot(socket, { id, seed }, nick, mode) {
     const det = new Float32Array(V * 3);
     const det2 = new Float32Array(V * 3);
     const det3 = new Float32Array(V * 3);
+    const det4 = new Float32Array(V * 3);
 
     let i = 0;
 
@@ -778,6 +819,7 @@ function boot(socket, { id, seed }, nick, mode) {
         det.set([d[0], d[1], d[2]], i * 3);
         det2.set([d[3], d[4], d[5]], i * 3);
         det3.set([d[6], d[7], d[8]], i * 3);
+        det4.set([d[9], d[10], d[11]], i * 3);
       }
     }
 
@@ -789,6 +831,7 @@ function boot(socket, { id, seed }, nick, mode) {
     geo.setAttribute('detail', new THREE.BufferAttribute(det, 3));
     geo.setAttribute('detail2', new THREE.BufferAttribute(det2, 3));
     geo.setAttribute('detail3', new THREE.BufferAttribute(det3, 3));
+    geo.setAttribute('detail4', new THREE.BufferAttribute(det4, 3));
     geo.setIndex(getIndex(res));
     geo.computeBoundingSphere();
 
@@ -1302,7 +1345,7 @@ function boot(socket, { id, seed }, nick, mode) {
     base.addEventListener('pointerup', joyEnd);
     base.addEventListener('pointercancel', joyEnd);
 
-    // 버튼
+    // 버튼 (오른쪽 아래 묶음)
     const tgroup = document.createElement('div');
     tgroup.className = 'tgroup';
     document.body.appendChild(tgroup);
@@ -1415,7 +1458,7 @@ function boot(socket, { id, seed }, nick, mode) {
     setTimeout(() => b.classList.remove('flash'), 150);
     toast(MENUS[i][1] + ' 기능은 아직 준비 중이에요');
   }
-  
+
   // ---------- 화면 크기에 맞춰 터치 UI 크기 조절 ----------
   function applyUiScale() {
     if (!touchMode) return;
@@ -1435,6 +1478,7 @@ function boot(socket, { id, seed }, nick, mode) {
   window.addEventListener('resize', applyUiScale);
   window.addEventListener('orientationchange', applyUiScale);
   applyUiScale();
+
   // ---------- 다른 플레이어 ----------
   const remotes = new Map();
 
