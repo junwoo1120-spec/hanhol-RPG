@@ -167,6 +167,11 @@ body.touch .mbtn b{font-size:9px}
   document.head.appendChild(fontLink);
 })();
 
+// 단말기 화면 크기에 맞춘 UI 배율 (짧은 쪽 400px = 1배, 0.75~1.6배)
+function computeUiScale() {
+  const shortSide = Math.min(window.innerWidth, window.innerHeight);
+  return Math.max(0.75, Math.min(1.6, shortSide / 400));
+}
 // 플레이어 라벨
 function makeLabel(text) {
   const canvas = document.createElement('canvas');
