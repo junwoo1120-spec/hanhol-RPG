@@ -219,6 +219,7 @@ export function makeTerrain(seed) {
     const plain = w[0] * land;
     const jungle = w[2] * land;
     const desert = w[1] * land;
+    const snow = w[4] * land;
 
     const vdist = Math.hypot(x - VILLAGE.x, z - VILLAGE.z);
     const village = 1 - smooth(VILLAGE.r * 0.9, VILLAGE.r + VILLAGE.blend * 0.6, vdist);
@@ -244,7 +245,7 @@ export function makeTerrain(seed) {
     const rp = crater * (0.6 + 0.4 * tInv);                      // 용암이 벽에 닿는 반지름 (수위에 맞춰 자동 계산)
     const pool = (1 - smooth(rp - crater * 0.08, rp, rc)) * w[3];
 
-    return [grass, dirt, vari, village, jungle, desert, volc, lavaRock, pool];
+    return [grass, dirt, vari, village, jungle, desert, volc, lavaRock, pool, snow];
   }
 
   return { height, color, detail };
