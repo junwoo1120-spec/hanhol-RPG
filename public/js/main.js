@@ -107,13 +107,6 @@ body.touch .hk{width:76px}
 
 .toast{position:fixed;left:50%;top:70px;transform:translateX(-50%);padding:6px 14px;border-radius:14px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font:600 13px sans-serif;z-index:9;pointer-events:none;opacity:0;transition:opacity .25s}
 .toast.show{opacity:1}
-body.touch .joy-base{transform:scale(var(--ui,1));transform-origin:left bottom}
-.tgroup{display:none}
-body.touch .tgroup{display:block;position:fixed;right:0;bottom:0;width:230px;height:290px;z-index:6;pointer-events:none;transform:scale(var(--ui,1));transform-origin:right bottom}
-body.touch .tgroup .tbtn{position:absolute;pointer-events:auto}
-body.touch .bottom-wrap{transform:translateX(-50%) scale(var(--ui,1));transform-origin:center bottom}
-body.touch .rpg-status{transform:scale(var(--ui,1));transform-origin:left top}
-body.touch .rt-stack{transform:scale(var(--ui,1));transform-origin:right top}
 .cross{position:fixed;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;border:2px solid rgba(255,255,255,.9);box-shadow:0 0 4px #000;z-index:5;pointer-events:none;display:none}
 
 .bottom-wrap{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:5;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none;width:min(500px,94vw)}
@@ -167,11 +160,6 @@ body.touch .mbtn b{font-size:9px}
   document.head.appendChild(fontLink);
 })();
 
-// 단말기 화면 크기에 맞춘 UI 배율 (짧은 쪽 400px = 1배, 0.75~1.6배)
-function computeUiScale() {
-  const shortSide = Math.min(window.innerWidth, window.innerHeight);
-  return Math.max(0.75, Math.min(1.6, shortSide / 400));
-}
 // 플레이어 라벨
 function makeLabel(text) {
   const canvas = document.createElement('canvas');
@@ -369,7 +357,6 @@ function connect(nick, mode) {
 
 function boot(socket, { id, seed }, nick, mode) {
   const touchMode = mode === 'touch';
-  let uiScale = touchMode ? computeUiScale() : 1;
   document.body.classList.add(touchMode ? 'touch' : 'kbd');
   $('login').style.display = 'none';
 
@@ -571,8 +558,6 @@ function boot(socket, { id, seed }, nick, mode) {
   const texRock = loadTex('/textures/rock.jpg');             // 화산: 일반 돌
   const texLavaRock = loadTex('/textures/lava_rock.jpg');    // 화산: 용암 섞인 돌
   const texLava = loadTex('/textures/lava.jpg');             // 화산: 분출구 용암
-  const texSnow = loadTex('/textures/snow.jpg');               // 설원: 눈 덮인 지면
-  const texIce = loadTex('/textures/ice.jpg');                 // 설원: 얼음 결정 지면
 
   const terrainMat = new THREE.MeshLambertMaterial({
     vertexColors: true
@@ -588,8 +573,6 @@ function boot(socket, { id, seed }, nick, mode) {
     shader.uniforms.uRock = { value: texRock };
     shader.uniforms.uLavaRock = { value: texLavaRock };
     shader.uniforms.uLava = { value: texLava };
-    shader.uniforms.uSnow = { value: texSnow };
-    shader.uniforms.uIce = { value: texIce };
     shader.uniforms.uTime = waterUniforms.uTime;
 
     shader.vertexShader = shader.vertexShader
@@ -599,10 +582,10 @@ function boot(socket, { id, seed }, nick, mode) {
         'uniform float uTime;\n' +
         'attribute vec3 detail;\n' +
         'attribute vec3 detail2;\n' +
-        'attribute vec4 detail3;\n' +
+        'attribute vec3 detail3;\n' +
         'varying vec3 vDetail;\n' +
         'varying vec3 vDetail2;\n' +
-        'varying vec4 vDetail3;\n' +
+        'varying vec3 vDetail3;\n' +
         'varying vec2 vWorldXZ;'
       )
       .replace(
@@ -636,11 +619,9 @@ function boot(socket, { id, seed }, nick, mode) {
         'uniform sampler2D uRock;\n' +
         'uniform sampler2D uLavaRock;\n' +
         'uniform sampler2D uLava;\n' +
-        'uniform sampler2D uSnow;\n' +
-        'uniform sampler2D uIce;\n' +
         'varying vec3 vDetail;\n' +
         'varying vec3 vDetail2;\n' +
-        'varying vec4 vDetail3;\n' +
+        'varying vec3 vDetail3;\n' +
         'varying vec2 vWorldXZ;'
       )
       .replace(
@@ -714,7 +695,7 @@ function boot(socket, { id, seed }, nick, mode) {
           diffuseColor.rgb = mix(diffuseColor.rgb, sandCol, clamp(vDetail2.z, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, dirtCol, clamp(vDetail.y, 0.0, 1.0));
           diffuseColor.rgb = mix(diffuseColor.rgb, villageCol, clamp(vDetail2.x, 0.0, 1.0));
-          diffuseColor.rgb = mix(diffuseColor.rgb, volcCol, volc);\n          diffuseColor.rgb = mix(diffuseColor.rgb, snowCol, snowMix);
+          diffuseColor.rgb = mix(diffuseColor.rgb, volcCol, volc);
           diffuseColor.rgb = mix(diffuseColor.rgb, lavaCol * 0.45, lp);
         }`
       )
@@ -746,7 +727,7 @@ function boot(socket, { id, seed }, nick, mode) {
     const col = new Float32Array(V * 3);
     const det = new Float32Array(V * 3);
     const det2 = new Float32Array(V * 3);
-    const det3 = new Float32Array(V * 4);
+    const det3 = new Float32Array(V * 3);
 
     let i = 0;
 
@@ -783,7 +764,7 @@ function boot(socket, { id, seed }, nick, mode) {
         const d = T.detail(wx, wz, h);
         det.set([d[0], d[1], d[2]], i * 3);
         det2.set([d[3], d[4], d[5]], i * 3);
-        det3.set([d[6], d[7], d[8], d[9]], i * 4);
+        det3.set([d[6], d[7], d[8]], i * 3);
       }
     }
 
@@ -794,7 +775,7 @@ function boot(socket, { id, seed }, nick, mode) {
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.setAttribute('detail', new THREE.BufferAttribute(det, 3));
     geo.setAttribute('detail2', new THREE.BufferAttribute(det2, 3));
-    geo.setAttribute('detail3', new THREE.BufferAttribute(det3, 4));
+    geo.setAttribute('detail3', new THREE.BufferAttribute(det3, 3));
     geo.setIndex(getIndex(res));
     geo.computeBoundingSphere();
 
@@ -1278,14 +1259,13 @@ function boot(socket, { id, seed }, nick, mode) {
       const cy = rect.top + rect.height / 2;
       let dx = e.clientX - cx;
       let dy = e.clientY - cy;
-      const R = JOY_R * uiScale;
       const d = Math.hypot(dx, dy);
-      const k = d > R ? R / d : 1;
+      const k = d > JOY_R ? JOY_R / d : 1;
       dx *= k;
       dy *= k;
-      knob.style.transform = `translate(${dx / uiScale}px, ${dy / uiScale}px)`;
-      joy.x = dx / R;
-      joy.y = -dy / R;
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      joy.x = dx / JOY_R;
+      joy.y = -dy / JOY_R;
     };
 
     const joyEnd = (e) => {
@@ -1309,10 +1289,6 @@ function boot(socket, { id, seed }, nick, mode) {
     base.addEventListener('pointercancel', joyEnd);
 
     // 버튼
-    const tgroup = document.createElement('div');
-    tgroup.className = 'tgroup';
-    document.body.appendChild(tgroup);
-
     const makeBtn = (cls, icon, label, onDown, onUp) => {
       const b = document.createElement('div');
       b.className = 'tbtn ' + cls;
@@ -1329,7 +1305,7 @@ function boot(socket, { id, seed }, nick, mode) {
       b.addEventListener('pointerup', up);
       b.addEventListener('pointercancel', up);
       b.addEventListener('pointerleave', up);
-      tgroup.appendChild(b);
+      document.body.appendChild(b);
       return b;
     };
 
@@ -1421,26 +1397,7 @@ function boot(socket, { id, seed }, nick, mode) {
     setTimeout(() => b.classList.remove('flash'), 150);
     toast(MENUS[i][1] + ' 기능은 아직 준비 중이에요');
   }
-  
-  // ---------- 화면 크기에 맞춰 터치 UI 크기 조절 ----------
-  function applyUiScale() {
-    if (!touchMode) return;
-    uiScale = computeUiScale();
-    document.documentElement.style.setProperty('--ui', String(uiScale));
 
-    // 아래 가운데 패널: 조이스틱과 오른쪽 버튼 사이 공간에 맞춤
-    const reserve = Math.max(26 + 130 * uiScale, 200 * uiScale) + 12;
-    const wScreen = Math.max(220 * uiScale, Math.min(420 * uiScale, window.innerWidth - 2 * reserve));
-    bottomWrap.style.width = (wScreen / uiScale) + 'px';
-
-    // 나침반: 화면 폭의 40%까지
-    compass.style.width = Math.min(420, (window.innerWidth * 0.4) / uiScale) + 'px';
-    compass.style.transform = 'translateX(-50%) scale(' + uiScale + ')';
-    compass.style.transformOrigin = 'center top';
-  }
-  window.addEventListener('resize', applyUiScale);
-  window.addEventListener('orientationchange', applyUiScale);
-  applyUiScale();
   // ---------- 다른 플레이어 ----------
   const remotes = new Map();
 
