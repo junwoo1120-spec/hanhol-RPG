@@ -107,6 +107,13 @@ body.touch .hk{width:76px}
 
 .toast{position:fixed;left:50%;top:70px;transform:translateX(-50%);padding:6px 14px;border-radius:14px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font:600 13px sans-serif;z-index:9;pointer-events:none;opacity:0;transition:opacity .25s}
 .toast.show{opacity:1}
+body.touch .joy-base{transform:scale(var(--ui,1));transform-origin:left bottom}
+.tgroup{display:none}
+body.touch .tgroup{display:block;position:fixed;right:0;bottom:0;width:230px;height:290px;z-index:6;pointer-events:none;transform:scale(var(--ui,1));transform-origin:right bottom}
+body.touch .tgroup .tbtn{position:absolute;pointer-events:auto}
+body.touch .bottom-wrap{transform:translateX(-50%) scale(var(--ui,1));transform-origin:center bottom}
+body.touch .rpg-status{transform:scale(var(--ui,1));transform-origin:left top}
+body.touch .rt-stack{transform:scale(var(--ui,1));transform-origin:right top}
 .cross{position:fixed;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;border:2px solid rgba(255,255,255,.9);box-shadow:0 0 4px #000;z-index:5;pointer-events:none;display:none}
 
 .bottom-wrap{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:5;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none;width:min(500px,94vw)}
