@@ -20,6 +20,7 @@ export const LANDMARKS = [
   lm('정글', -3060, -880),
   lm('화산', -2500, 900),
   lm('설원', -1000, 2750),
+  lm('얼음호수', 0, 2550),
   lm('평원', 1580, 2300),
   lm('사막', 2950, 0),
 ];
@@ -54,11 +55,18 @@ const REGIONS = [
   { t: 5, x: -380,  z: -2850, rx: 3300, rz: 1100 },  // 바다·해안
 ];
 
-// 화산: 큰 화산 하나만 (1.3배)
-// R = 산 폭, H = 산 높이, crater = 분화구 반지름 (용암이 고이는 곳)
+// 화산: 큰 화산 하나만
+// R = 산 폭, H = 산 높이, crater = 분화구 반지름,
+// fill = 용암 수위 (0이면 분화구 맨 바닥, 1이면 가장자리까지, 0.3 낮음 ~ 0.7 높음)
 const CONES = [
   { x: -2500, z: 900, R: 939, H: 442, crater: 143, fill: 0.45 },
 ];
+
+// 설원의 얼어붙은 호수 (설계 좌표 중심 x, z / 반경 rx, rz)
+const LAKES = [
+  { x: 0, z: 2550, rx: 450, rz: 330 },
+];
+const LAKE_LEVEL = 12;   // 호수 얼음 표면 높이
 
 // 설원 산: 2개, 낮게
 const PEAKS = [
@@ -124,12 +132,12 @@ export function makeTerrain(seed) {
   const jungleH = (x, z) =>
     22 + (fbm(x * 0.004 - 70, z * 0.004 + 70, 3) - 0.5) * 26 + (fbm(x * 0.02, z * 0.02, 2) - 0.5) * 2;
 
-  // 화산: 가장자리가 솟은 분화구 + 평평한 바닥 (가운데가 볼록하지 않음)
+  // 화산: 가장자리가 솟은 분화구 + 평평한 용암 수면 (가운데가 볼록하지 않음)
   const coneH = (c, x, z) => {
     const r = Math.hypot(x - c.x, z - c.z);
     const t = Math.max(0, 1 - Math.max(r, c.crater) / c.R);   // 분화구 안쪽은 가장자리 높이로 평평하게 취급
     const rim = c.H * Math.pow(t, 1.5);
-    const bowl = c.H * 0.07 * (1 - smooth(c.crater * 0.6, c.crater, r)); // 안쪽 벽 + 평평한 바닥
+    const bowl = c.H * 0.07 * (1 - smooth(c.crater * 0.6, c.crater, r)); // 안쪽 벽 + 바닥
     const lavaDepth = c.H * 0.07 * (1 - c.fill);   // 가장자리에서 용암 표면까지 내려간 깊이 (fill이 클수록 수위가 높음)
     return rim - Math.min(bowl, lavaDepth);        // 용암 표면은 평평하게
   };
@@ -140,14 +148,39 @@ export function makeTerrain(seed) {
     return h;
   };
 
+  // 얼어붙은 호수 마스크 (1 = 호수 한가운데, 0 = 호수 밖)
+  const lakeMask = (x, z) => {
+    let m = 0;
+    for (const l of LAKES) {
+      const warp = 0.8 + 0.4 * fbm(x * 0.006 + 40, z * 0.006 - 40, 2);   // 호숫가를 구불구불하게
+      const d = Math.hypot((x - l.x) / l.rx, (z - l.z) / l.rz) * warp;
+      m = Math.max(m, 1 - smooth(0.78, 1.0, d));
+    }
+    return m;
+  };
+  // 눈 덮힌 바위 덩어리가 솟는 곳 (1 = 바위)
+  const outcropMask = (x, z) => smooth(0.64, 0.78, fbm(x * 0.010 + 900, z * 0.010 - 900, 3));
+
+  // 설원: 눈밭 + 바위 덩어리 + 뾰족한 눈산 + 평평한 얼음 호수
   const snowH = (x, z) => {
     let h = 26 + (fbm(x * 0.004 + 700, z * 0.004, 3) - 0.5) * 50 + (fbm(x * 0.02, z * 0.02, 2) - 0.5) * 5;
+    const lake = lakeMask(x, z);
+
+    // 바위 덩어리
+    const crag = 0.6 + 0.8 * fbm(x * 0.05 + 11, z * 0.05 - 11, 2);
+    h += outcropMask(x, z) * 16 * crag * (1 - lake);
+
+    // 뾰족한 눈산
     let pk = 0;
     for (const p of PEAKS) {
       const t = Math.max(0, 1 - Math.hypot(x - p.x, z - p.z) / p.R);
       pk = Math.max(pk, p.H * Math.pow(t, 2));
     }
-    return h + pk * (0.8 + 0.4 * fbm(x * 0.012 + 40, z * 0.012, 3));
+    const ridge = 1 - Math.abs(fbm(x * 0.03 + 40, z * 0.03, 3) * 2 - 1);   // 능선처럼 날카로운 정도
+    h += pk * (0.65 + 0.55 * ridge);
+
+    // 얼어붙은 호수는 평평하게
+    return h * (1 - lake) + LAKE_LEVEL * lake;
   };
 
   const seaH = (x, z) => -45 + (fbm(x * 0.004 + 500, z * 0.004 - 500, 3) - 0.5) * 20;
@@ -209,9 +242,10 @@ export function makeTerrain(seed) {
     return c;
   }
 
-  // 텍스처 가중치 9개:
+  // 텍스처 가중치 12개:
   // [평원 잔디, 평원 흙 얼룩, 잔디 색 변화, 마을 흙, 정글 잔디, 사막 모래,
-  //  화산 일반 돌, 용암 섞인 돌, 분출구 용암]
+  //  화산 일반 돌, 용암 섞인 돌, 분출구 용암,
+  //  설원 눈, 눈 덮힌 바위 덩어리, 얼음 호수]
   function detail(x, z, h) {
     const u = x * K, v = z * K;
     const w = weights(u, v);
@@ -228,23 +262,29 @@ export function makeTerrain(seed) {
     const grass = plain * (1 - dirt);
     const vari = fbm(x * 0.02 + 77, z * 0.02 - 77, 2);
 
-    // 화산: 일반 돌 + 군데군데 용암 섞인 돌 + 분화구 바닥 용암
+    // 화산: 일반 돌 + 군데군데 용암 섞인 돌 + 분화구 용암
     const volc = w[3] * land;
-    let rc = Infinity, crater = 143, fill = 0.6;
+    let rc = Infinity, crater = 143, fill = 0.45;
     for (const cone of CONES) {
       const r = Math.hypot(u - cone.x, v - cone.z);
       if (r < rc) { rc = r; crater = cone.crater; fill = cone.fill; }
     }
     // 분화구 바로 주변에는 용암 섞인 돌이 없고, 조금 떨어진 곳부터 나타남
     const rimClear = smooth(crater * 1.0, crater * 1.8, rc);
-    const lavaPatch = smooth(0.58, 0.65, fbm(x * 0.03 + 500, z * 0.03 - 500, 3));
+    const lavaPatch = smooth(0.50, 0.65, fbm(x * 0.03 + 500, z * 0.03 - 500, 3));   // 용암 섞인 돌 분포
     const lavaRock = Math.min(1, lavaPatch * 0.85) * rimClear;
-    // 용암은 평평한 분화구 바닥과 안쪽 벽 아래쪽에만
+    // 용암은 수위(fill)에 맞춰 평평한 수면에만 (수위에서 닿는 반지름을 자동 계산)
     const tInv = 0.5 - Math.sin(Math.asin(1 - 2 * fill) / 3);   // smooth()의 역함수
-    const rp = crater * (0.6 + 0.4 * tInv);                      // 용암이 벽에 닿는 반지름 (수위에 맞춰 자동 계산)
+    const rp = crater * (0.6 + 0.4 * tInv);                      // 용암이 벽에 닿는 반지름
     const pool = (1 - smooth(rp - crater * 0.08, rp, rc)) * w[3];
 
-    return [grass, dirt, vari, village, jungle, desert, volc, lavaRock, pool];
+    // 설원: 눈 / 눈 덮힌 바위 / 얼음
+    const snowW = w[4] * land;
+    const iceM = lakeMask(u, v);
+    const ice = iceM * snowW;
+    const rockPatch = outcropMask(u, v) * (1 - iceM) * snowW;
+
+    return [grass, dirt, vari, village, jungle, desert, volc, lavaRock, pool, snowW, rockPatch, ice];
   }
 
   return { height, color, detail };
