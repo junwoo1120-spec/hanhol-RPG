@@ -57,7 +57,7 @@ const REGIONS = [
 // 화산: 큰 화산 하나만 (1.3배)
 // R = 산 폭, H = 산 높이, crater = 분화구 반지름 (용암이 고이는 곳)
 const CONES = [
-  { x: -2500, z: 900, R: 939, H: 442, crater: 143 },
+  { x: -2500, z: 900, R: 939, H: 442, crater: 143, fill: 0.45 },
 ];
 
 // 설원 산: 2개, 낮게
@@ -130,7 +130,8 @@ export function makeTerrain(seed) {
     const t = Math.max(0, 1 - Math.max(r, c.crater) / c.R);   // 분화구 안쪽은 가장자리 높이로 평평하게 취급
     const rim = c.H * Math.pow(t, 1.5);
     const bowl = c.H * 0.07 * (1 - smooth(c.crater * 0.6, c.crater, r)); // 안쪽 벽 + 평평한 바닥
-    return rim - bowl;
+    const lavaDepth = c.H * 0.07 * (1 - c.fill);   // 가장자리에서 용암 표면까지 내려간 깊이 (fill이 클수록 수위가 높음)
+    return rim - Math.min(bowl, lavaDepth);        // 용암 표면은 평평하게
   };
   // 화산지대: 평지 + 큰 화산 하나
   const volcanoH = (x, z) => {
@@ -229,17 +230,19 @@ export function makeTerrain(seed) {
 
     // 화산: 일반 돌 + 군데군데 용암 섞인 돌 + 분화구 바닥 용암
     const volc = w[3] * land;
-    let rc = Infinity, crater = 143;
+    let rc = Infinity, crater = 143, fill = 0.45;
     for (const cone of CONES) {
       const r = Math.hypot(u - cone.x, v - cone.z);
-      if (r < rc) { rc = r; crater = cone.crater; }
+      if (r < rc) { rc = r; crater = cone.crater; fill = cone.fill; }
     }
     // 분화구 바로 주변에는 용암 섞인 돌이 없고, 조금 떨어진 곳부터 나타남
     const rimClear = smooth(crater * 1.0, crater * 1.8, rc);
     const lavaPatch = smooth(0.58, 0.65, fbm(x * 0.03 + 500, z * 0.03 - 500, 3));
     const lavaRock = Math.min(1, lavaPatch * 0.85) * rimClear;
     // 용암은 평평한 분화구 바닥과 안쪽 벽 아래쪽에만
-    const pool = (1 - smooth(crater * 0.5, crater * 0.68, rc)) * w[3];
+    const tInv = 0.5 - Math.sin(Math.asin(1 - 2 * fill) / 3);   // smooth()의 역함수
+    const rp = crater * (0.6 + 0.4 * tInv);                      // 용암이 벽에 닿는 반지름 (수위에 맞춰 자동 계산)
+    const pool = (1 - smooth(rp - crater * 0.08, rp, rc)) * w[3];
 
     return [grass, dirt, vari, village, jungle, desert, volc, lavaRock, pool];
   }
