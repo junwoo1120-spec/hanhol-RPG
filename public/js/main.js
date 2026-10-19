@@ -1323,7 +1323,7 @@ function boot(socket, { id, seed }, nick, mode) {
       b.addEventListener('pointerup', up);
       b.addEventListener('pointercancel', up);
       b.addEventListener('pointerleave', up);
-      document.body.appendChild(b);
+      tgroup.appendChild(b);
       return b;
     };
 
