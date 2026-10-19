@@ -1272,13 +1272,14 @@ function boot(socket, { id, seed }, nick, mode) {
       const cy = rect.top + rect.height / 2;
       let dx = e.clientX - cx;
       let dy = e.clientY - cy;
+      const R = JOY_R * uiScale;
       const d = Math.hypot(dx, dy);
-      const k = d > JOY_R ? JOY_R / d : 1;
+      const k = d > R ? R / d : 1;
       dx *= k;
       dy *= k;
-      knob.style.transform = `translate(${dx}px, ${dy}px)`;
-      joy.x = dx / JOY_R;
-      joy.y = -dy / JOY_R;
+      knob.style.transform = `translate(${dx / uiScale}px, ${dy / uiScale}px)`;
+      joy.x = dx / R;
+      joy.y = -dy / R;
     };
 
     const joyEnd = (e) => {
