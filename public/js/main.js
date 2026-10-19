@@ -1415,7 +1415,26 @@ function boot(socket, { id, seed }, nick, mode) {
     setTimeout(() => b.classList.remove('flash'), 150);
     toast(MENUS[i][1] + ' 기능은 아직 준비 중이에요');
   }
+  
+  // ---------- 화면 크기에 맞춰 터치 UI 크기 조절 ----------
+  function applyUiScale() {
+    if (!touchMode) return;
+    uiScale = computeUiScale();
+    document.documentElement.style.setProperty('--ui', String(uiScale));
 
+    // 아래 가운데 패널: 조이스틱과 오른쪽 버튼 사이 공간에 맞춤
+    const reserve = Math.max(26 + 130 * uiScale, 200 * uiScale) + 12;
+    const wScreen = Math.max(220 * uiScale, Math.min(420 * uiScale, window.innerWidth - 2 * reserve));
+    bottomWrap.style.width = (wScreen / uiScale) + 'px';
+
+    // 나침반: 화면 폭의 40%까지
+    compass.style.width = Math.min(420, (window.innerWidth * 0.4) / uiScale) + 'px';
+    compass.style.transform = 'translateX(-50%) scale(' + uiScale + ')';
+    compass.style.transformOrigin = 'center top';
+  }
+  window.addEventListener('resize', applyUiScale);
+  window.addEventListener('orientationchange', applyUiScale);
+  applyUiScale();
   // ---------- 다른 플레이어 ----------
   const remotes = new Map();
 
