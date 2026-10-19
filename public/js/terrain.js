@@ -230,7 +230,7 @@ export function makeTerrain(seed) {
 
     // 화산: 일반 돌 + 군데군데 용암 섞인 돌 + 분화구 바닥 용암
     const volc = w[3] * land;
-    let rc = Infinity, crater = 143, fill = 0.45;
+    let rc = Infinity, crater = 143, fill = 0.6;
     for (const cone of CONES) {
       const r = Math.hypot(u - cone.x, v - cone.z);
       if (r < rc) { rc = r; crater = cone.crater; fill = cone.fill; }
