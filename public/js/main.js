@@ -1303,6 +1303,10 @@ function boot(socket, { id, seed }, nick, mode) {
     base.addEventListener('pointercancel', joyEnd);
 
     // 버튼
+    const tgroup = document.createElement('div');
+    tgroup.className = 'tgroup';
+    document.body.appendChild(tgroup);
+
     const makeBtn = (cls, icon, label, onDown, onUp) => {
       const b = document.createElement('div');
       b.className = 'tbtn ' + cls;
