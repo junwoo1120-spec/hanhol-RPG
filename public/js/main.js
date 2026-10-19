@@ -369,6 +369,7 @@ function connect(nick, mode) {
 
 function boot(socket, { id, seed }, nick, mode) {
   const touchMode = mode === 'touch';
+  let uiScale = touchMode ? computeUiScale() : 1;
   document.body.classList.add(touchMode ? 'touch' : 'kbd');
   $('login').style.display = 'none';
 
