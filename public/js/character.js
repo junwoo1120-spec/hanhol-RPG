@@ -1,9 +1,15 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 // ============================================================
 // 사람 모양 캐릭터 (레퍼런스 시트 기반 무채색 마네킹)
-// - 외부 모델 파일 없이 코드로 만든 관절 구조 (골반 / 척추 / 목 / 머리 / 팔 3마디 / 다리 3마디)
-// - 걷기 / 달리기 / 점프 / 낙하 / 대기(숨쉬기) 애니메이션 포함
+//
+// 1) models/human_base.glb  (tools/build_human_glb.py 로 생성한 스킨드 메시 + 스켈레톤 + 애니메이션)
+//    → AnimationMixer 로 idle / walk / run / jump_start / jump_air / jump_land 재생
+// 2) GLB 를 아직 못 불러왔거나 실패하면, 코드로 만든 관절 캐릭터(아래 procedural)를 대신 사용
+//
+// 사용: makeHumanoid(color) 로 만들고, 매 프레임 animateHumanoid(avatar, dt, speed, grounded, vy)
 // ============================================================
 
 // ---------- 조정용 값 ----------
@@ -97,7 +103,7 @@ function getMaterial(color) {
 
 // ---------- 캐릭터 생성 ----------
 // 반환된 그룹의 userData.rig 에 관절 정보가 들어 있음. 발바닥이 y=0, 키 약 1.8, 정면은 +z
-export function makeHumanoid(color = 0xffffff) {
+function makeProceduralHumanoid(color = 0xffffff) {
   const g = geos();
   const mat = getMaterial(color);
   const root = new THREE.Group();
@@ -176,7 +182,7 @@ export function makeHumanoid(color = 0xffffff) {
 // ---------- 애니메이션 ----------
 // avatar: makeAvatar 가 만든 그룹 (userData.rig 를 가지고 있어야 함)
 // speed: 수평 이동속도(유닛/초), grounded: 땅에 닿아있는지, vy: 수직 속도
-export function animateHumanoid(avatar, dt, speed, grounded = true, vy = 0) {
+function animateProcedural(avatar, dt, speed, grounded = true, vy = 0) {
   const s = avatar.userData.rig;
   if (!s) return;
 
@@ -271,4 +277,152 @@ export function animateHumanoid(avatar, dt, speed, grounded = true, vy = 0) {
 
   s.head.rotation.y = -(hipYaw + spineYaw) * 0.8;
   s.head.rotation.x = -lean * 0.6;
+}
+
+
+// ============================================================
+// GLB 캐릭터 (스킨드 메시 + AnimationMixer)
+// ============================================================
+const MODEL_URL = 'models/human_base.glb';
+const JUMP_START_SKIP = 0.10; // jump_start 의 "웅크리는 준비" 구간은 게임에서 건너뜀(점프 입력 즉시 도약하므로)
+const RUN_ENTER = 10.5;       // 이 속도를 넘으면 run
+const RUN_LEAVE = 9.0;        // 이 속도 밑으로 내려가면 다시 walk
+const CLIP_DUR = { walk: 1.0, run: 0.7 };
+
+let glb = null;
+
+export const humanReady = new GLTFLoader()
+  .loadAsync(MODEL_URL)
+  .then((g) => {
+    glb = { scene: g.scene, clips: g.animations };
+    return true;
+  })
+  .catch((err) => {
+    console.warn('human_base.glb 로드 실패, 코드로 만든 캐릭터를 사용합니다:', err);
+    return false;
+  });
+
+const glbMatCache = new Map();
+function glbMaterial(color) {
+  const c = new THREE.Color(BODY_COLOR);
+  if (color !== 0xffffff) c.lerp(new THREE.Color(color), 0.4);
+  const key = c.getHex();
+  if (!glbMatCache.has(key)) glbMatCache.set(key, new THREE.MeshLambertMaterial({ color: c }));
+  return glbMatCache.get(key);
+}
+
+function makeGlbHumanoid(color) {
+  const root = SkeletonUtils.clone(glb.scene);
+  const mat = glbMaterial(color);
+  root.traverse((o) => {
+    if (o.isSkinnedMesh) {
+      o.material = mat;
+      o.frustumCulled = false; // 애니메이션 중 바운딩 박스를 벗어나도 사라지지 않게
+    }
+  });
+
+  const mixer = new THREE.AnimationMixer(root);
+  const actions = {};
+  for (const clip of glb.clips) {
+    const a = mixer.clipAction(clip);
+    if (clip.name === 'jump_start' || clip.name === 'jump_land' || clip.name === 'jump') {
+      a.setLoop(THREE.LoopOnce, 1);
+      a.clampWhenFinished = true;
+    }
+    actions[clip.name] = a;
+  }
+
+  const rig = { kind: 'glb', mixer, actions, cur: null, state: '', stateTime: 0, wasGrounded: true };
+  root.userData.rig = rig;
+  enterState(rig, 'idle', 0);
+  return root;
+}
+
+function enterState(rig, name, fade = 0.15) {
+  if (rig.state === name) return;
+  const next = rig.actions[name];
+  if (!next) return;
+  const prev = rig.cur;
+
+  next.reset();
+  next.enabled = true;
+  next.setEffectiveWeight(1);
+
+  // walk <-> run 전환은 같은 보행 위상에서 이어붙임 (발이 튀지 않게)
+  if (prev && CLIP_DUR[rig.state] && CLIP_DUR[name]) {
+    const phase = (prev.time % CLIP_DUR[rig.state]) / CLIP_DUR[rig.state];
+    next.time = phase * CLIP_DUR[name];
+  }
+  if (name === 'jump_start') next.time = JUMP_START_SKIP;
+
+  if (prev && fade > 0) {
+    next.fadeIn(fade);
+    prev.fadeOut(fade);
+  }
+  next.play();
+
+  rig.cur = next;
+  rig.state = name;
+  rig.stateTime = 0;
+}
+
+function animateGlb(avatar, dt, speed, grounded, vy) {
+  const rig = avatar.userData.rig;
+  dt = Math.min(Math.max(dt, 0), 0.1);
+  const sp = Math.min(speed, GAIT.maxSpeed);
+  const moving = sp > 0.4;
+  rig.stateTime += dt;
+
+  const jumpStartLen = (rig.actions.jump_start ? rig.actions.jump_start.getClip().duration : 0.3) - JUMP_START_SKIP;
+  const landLen = rig.actions.jump_land ? rig.actions.jump_land.getClip().duration : 0.6;
+
+  const loco = () => {
+    if (!moving) return 'idle';
+    const runNow = rig.state === 'run' ? sp > RUN_LEAVE : sp > RUN_ENTER;
+    return runNow ? 'run' : 'walk';
+  };
+
+  if (!grounded) {
+    // ---- 공중 ----
+    if (rig.state === 'jump_start') {
+      if (rig.stateTime >= jumpStartLen) enterState(rig, 'jump_air', 0.12);
+    } else if (rig.state !== 'jump_air') {
+      // 땅에서 위로 튀어오른 순간이면 도약 동작, 그냥 떨어지는 중이면 바로 공중 자세
+      if (rig.wasGrounded && vy > 1.5) enterState(rig, 'jump_start', 0.08);
+      else enterState(rig, 'jump_air', 0.15);
+    }
+  } else {
+    // ---- 지상 ----
+    if (rig.state === 'jump_air' || rig.state === 'jump_start') {
+      enterState(rig, 'jump_land', 0.08);
+    } else if (rig.state === 'jump_land') {
+      // 이동 중이면 충격 흡수만 짧게 하고 달리기/걷기로 복귀
+      if ((moving && rig.stateTime > 0.14) || rig.stateTime > landLen - 0.05) enterState(rig, loco(), 0.18);
+    } else {
+      enterState(rig, loco(), 0.2);
+    }
+  }
+  rig.wasGrounded = grounded;
+
+  // 걸음 속도에 맞춰 재생 속도 조절
+  const hz = Math.min(Math.max(sp / GAIT.strideLen, GAIT.minHz), GAIT.maxHz);
+  if (rig.state === 'walk') rig.cur.setEffectiveTimeScale(hz * CLIP_DUR.walk);
+  else if (rig.state === 'run') rig.cur.setEffectiveTimeScale(hz * CLIP_DUR.run);
+  else rig.cur.setEffectiveTimeScale(1);
+
+  rig.mixer.update(dt);
+}
+
+// ============================================================
+// 공개 API
+// ============================================================
+export function makeHumanoid(color = 0xffffff) {
+  return glb ? makeGlbHumanoid(color) : makeProceduralHumanoid(color);
+}
+
+export function animateHumanoid(avatar, dt, speed, grounded = true, vy = 0) {
+  const rig = avatar.userData.rig;
+  if (!rig) return;
+  if (rig.kind === 'glb') animateGlb(avatar, dt, speed, grounded, vy);
+  else animateProcedural(avatar, dt, speed, grounded, vy);
 }
