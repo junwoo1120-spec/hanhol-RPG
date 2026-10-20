@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS } from './terrain.js';
 import { buildVillage } from './village.js';
+import { makeHumanoid, animateHumanoid } from './character.js';
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
@@ -206,14 +207,11 @@ function makeLabel(text) {
 function makeAvatar(nick, color) {
   const group = new THREE.Group();
 
-  const body = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.4, 1.0, 4, 8),
-    new THREE.MeshLambertMaterial({ color })
-  );
-
-  body.position.y = 0.9;
+  // 사람 모양 캐릭터 (children[0]) + 닉네임 표시 (children[1])
+  const body = makeHumanoid(color);
   group.add(body);
   group.add(makeLabel(nick));
+  group.userData.rig = body.userData.rig;
 
   return group;
 }
@@ -1649,6 +1647,7 @@ function boot(socket, { id, seed }, nick, mode) {
 
     myAvatar.position.set(me.x, me.y, me.z);
     myAvatar.rotation.y = me.ry;
+    animateHumanoid(myAvatar, dt, moved / Math.max(dt, 1e-4), grounded, vy);
 
     // 3인칭 카메라 (360도 궤도 회전, 시프트락이면 어깨 너머 시점)
     slk += ((shiftLock ? 1 : 0) - slk) * (1 - Math.exp(-10 * dt));
@@ -1686,11 +1685,24 @@ function boot(socket, { id, seed }, nick, mode) {
     // 다른 플레이어 위치 보간
     for (const remote of remotes.values()) {
       const k = 1 - Math.exp(-12 * dt);
+      const ox = remote.g.position.x;
+      const oy = remote.g.position.y;
+      const oz = remote.g.position.z;
 
       remote.g.position.x += (remote.t.x - remote.g.position.x) * k;
       remote.g.position.y += (remote.t.y - remote.g.position.y) * k;
       remote.g.position.z += (remote.t.z - remote.g.position.z) * k;
       remote.g.rotation.y = remote.t.ry;
+
+      // 위치 변화로 속도를 구해서 걷기/점프 애니메이션 재생
+      const idt = Math.max(dt, 1e-4);
+      const kk = 1 - Math.exp(-10 * dt);
+      remote.sp = (remote.sp ?? 0) + (Math.hypot(remote.g.position.x - ox, remote.g.position.z - oz) / idt - (remote.sp ?? 0)) * kk;
+      remote.vy = (remote.vy ?? 0) + ((remote.g.position.y - oy) / idt - (remote.vy ?? 0)) * kk;
+
+      const rGround = Math.max(T.height(remote.g.position.x, remote.g.position.z), WATER_LEVEL - 0.8);
+      const rAir = remote.g.position.y - rGround > 0.5;
+      animateHumanoid(remote.g, dt, remote.sp, !rAir, remote.vy);
     }
 
     // 서버로 이동 정보 전송
