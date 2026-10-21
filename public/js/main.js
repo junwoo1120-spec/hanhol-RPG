@@ -330,8 +330,9 @@ $('join').onclick = () => {
   showModeSelect($('nick').value.trim() || '플레이어');
 };
 
-function connect(nick, mode) {
+async function connect(nick, mode) {
   $('msg').textContent = '서버에 연결 중...';
+  await humanReady; // GLB 로딩이 끝난 뒤에 캐릭터를 만들도록 대기
 
   const socket = io();
 
