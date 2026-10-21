@@ -105,8 +105,9 @@ function addTube(b, pts, radii, seg, o = {}) {
     for (let j = 0; j <= seg; j++) {
       const th = (j / seg) * TAU, cs = Math.cos(th), sn = Math.sin(th);
       const d = [nv[0] * cs + bv[0] * sn, nv[1] * cs + bv[1] * sn, nv[2] * cs + bv[2] * sn];
-      b.v(pts[i][0] + d[0] * radii[i], pts[i][1] + d[1] * radii[i], pts[i][2] + d[2] * radii[i],
-          (j / seg) * circ, acc, col(cf(tt, j / seg, pts[i])), wf(pts[i], tt), mask, surf, d);
+      const rr = radii[i] * (o.rib ? 1 + o.rib[1] * Math.cos(o.rib[0] * th) : 1);
+      b.v(pts[i][0] + d[0] * rr, pts[i][1] + d[1] * rr, pts[i][2] + d[2] * rr,
+          (j / seg) * circ, acc, col(cf(tt, j / seg, pts[i])), wf(pts[i], tt), o.maskFn ? o.maskFn(tt, j / seg, pts[i]) : mask, surf, o.rib ? null : d);
     }
     rings.push(start);
   }
@@ -167,6 +168,17 @@ function addLoft(b, rows, o = {}) {
   }
 }
 
+// 지그재그 폭의 휘어진 잎 (야자, 나무고사리). o: {base, az, el, len, wd, nr, droop, u0, v0, col, wind}
+function addFrond(b, o) {
+  const d = [Math.cos(o.az) * Math.cos(o.el), Math.sin(o.el), Math.sin(o.az) * Math.cos(o.el)], sd = [-Math.sin(o.az), 0, Math.cos(o.az)], rr = [];
+  for (let i = 0; i < o.nr; i++) {
+    const u = i / (o.nr - 1), c = [o.base[0] + d[0] * o.len * u, o.base[1] + d[1] * o.len * u - o.droop * o.len * u * u, o.base[2] + d[2] * o.len * u];
+    const w = (i === o.nr - 1 ? 0 : (i % 2 ? 0.55 : 1)) * o.wd * 0.5 * Math.sin(Math.PI * (0.12 + 0.88 * u));
+    rr.push({ l: sub(c, scl(sd, w)), r: add(c, scl(sd, w)) });
+  }
+  addLoft(b, rr, { face: [0, 1, 0], uw: o.wd, u0: o.u0, v0: o.v0, surf: 1, col: o.col, wind: o.wind });
+}
+
 // 이십면체 구 (잎덩어리, 바위, 덤불)
 const icoCache = {};
 function ico(level) {
@@ -185,6 +197,7 @@ function ico(level) {
 // o: {sub, noise, freq, seed, col(ny), wind(p), surf, mask, uvS, u0, v0, shape(x,y,z,d)}
 function addBlob(b, c, r, o = {}) {
   const { V, F } = ico(o.sub ?? 1), base = b.n, f = o.freq || 1.5, s = o.seed || 0;
+  if ((o.sub ?? 1) === 0) r = [r[0] * 1.15, r[1] * 1.15, r[2] * 1.15];   // 20면체는 구보다 작아서 보정(LOD2에서 바닥이 뜨지 않게)
   const off = [(s * 0.37) % 7, (s * 0.61) % 7, (s * 0.83) % 7];
   for (const d of V) {
     const k = o.noise ? 1 + (noise3(d[0] * f + off[0], d[1] * f + off[1], d[2] * f + off[2], s | 0) - 0.5) * 2 * o.noise : 1;
@@ -268,43 +281,65 @@ function finish(b, o = {}) {
 // ====================== 베이스 1: 나무 ======================
 // 줄기(곡선+뿌리) + 가지(+잔가지) + 수관(blob 덩어리 | cone 층 | none). 모든 나무 종류는 이 하나에서 파생.
 function buildTree(P, rand, lod) {
-  const b = new Buf();
+  const b = new Buf(), far = lod >= 2;
   const H = R(rand, P.height), TR = R(rand, P.trunkR);
-  const seg = Math.max(4, P.seg - (lod ? 3 : 0)), rings = lod ? 4 : 7;
+  const seg = Math.max(4, far ? Math.min(P.seg, 6) : P.seg - (lod ? 3 : 0)), rings = far ? 3 : lod ? 4 : 7;
   const lean = R(rand, P.lean), leanAz = rand() * TAU, bend = R(rand, P.bend), ph = rand() * TAU;
   const L = H * P.trunkFrac;
   const spine = [], rad = [];
   for (let i = 0; i <= rings; i++) {
     const t = i / rings, off = lean * L * t * t, wob = bend * TR * 0.5 * t;
     spine.push([Math.cos(leanAz) * off + Math.sin(t * 4 + ph) * wob, i === 0 ? -0.3 : L * t, Math.sin(leanAz) * off + Math.cos(t * 3.3 + ph) * wob]);
-    rad.push(TR * lerp(1, P.taper, t) * (1 + P.flare * Math.pow(Math.max(0, 1 - t * 4), 2)));
+    rad.push(TR * lerp(1, P.taper, t) * (1 + P.flare * Math.pow(Math.max(0, 1 - t * 4), 2)) * (1 + (P.belly || 0) * Math.sin(Math.PI * t)));
   }
   const at = (t) => { const f = clamp(t) * rings, i = Math.min(rings - 1, Math.floor(f)), u = f - i, a = spine[i], c = spine[i + 1]; return [lerp(a[0], c[0], u), lerp(a[1], c[1], u), lerp(a[2], c[2], u)]; };
   const radAt = (t) => lerp(rad[Math.min(rings, Math.floor(clamp(t) * rings))], rad[Math.min(rings, Math.floor(clamp(t) * rings) + 1)], 0.5);
   const wind = (p) => P.sway * Math.pow(clamp(p[1] / H), 2);
+  const ch = P.char || 0, ribN = P.rib ? RI(rand, P.rib.n) : 0, rib = ribN ? [ribN, P.rib.amp] : null;
   const barkCol = (t, u, p) => {
     let c = 0.5 + 0.5 * smoothstep(0, 0.18, t);
     if (P.marks) c *= 1 - P.marks * smoothstep(0.6, 0.78, noise3(Math.cos(u * TAU) * 1.6 + 3, p[1] * 3.4, Math.sin(u * TAU) * 1.6, 9));
+    if (rib) c *= 0.8 + 0.2 * Math.cos(ribN * u * TAU);
+    if (ch) {                                                  // 탄화: 아래부터 검게 (ch=1 전체, 0.5 아래 절반)
+      const m = clamp((ch * 1.25 - t) / 0.25), k = 0.1 * (0.8 + 0.6 * noise3(Math.cos(u * TAU) * 2, p[1] * 5, Math.sin(u * TAU) * 2, 17));
+      return [c + (k - c) * m, c + (k * 0.95 - c) * m, c + (k * 0.9 - c) * m];
+    }
     return [c, c, c];
   };
-  addTube(b, spine, rad, seg, { col: barkCol, wind, surf: 0 });
+  const maskFn = P.embers ? (t, u, p) => P.embers * smoothstep(0.74, 0.9, noise3(Math.cos(u * TAU) * 2 + 7, p[1] * 4, Math.sin(u * TAU) * 2, 21)) * (1 - t * 0.6) : null;
+  if (!P.noTrunk) {
+    addTube(b, spine, rad, seg, { col: barkCol, wind, surf: 0, rib, maskFn, cap: !P.dome });
+    if (P.dome) { const tp = spine[rings], r = rad[rings], fl = P.domeFlat; addTube(b, [tp, [tp[0], tp[1] + r * (fl ? 0.22 : 0.45), tp[2]], [tp[0], tp[1] + r * (fl ? 0.4 : 0.8), tp[2]]], fl ? [r, r * 0.9, r * 0.55] : [r, r * 0.72, r * 0.25], seg, { col: (t2, u2) => barkCol(1, u2, tp), wind, surf: 0, rib }); }
+  }
   // 뿌리
   const nr = RI(rand, P.roots);
   for (let k = 0; k < nr; k++) {
-    const az = (k / Math.max(1, nr)) * TAU + rand() * 0.6, d = [Math.cos(az), 0, Math.sin(az)], len = TR * R(rand, [1.6, 2.6]) * (1 + P.flare * 0.4);
+    const az = (k / Math.max(1, nr)) * TAU + rand() * 0.6, d = [Math.cos(az), 0, Math.sin(az)], len = TR * R(rand, [1.6, 2.6]) * (1 + P.flare * 0.4) * (P.rootLen || 1);
     const pts = [[d[0] * TR * 0.4, 0.2, d[2] * TR * 0.4], [d[0] * len * 0.5, 0.06, d[2] * len * 0.5], [d[0] * len, -0.12, d[2] * len]];
-    addTube(b, pts, [TR * 0.55, TR * 0.3, TR * 0.08], lod ? 3 : 4, { col: () => [0.5, 0.5, 0.5], surf: 0 });
+    if (!far && !P.noTrunk) addTube(b, pts, [TR * 0.55, TR * 0.3, TR * 0.08], lod ? 3 : 4, { col: () => [0.5, 0.5, 0.5], surf: 0 });
   }
   // 가지
   const tips = [], B = P.br, nb = RI(rand, B.n);
   for (let k = 0; k < nb; k++) {
     const t = lerp(B.from, B.to, (k + rand() * 0.6) / Math.max(1, nb)), base = at(t), rb = radAt(t);
     const az = k * 2.39996 + rand() * 0.8, elev = R(rand, B.elev), len = R(rand, B.len) * H;
+    const drawn = !lod || (lod === 1 && k % 2 === 0), tw = [rand(), rand()];
+    if (B.elbow) {                                            // 선인장 팔: 옆으로 나갔다가 위로 꺾임
+      const dh = [Math.cos(az), 0, Math.sin(az)], ra = rb * (B.rArm || 0.6), sg = Math.max(4, seg - 1);
+      const p0 = [base[0] + dh[0] * rb * 0.4, base[1], base[2] + dh[2] * rb * 0.4], p1 = [p0[0] + dh[0] * len * 0.35, p0[1], p0[2] + dh[2] * len * 0.35];
+      const p2 = [p1[0] + dh[0] * len * 0.12, p1[1] + len * 0.2, p1[2] + dh[2] * len * 0.12], p3 = [p2[0], p2[1] + len * 0.6, p2[2]];
+      if (drawn) {
+        addTube(b, [p0, p1, p2, p3], [ra, ra * 0.95, ra * 0.9, ra * 0.85], sg, { col: (t2, u2) => barkCol(0.9, u2, p3), wind, surf: 0, rib });
+        addTube(b, [p3, [p3[0], p3[1] + ra * 0.45, p3[2]], [p3[0], p3[1] + ra * 0.8, p3[2]]], [ra * 0.85, ra * 0.6, ra * 0.2], sg, { col: (t2, u2) => barkCol(1, u2, p3), wind, surf: 0, rib });
+      }
+      tips.push({ p: p3, drawn });
+      continue;
+    }
     const dir = [Math.cos(az) * Math.cos(elev), Math.sin(elev), Math.sin(az) * Math.cos(elev)];
     const pts = [0, 1, 2, 3].map((j) => { const u = j / 3; return [base[0] + dir[0] * len * u, base[1] + dir[1] * len * u - B.droop * len * u * u, base[2] + dir[2] * len * u]; });
-    const twig = B.twigs && t > 0.3, drawn = !lod || k % 2 === 0;
-    const tw = [rand(), rand()];                     // 난수 소비 순서 고정
+    const twig = B.twigs && t > 0.3;
     if (drawn) addTube(b, pts, [Math.max(0.03, rb * 0.5), rb * 0.32, rb * 0.18, 0.02], lod ? 3 : 4, { col: () => [0.75, 0.75, 0.75], wind, surf: 0 });
+    if (P.snowCaps && !lod) for (const q of [pts[1], pts[2]]) addBlob(b, [q[0], q[1] + rb * 0.2 + 0.03, q[2]], [len * 0.15, len * 0.045, len * 0.15], { sub: 0, noise: 0.18, seed: k * 3 + 1, mask: 1, col: () => 1, wind });
     tips.push({ p: pts[3], drawn });
     if (twig && !lod) for (let q = 0; q < 2; q++) {
       const a2 = az + (q ? 0.9 : -0.9) + tw[q] * 0.4, l2 = len * 0.45, p0 = pts[2];
@@ -325,52 +360,86 @@ function buildTree(P, rand, lod) {
     let drawnCount = 0;
     blobs.forEach((bl, k) => {
       const bright = 0.85 + rand() * 0.3, u0 = rand() * 5, v0 = rand() * 5;
-      if (lod && (k > 5 || (k > 0 && k % 2 === 0))) return;
+      if (far ? k > 2 : lod && (k > 5 || (k > 0 && k % 2 === 0))) return;
       drawnCount++;
-      addBlob(b, [bl[0], bl[1], bl[2]], [bl[3], bl[3] * flat, bl[3]], { sub: lod || k > 2 ? 1 : 2, noise: C.noise, freq: 1.6, seed: k + 3, surf: 1, u0, v0,
+      addBlob(b, [bl[0], bl[1], bl[2]], [bl[3], bl[3] * flat, bl[3]], { sub: far ? 0 : lod || k > 0 ? 1 : 2, noise: C.noise, freq: 1.6, seed: k + 3, surf: 1, u0, v0,
         col: (ny) => { const c = (0.5 + 0.5 * (ny * 0.5 + 0.5)) * bright; return [c, c, c]; }, wind });
     });
   } else if (C.type === 'cone') {
     const pexp = R(rand, [0.6, 1.4]), tiers = RI(rand, C.tiers), y0 = H * R(rand, C.bare), top2 = H * 0.97, CR = R(rand, C.R) * H, rag = C.ragged;
     for (let k = 0; k < tiers; k++) {
       const t = tiers > 1 ? k / (tiers - 1) : 0, hi = ((top2 - y0) / tiers) * 2.1, yy = lerp(y0, top2 - hi * 0.7, t);
-      const Ri = CR * Math.pow(1 - t * 0.93, pexp) * (0.82 + 0.36 * rand()), c = at(yy / L), bright = 0.9 + rand() * 0.2, pk = rand() * TAU, kk = 5 + Math.floor(rand() * 4);
+      const Ri = CR * Math.pow(1 - t * 0.93, pexp) * (0.82 + 0.36 * rand()), c0 = at(yy / L), c = C.wobble ? [c0[0] + (rand() - 0.5) * C.wobble * H, c0[1], c0[2] + (rand() - 0.5) * C.wobble * H] : c0, bright = 0.9 + rand() * 0.2, pk = rand() * TAU, kk = 5 + Math.floor(rand() * 4);
       const w = (y) => P.sway * Math.pow(clamp(y / H), 2);
       const prof = [[Ri * 0.25, yy + hi * 0.1, 0.3 * bright, w(yy), 0, 1], [Ri, yy, 0.62 * bright, w(yy), 0, 1], [Ri * 0.6, yy + hi * 0.55, 0.85 * bright, w(yy + hi * 0.55), 0, 1], [0.0005, yy + hi, 1.0 * bright, w(yy + hi), 0, 1]];
-      addLathe(b, prof, lod ? 6 : 10, { cx: c[0], cz: c[2], radial: (th, i) => (i === 1 ? 1 - rag * (0.5 + 0.5 * Math.sin(th * kk + pk)) : i === 2 ? 1 - rag * 0.4 * (0.5 + 0.5 * Math.sin(th * kk + pk)) : 1) });
+      addLathe(b, prof, far ? 4 : lod ? 6 : 10, { cx: c[0], cz: c[2], radial: (th, i) => (i === 1 ? 1 - rag * (0.5 + 0.5 * Math.sin(th * kk + pk)) : i === 2 ? 1 - rag * 0.4 * (0.5 + 0.5 * Math.sin(th * kk + pk)) : 1) });
     }
   }
-  b.meta = { coll: TR * 1.05, kind: 'tree' };
+  if (C.type === 'palm') {                                   // 야자/나무고사리: 줄기 끝에서 방사형으로 퍼지는 잎
+    const nf = RI(rand, C.fronds), nr = far ? 4 : lod ? 6 : 9;
+    for (let k = 0; k < nf; k++) {
+      const az = (k / nf) * TAU + rand() * 0.5, el = R(rand, [-0.15, 1.0]), len = R(rand, C.len), u0 = rand() * 4, v0 = rand() * 4;
+      if (far && k % 2) continue;
+      addFrond(b, { base: [top[0], top[1] - 0.05, top[2]], az, el, len, wd: len * 0.28, nr, droop: 0.9, u0, v0, col: (u) => { const s = 0.5 + 0.5 * u; return [s, s, s]; }, wind: (p, u) => P.sway * (0.3 + u) });
+    }
+  }
+  if (C.type === 'pads') {                                   // 부채선인장: 납작한 타원 패드를 이어 붙임
+    const np = RI(rand, C.n), size = R(rand, C.size), pads = [];
+    for (let k = 0; k < np; k++) {
+      const par = k ? pads[Math.floor(rand() * pads.length)] : null, sc = par ? par.sc * R(rand, [0.72, 0.92]) : 1;
+      const yaw = par ? par.yaw + (rand() - 0.5) * 1.8 : rand() * TAU, rx = size * sc, ry = rx * 1.12, rz = rx * 0.17;
+      const ax = par ? [Math.cos(par.yaw), 0, -Math.sin(par.yaw)] : [0, 0, 0], j = par ? (rand() - 0.5) * par.rx * 1.1 : 0;
+      const pos = par ? [par.pos[0] + ax[0] * j, par.pos[1] + par.ry * 0.85 + ry * 0.55, par.pos[2] + ax[2] * j] : [top[0], top[1] + ry * 0.85, top[2]];
+      const ta = (rand() - 0.5) * 0.5, taz = rand() * TAU, start = b.n;
+      addBlob(b, [0, 0, 0], [rx, ry, rz], { sub: far ? 0 : 1, noise: 0.06, seed: k + 7, col: (ny) => { const c = 0.65 + 0.35 * (ny * 0.5 + 0.5); return [c, c, c]; }, wind: () => P.sway * 0.4 });
+      xform(b, start, { ta, az: taz, yaw, ox: pos[0], oy: pos[1], oz: pos[2] });
+      pads.push({ pos, rx, ry, yaw, sc });
+    }
+  }
+  b.meta = { coll: P.coll ?? TR * 1.05, kind: 'tree' };
   return b;
 }
 
 // ====================== 베이스 2: 바위 ======================
 // 이십면체 + 3D 노이즈 변형 + 납작/뾰족/층리. 면분리(각진 정도는 smooth로 조절) + 삼평면 uv.
+// 확장: arch(사암 아치), stack(메사/후두 적층), invert(고드름처럼 거꾸로 매달림)
 function buildRock(P, rand, lod) {
-  const b = new Buf(), r0 = R(rand, P.radius);
+  const b = new Buf(), r0 = R(rand, P.radius), sub = lod >= 2 ? 0 : lod ? 1 : 2;
   const stretch = [R(rand, P.sx), R(rand, P.sy), R(rand, P.sz)], seed = Math.floor(rand() * 1000), shear = (rand() - 0.5) * 2 * (P.shear || 0);
-  const parts = [[0, 0, 0, 1]];
-  const nch = RI(rand, P.chips);
-  for (let k = 0; k < nch; k++) { const a = rand() * TAU, d = r0 * R(rand, [1.0, 1.7]); parts.push([Math.cos(a) * d, 0, Math.sin(a) * d, R(rand, [0.25, 0.5])]); }
-  const main = P.group ? RI(rand, P.group) : 0;
-  for (let k = 0; k < main; k++) { const a = rand() * TAU, d = r0 * R(rand, [0.7, 1.5]); parts.push([Math.cos(a) * d, 0, Math.sin(a) * d, R(rand, [0.4, 0.8])]); }
-  parts.forEach(([px, , pz, s], k) => {
-    const r = r0 * s, sy = stretch[1] * (k ? R(rand, [0.7, 1.2]) : 1), sx = stretch[0], sz = stretch[2];
-    const flatY = -P.flatten;
-    addBlob(b, [px, 0, pz], [r * sx, r * sy, r * sz], { sub: lod ? 1 : 2, noise: P.noise, freq: P.freq, seed: seed + k * 13, surf: 0,
-      shape: (x, y, z, d) => {
-        let yy = y;
-        const hy = r * sy;
-        if (d[1] < flatY) yy = flatY * hy;                        // 밑면 평평하게
-        const sh = shear * (d[1] + 1) * 0.5 * hy;
-        if (P.taper) { const k2 = 1 - P.taper * clamp((d[1] + 1) / 2); return [px + (x - px) * k2 + sh, yy + hy * (1 - P.flatten) , pz + (z - pz) * k2]; }
-        return [x + sh, yy + hy * (1 - P.flatten) , z];
-      },
-      col: (ny) => { const c = 0.55 + 0.45 * smoothstep(-0.9, 0.5, ny); return [c, c, c]; } });
-  });
+  const blob = (px, py, pz, rx, ry, rz, k, sb = sub, ft = 0) => addBlob(b, [px, py, pz], [rx, ry, rz], {
+    sub: sb, noise: P.noise, freq: P.freq, seed: seed + k * 13, surf: 0,
+    shape: (x, y, z, d) => {
+      const yy = ft && d[1] > ft ? py + ft * ry : P.flatten > 0 && d[1] < -P.flatten ? py - P.flatten * ry : y, k2 = P.taper ? 1 - P.taper * clamp((d[1] + 1) / 2) : 1, sh = shear * (d[1] + 1) * 0.5 * ry;
+      return [px + (x - px) * k2 + sh, yy, pz + (z - pz) * k2];
+    },
+    col: (ny) => { const c = 0.55 + 0.45 * smoothstep(-0.9, 0.5, ny); return [c, c, c]; } });
+  const baseY = (ry) => ry * P.flatten - ry * 0.12;            // 밑면이 지면에서 살짝 묻히도록 (공중에 뜨지 않게)
+  let colliders = null;
+  if (P.arch) {
+    const A = P.arch, span = R(rand, A.span), hgt = R(rand, A.height), th = R(rand, A.thick), dz = R(rand, [1.1, 1.5]), n = 10, asub = lod ? 0 : 1;
+    for (const sg of [-1, 1]) blob(sg * span / 2, th * 0.7, 0, th * 1.2, th * 0.95, th * dz, sg + 3, asub);   // 기둥 발
+    for (let i = 1; i < n; i++) { const a = Math.PI * (1 - i / n), w = th * (1.2 - 0.3 * Math.sin(a)); blob(Math.cos(a) * span / 2, Math.sin(a) * hgt + th * 0.7, 0, w, w * R(rand, [0.95, 1.2]), th * dz, 10 + i, asub); }
+    colliders = [[-span / 2, 0, th * 1.1], [span / 2, 0, th * 1.1]];
+  } else if (P.stack) {
+    const S = P.stack, nl = RI(rand, S.layers), neck = Array.isArray(S.neck) ? R(rand, S.neck) : S.neck, cap = Array.isArray(S.cap) ? R(rand, S.cap) : S.cap; let y = 0;
+    for (let i = 0; i < nl; i++) {
+      const last = i === nl - 1, mid = i > 0 && !last;
+      const rx = r0 * (S.cap && last ? cap : mid && S.neck ? neck : 1 - (S.taper || 0) * i / nl) * R(rand, [0.92, 1.08]), ry = rx * R(rand, S.thick);
+      const fl = P.flatten;
+      blob((rand() - 0.5) * r0 * 0.12, fl ? y + ry * (fl - 0.05) : y + ry * 0.9, (rand() - 0.5) * r0 * 0.12, rx * stretch[0], ry, rx * stretch[2], i, sub, S.ftAll ? fl : last ? (S.flatTop || 0) : 0);
+      y += fl ? ry * 2 * fl * 0.97 : ry * (S.step || 1.55);
+    }
+  } else {
+    const parts = [[0, 0, 1]], nch = RI(rand, P.chips);
+    for (let k = 0; k < nch; k++) { const a = rand() * TAU, d = r0 * R(rand, [1.0, 1.7]); parts.push([Math.cos(a) * d, Math.sin(a) * d, R(rand, [0.25, 0.5])]); }
+    const ng = P.group ? RI(rand, P.group) : 0;
+    for (let k = 0; k < ng; k++) { const a = rand() * TAU, d = r0 * R(rand, [0.7, 1.5]); parts.push([Math.cos(a) * d, Math.sin(a) * d, R(rand, [0.4, 0.8])]); }
+    parts.forEach(([px, pz, sc], k) => { const r = r0 * sc, ry = r * stretch[1] * (k ? R(rand, [0.7, 1.2]) : 1); blob(px, baseY(ry), pz, r * stretch[0], ry, r * stretch[2], k, k ? Math.min(sub, P.chipSub ?? 1) : sub); });
+  }
   // 층리(색 줄무늬): 정점 높이에 따라 밝기 변화
-  if (P.strata) for (let i = 0; i < b.n; i++) { const s = 1 - P.strata * 0.55 * (0.5 + 0.5 * Math.sin(b.P[i * 3 + 1] * 9 + noise3(b.P[i * 3], 0, b.P[i * 3 + 2], 5) * 3)); b.C[i * 3] *= s; b.C[i * 3 + 1] *= s; b.C[i * 3 + 2] *= s; }
-  b.meta = { coll: r0 * Math.max(stretch[0], stretch[2]) * 0.85, kind: 'rock' };
+  if (P.strata) for (let i = 0; i < b.n; i++) { const st = 1 - P.strata * 0.55 * (0.5 + 0.5 * Math.sin(b.P[i * 3 + 1] * 9 + noise3(b.P[i * 3], 0, b.P[i * 3 + 2], 5) * 3)); b.C[i * 3] *= st; b.C[i * 3 + 1] *= st; b.C[i * 3 + 2] *= st; }
+  if (P.invert) xform(b, 0, { ta: Math.PI });
+  b.meta = { coll: P.arch ? 0 : r0 * Math.max(stretch[0], stretch[2]) * 0.85, colliders, hang: !!P.invert, kind: 'rock' };
   return b;
 }
 
@@ -382,15 +451,15 @@ function buildGrass(P, rand, lod) {
     let f = [lerp(Math.cos(az), Math.cos(a), P.outward), lerp(Math.sin(az), Math.sin(a), P.outward)];
     const fl = Math.hypot(f[0], f[1]) || 1; f = [f[0] / fl, f[1] / fl];
     const h = R(rand, P.height) * (1 - P.edge * (d / P.spread)), w = P.width * (0.8 + 0.4 * rand()), curl = P.curl * (0.6 + 0.8 * rand()), shade = 0.85 + 0.3 * rand();
-    const u0 = rand() * 5, v0 = rand() * 5;
-    if (lod && k % 5 >= 3) continue;
+    const u0 = rand() * 5, v0 = rand() * 5, hasHead = P.bulge ? rand() < (P.headFrac ?? 1) : false;
+    if (lod && k % 5 >= (lod >= 2 ? 1 : 3)) continue;
     const side = [-f[1], f[0]], rr = [];
     for (let i = 0; i <= rows; i++) {
-      const t = i / rows, cy = h * t, cf = curl * h * t * t + P.lean * h * t, hw = 0.5 * w * (1 - Math.pow(t, P.taper)) * (lod ? 1.4 : 1);
+      const t = i / rows, cy = h * t - 0.05, cf = curl * h * t * t + P.lean * h * t, hw = 0.5 * w * (1 - Math.pow(t, P.taper)) * (lod ? 1.4 : 1) + (hasHead && t > 0.7 ? P.bulge * 0.5 * Math.sin(Math.PI * (t - 0.7) / 0.3) : 0);
       const cx = bx + f[0] * cf, cz = bz + f[1] * cf;
       rr.push({ l: [cx - side[0] * hw, cy, cz - side[1] * hw], r: [cx + side[0] * hw, cy, cz + side[1] * hw] });
     }
-    addLoft(b, rr, { face: [f[0], 0.3, f[1]], u0, v0, uw: w, col: (t) => { const s = shade * (0.4 + 0.6 * t); return [s, s, s]; }, wind: (p, t) => P.sway * t * t * (h / hRef) });
+    addLoft(b, rr, { face: [f[0], 0.3, f[1]], u0, v0, uw: w, col: (t) => { const s = shade * (0.4 + 0.6 * t); return hasHead && P.headCol && t > 0.72 ? [P.headCol[0] * s, P.headCol[1] * s, P.headCol[2] * s] : [s, s, s]; }, wind: (p, t) => P.sway * t * t * (h / hRef) });
   }
   b.meta = { coll: 0, kind: 'grass' };
   return b;
@@ -403,8 +472,8 @@ function buildFlower(P, rand, lod) {
     const az = heads === 1 ? rand() * TAU : (k / heads) * TAU + rand() * 0.6;
     const H = R(rand, P.height) * (heads === 1 ? 1 : 0.7 + 0.3 * rand());
     const lean = heads === 1 ? R(rand, P.lean) : R(rand, P.lean) * 1.5 + 0.25, bend = R(rand, P.bend);
-    const dirH = [Math.cos(az), Math.sin(az)], pts = [[0, 0, 0]], n = 5, tans = [];
-    let p = [0, 0, 0];
+    const dirH = [Math.cos(az), Math.sin(az)], pts = [[0, -0.05, 0]], n = 5, tans = [];
+    let p = [0, -0.05, 0];
     for (let i = 1; i <= n; i++) {
       const th = lean + bend * Math.pow(i / n, 1.5), t = [Math.sin(th) * dirH[0], Math.cos(th), Math.sin(th) * dirH[1]];
       p = add(p, scl(t, H / n)); pts.push(p); tans.push(t);
@@ -417,6 +486,21 @@ function buildFlower(P, rand, lod) {
       const el = R(rand, [0.35, 0.9]), d = [Math.cos(la) * Math.cos(el), Math.sin(el), Math.sin(la) * Math.cos(el)], sd = [-Math.sin(la), 0, Math.cos(la)];
       const rr = [0, 0.45, 0.85, 1].map((u, j) => { const c = [base[0] + d[0] * len * u, base[1] + d[1] * len * u - 0.25 * len * u * u, base[2] + d[2] * len * u]; const w = [0.2, 1, 0.7, 0][j] * wd * 0.5; return { l: sub(c, scl(sd, w)), r: add(c, scl(sd, w)) }; });
       addLoft(b, rr, { face: [0, 1, 0], uw: wd, u0: rand() * 4, v0: rand() * 4, col: (u) => { const s = 0.6 + 0.4 * u; return [s, s, s]; }, wind: (q, u) => P.sway * 0.3 * u, surf: 0 });
+    }
+    if (P.spike) {                                           // 라벤더/루핀: 줄기 윗부분에 작은 꽃이 층층이
+      const ns = RI(rand, P.spike), W = R(rand, P.petalW), Lp = R(rand, P.petalL);
+      for (let j = 0; j < ns; j++) {
+        const tt = 0.45 + 0.55 * (j + 0.5) / ns, f = tt * n, i0 = Math.min(n - 1, Math.floor(f)), uu = f - i0;
+        const cp = [lerp(pts[i0][0], pts[i0 + 1][0], uu), lerp(pts[i0][1], pts[i0 + 1][1], uu), lerp(pts[i0][2], pts[i0 + 1][2], uu)], ang = j * 2.4 + rand();
+        const a = norm([Math.cos(ang) * 0.9 + tans[i0][0] * 0.4, 0.25 + tans[i0][1] * 0.4, Math.sin(ang) * 0.9 + tans[i0][2] * 0.4]);
+        const u = norm(cross(a, Math.abs(a[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])), v = cross(a, u), hs = 1.15 - 0.7 * tt, np = 4 + (j % 2), op = R(rand, P.open);
+        for (let i = 0; i < np; i++) {
+          const ap = (i / np) * TAU, q = add(scl(u, Math.cos(ap)), scl(v, Math.sin(ap))), d = add(scl(a, Math.cos(op)), scl(q, Math.sin(op))), tg = norm(cross(a, q));
+          const rr = [0, 0.5, 1].map((t, jj) => { const pc = add(add(cp, scl(q, Lp * 0.1 * hs)), scl(d, Lp * hs * t)); const w = [0.4, 1, 0][jj] * W * hs * 0.5; return { l: sub(pc, scl(tg, w)), r: add(pc, scl(tg, w)) }; });
+          addLoft(b, rr, { face: add(scl(a, 0.6), scl(q, 0.4)), mask: 1, surf: 1, uw: W * hs, u0: rand() * 3, v0: rand() * 3, col: (t) => { const s2 = 0.75 + 0.25 * t; return [s2, s2, s2]; }, wind: () => P.sway });
+        }
+      }
+      continue;
     }
     // 머리
     const c = pts[n], a = norm(tans[n - 1]), u = norm(cross(a, Math.abs(a[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])), v = cross(a, u);
@@ -465,15 +549,15 @@ function buildMushroom(P, rand, lod) {
 }
 
 // ====================== 베이스 6: 그루터기 / 통나무 ======================
+// char(0~1): 탄화 정도. 0이면 일반 목재, 1이면 숯처럼 검게.
 function buildStump(P, rand, lod) {
-  const b = new Buf(), r = R(rand, P.radius), h = R(rand, P.log ? P.length : P.height), seg = lod ? 8 : 14, ph = rand() * TAU, nR = RI(rand, P.roots);
-  const wood = [1, 0.85, 0.6], bark = (s) => [s, s, s];
-  const top = P.top;
+  const b = new Buf(), r = R(rand, P.radius), h = R(rand, P.log ? P.length : P.height), seg = lod >= 2 ? 6 : lod ? 8 : 14, ph = rand() * TAU, nR = RI(rand, P.roots);
+  const cm = 1 - 0.9 * (P.char || 0), W = (c) => c.map((x) => x * cm), bark = (s) => [s * cm, s * cm, s * cm], wood = W([1, 0.85, 0.6]), top = P.top;
   const prof = [[r * 1.3, -0.12, bark(0.5), 0, 0, 0], [r * 1.12, h * 0.12, bark(0.75), 0, 0, 0], [r * 1.0, h * 0.5, bark(0.95), 0, 0, 0], [r * 0.97, h * 0.92, bark(1), 0, 0, 0], [r * 0.95, h, bark(0.9), 0, 0, 0]];
   if (top === 'hollow') {
-    prof.push([r * 0.72, h * 1.01, wood, 0, 0, 1], [r * 0.66, h * 0.6, [0.3, 0.3, 0.3], 0, 0, 0], [r * 0.6, h * 0.42, [0.12, 0.12, 0.12], 0, 0, 0], [0.001, h * 0.4, [0.1, 0.1, 0.1], 0, 0, 0]);
+    prof.push([r * 0.72, h * 1.01, wood, 0, 0, 1], [r * 0.66, h * 0.6, W([0.3, 0.3, 0.3]), 0, 0, 0], [r * 0.6, h * 0.42, W([0.12, 0.12, 0.12]), 0, 0, 0], [0.001, h * 0.4, W([0.1, 0.1, 0.1]), 0, 0, 0]);
   } else if (top === 'broken') {
-    prof.push([r * 0.72, h * 0.92, [0.9, 0.78, 0.55], 0, 0, 1], [r * 0.4, h * 0.82, [0.75, 0.62, 0.42], 0, 0, 1], [0.001, h * 0.76, [0.6, 0.5, 0.35], 0, 0, 1]);
+    prof.push([r * 0.72, h * 0.92, W([0.9, 0.78, 0.55]), 0, 0, 1], [r * 0.4, h * 0.82, W([0.75, 0.62, 0.42]), 0, 0, 1], [0.001, h * 0.76, W([0.6, 0.5, 0.35]), 0, 0, 1]);
   } else {
     prof.push([r * 0.8, h * 1.005, wood, 0, 0, 1], [r * 0.6, h * 1.0, wood.map((c) => c * 0.8), 0, 0, 1], [r * 0.4, h * 1.005, wood, 0, 0, 1], [r * 0.2, h * 1.0, wood.map((c) => c * 0.82), 0, 0, 1], [0.001, h * 1.005, wood, 0, 0, 1]);
   }
@@ -485,7 +569,7 @@ function buildStump(P, rand, lod) {
   const stubs = P.stubs ? RI(rand, P.stubs) : 0;
   for (let q = 0; q < stubs; q++) {
     const a = rand() * TAU, y = h * R(rand, [0.3, 0.7]), d = [Math.cos(a), 0, Math.sin(a)], l = r * R(rand, [0.5, 0.9]);
-    addTube(b, [[d[0] * r * 0.85, y, d[2] * r * 0.85], [d[0] * (r + l * 0.5), y + l * 0.25, d[2] * (r + l * 0.5)], [d[0] * (r + l), y + l * 0.45, d[2] * (r + l)]], [r * 0.22, r * 0.17, r * 0.13], 5, { col: () => [0.85, 0.85, 0.85] });
+    if (lod < 2) addTube(b, [[d[0] * r * 0.85, y, d[2] * r * 0.85], [d[0] * (r + l * 0.5), y + l * 0.25, d[2] * (r + l * 0.5)], [d[0] * (r + l), y + l * 0.45, d[2] * (r + l)]], [r * 0.22, r * 0.17, r * 0.13], 5, { col: () => [0.85 * cm, 0.85 * cm, 0.85 * cm] });
   }
   if (P.log) xform(b, start, { ta: Math.PI / 2, az: 0, oy: r * 0.8, ox: -h * 0.5 });
   b.meta = { coll: P.log ? 0 : r, kind: P.log ? 'log' : 'stump' };
@@ -524,7 +608,7 @@ function buildPlant(P, rand, lod) {
       addLoft(b, leafRows([0, 0.02, 0], d, sd, len, wd, 0.3, [0.35, 1, 0.8, 0]), { face: [0, 1, 0], uw: wd, u0: rand() * 4, v0: rand() * 4, col: shade, wind: (p, u) => P.sway * u * u });
     }
   } else if (P.type === 'sapling') {
-    const H = R(rand, P.height), pts = [[0, 0, 0], [0.02, H * 0.35, 0.01], [-0.01, H * 0.7, 0.02], [0.02, H, 0]];
+    const H = R(rand, P.height), pts = [[0, -0.06, 0], [0.02, H * 0.35, 0.01], [-0.01, H * 0.7, 0.02], [0.02, H, 0]];
     addTube(b, pts, [0.025, 0.018, 0.013, 0.008], 4, { col: (t) => { const s = 0.6 + 0.4 * t; return [s, s, s]; }, wind: (p) => P.sway * Math.pow(p[1] / H, 2), surf: 1 });
     const nl = RI(rand, P.leaves);
     for (let k = 0; k < nl; k++) {
@@ -532,11 +616,45 @@ function buildPlant(P, rand, lod) {
       const d = [Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el)], sd = [-Math.sin(az), 0, Math.cos(az)];
       addLoft(b, leafRows([0.01, y, 0.01], d, sd, len, wd, 0.3, [0.3, 1, 0.8, 0]), { face: [0, 1, 0], uw: wd, u0: rand() * 4, v0: rand() * 4, col: shade, wind: (p, u) => P.sway * (y / H) * (0.5 + u) });
     }
+  } else if (P.type === 'tumble') {                          // 회전초: 구 위의 호(arc)들이 엉킨 덩어리
+    const Rr = R(rand, P.radius), na = RI(rand, P.arcs), np = lod >= 2 ? 4 : lod ? 5 : 8, cy = Rr * 0.85;
+    for (let k = 0; k < na; k++) {
+      const u = norm([rand() - 0.5, rand() - 0.5, rand() - 0.5]), v0 = norm([rand() - 0.5, rand() - 0.5, rand() - 0.5]), w = norm(cross(u, v0)), vv = cross(w, u);
+      const span = R(rand, [1.8, 3.2]), ph0 = rand() * TAU, rk = Rr * R(rand, [0.7, 1.0]), shade = 0.7 + 0.3 * rand();
+      if (lod && k % (lod >= 2 ? 3 : 2)) continue;
+      const pts = [];
+      for (let i = 0; i < np; i++) { const a = ph0 + span * i / (np - 1), rr2 = rk * (1 + 0.1 * Math.sin(i * 3 + k)); pts.push([(u[0] * Math.cos(a) + vv[0] * Math.sin(a)) * rr2, cy + (u[1] * Math.cos(a) + vv[1] * Math.sin(a)) * rr2, (u[2] * Math.cos(a) + vv[2] * Math.sin(a)) * rr2]); }
+      addTube(b, pts, new Array(np).fill(0.014 * (lod ? 1.3 : 1)), 3, { col: () => [shade, shade, shade], surf: 0, cap: false, wind: () => P.sway });
+    }
+  } else if (P.type === 'twiggy') {                           // 마른 관목: 잎 거의 없는 가는 가지 다발
+    const nt = RI(rand, P.twigs), hgt = R(rand, P.height);
+    for (let k = 0; k < nt; k++) {
+      const az = (k / nt) * TAU + rand() * 0.6, sp = R(rand, [0.35, 0.8]), l = hgt * R(rand, [0.7, 1.1]), dx = Math.cos(az) * sp, dz = Math.sin(az) * sp, sh = 0.7 + 0.3 * rand();
+      const pts = [0, 1, 2, 3].map((j) => { const t = j / 3; return [dx * l * t * (0.5 + 0.5 * t), -0.04 + l * t, dz * l * t * (0.5 + 0.5 * t)]; });
+      addTube(b, pts, [0.024, 0.017, 0.011, 0.006], 3, { col: () => [sh, sh, sh], surf: 1, wind: (p) => P.sway * Math.pow(Math.max(p[1], 0) / hgt, 2) });
+      const sq = [rand(), rand(), rand()];
+      if (!lod) for (let q = 0; q < 2; q++) {
+        const p0 = pts[1 + q], a2 = az + (q ? 0.8 : -0.8) + sq[q] * 0.3, l2 = l * 0.45;
+        addTube(b, [p0, [p0[0] + Math.cos(a2) * l2 * 0.4, p0[1] + l2 * 0.35, p0[2] + Math.sin(a2) * l2 * 0.4], [p0[0] + Math.cos(a2) * l2 * 0.8, p0[1] + l2 * 0.6, p0[2] + Math.sin(a2) * l2 * 0.8]], [0.01, 0.007, 0.004], 3, { col: () => [sh, sh, sh], surf: 1, wind: (p) => P.sway * Math.pow(Math.max(p[1], 0) / hgt, 2) });
+        if (sq[2] < 0.7) { const tp = [p0[0] + Math.cos(a2) * l2 * 0.8, p0[1] + l2 * 0.6, p0[2] + Math.sin(a2) * l2 * 0.8], sd = [-Math.sin(a2), 0, Math.cos(a2)]; addLoft(b, leafRows(tp, [Math.cos(a2) * 0.6, 0.6, Math.sin(a2) * 0.6], sd, 0.12, 0.05, 0.2, [0.3, 1, 0.8, 0]), { face: [0, 1, 0], uw: 0.05, u0: rand() * 4, v0: rand() * 4, col: shade, wind: () => P.sway }); }
+      }
+    }
+  } else if (P.type === 'kelp') {                             // 해초: 물결치는 긴 띠
+    const nb = RI(rand, P.blades), nr = lod ? 4 : 7;
+    for (let k = 0; k < nb; k++) {
+      const a = rand() * TAU, d = Math.sqrt(rand()) * 0.25, bx = Math.cos(a) * d, bz = Math.sin(a) * d, H = R(rand, P.height), wd = R(rand, P.width), ph0 = rand() * TAU, az = rand() * TAU, u0 = rand() * 4, v0 = rand() * 4;
+      const sd = [-Math.sin(az), 0, Math.cos(az)], rr = [];
+      for (let i = 0; i < nr; i++) {
+        const t = i / (nr - 1), cx = bx + Math.cos(az) * Math.sin(t * 3 + ph0) * 0.12 * t * H, cz = bz + Math.sin(az) * Math.sin(t * 3 + ph0) * 0.12 * t * H, cy = H * t - 0.05, hw = 0.5 * wd * Math.sin(Math.PI * (0.1 + 0.9 * t));
+        rr.push({ l: [cx - sd[0] * hw, cy, cz - sd[2] * hw], r: [cx + sd[0] * hw, cy, cz + sd[2] * hw] });
+      }
+      addLoft(b, rr, { face: [Math.cos(az), 0, Math.sin(az)], uw: wd, u0, v0, col: (t) => { const s2 = 0.45 + 0.55 * t; return [s2, s2, s2]; }, wind: (p, t) => P.sway * t * t * H });
+    }
   } else if (P.type === 'bush') {
-    const R0 = R(rand, P.radius), nb = RI(rand, P.blobs), sub2 = lod ? 1 : 2;
+    const R0 = R(rand, P.radius), nb = RI(rand, P.blobs), sub2 = lod >= 2 ? 0 : lod ? 1 : 2;
     const bl = [];
-    for (let k = 0; k < nb; k++) { const a = rand() * TAU, d = k ? R0 * R(rand, [0.4, 0.9]) : 0; bl.push([Math.cos(a) * d, R0 * R(rand, [0.45, 0.8]), Math.sin(a) * d, R0 * R(rand, [0.45, 0.7]), rand() * 5, rand() * 5, 0.85 + rand() * 0.3]); }
-    bl.forEach((q, k) => { if (lod && k > 3) return; addBlob(b, [q[0], q[1], q[2]], [q[3], q[3] * 0.8, q[3]], { sub: sub2, noise: 0.25, freq: 1.8, seed: k + 5, surf: 0, u0: q[4], v0: q[5], col: (ny) => { const c = (0.5 + 0.5 * (ny * 0.5 + 0.5)) * q[6]; return [c, c, c]; }, wind: (p) => P.sway * Math.pow(p[1] / (R0 * 1.4), 2) }); });
+    for (let k = 0; k < nb; k++) { const a = rand() * TAU, d = k ? R0 * R(rand, [0.4, 0.9]) : 0, rr = R0 * R(rand, [0.45, 0.7]); bl.push([Math.cos(a) * d, rr * 0.68, Math.sin(a) * d, rr, rand() * 5, rand() * 5, 0.85 + rand() * 0.3]); }
+    bl.forEach((q, k) => { if (lod && k > (lod >= 2 ? 1 : 3)) return; addBlob(b, [q[0], q[1], q[2]], [q[3], q[3] * 0.8, q[3]], { sub: k > 1 ? Math.min(sub2, 1) : sub2, noise: 0.25, freq: 1.8, seed: k + 5, surf: 0, u0: q[4], v0: q[5], col: (ny) => { const c = (0.5 + 0.5 * (ny * 0.5 + 0.5)) * q[6]; return [c, c, c]; }, wind: (p) => P.sway * Math.pow(p[1] / (R0 * 1.4), 2) }); });
     const nt = RI(rand, [3, 6]);
     for (let k = 0; k < nt; k++) { const a = rand() * TAU, l = R0 * R(rand, [0.9, 1.4]); if (!lod) addTube(b, [[0, 0, 0], [Math.cos(a) * l * 0.4, l * 0.5, Math.sin(a) * l * 0.4], [Math.cos(a) * l * 0.8, l * 0.7, Math.sin(a) * l * 0.8]], [0.03, 0.02, 0.012], 3, { col: () => [0.7, 0.7, 0.7], surf: 1 }); }
     const nbry = P.berries ? RI(rand, P.berries) : 0;
@@ -549,7 +667,7 @@ function buildPlant(P, rand, lod) {
 // ====================== 베이스 8: 덩굴 ======================
 // hanging(위에서 늘어짐) / climbing(줄기를 감고 오름) / creeper(바닥을 기어감). 줄기(층1)+잎(층0)
 function buildVine(P, rand, lod) {
-  const b = new Buf(), len = R(rand, P.length), n = lod ? 6 : 10, wob = R(rand, P.wobble), turns = R(rand, P.turns || [1, 1]), hug = R(rand, P.hug || [0.4, 0.4]), ph = rand() * TAU;
+  const b = new Buf(), len = R(rand, P.length), n = lod ? 6 : 10, wob = R(rand, P.wobble || [1, 1]), turns = R(rand, P.turns || [1, 1]), hug = R(rand, P.hug || [0.4, 0.4]), ph = rand() * TAU;
   const strand = (L, scale, depth) => {
     const pts = [];
     for (let i = 0; i <= n; i++) {
@@ -560,20 +678,37 @@ function buildVine(P, rand, lod) {
       else p = [L * t * Math.cos(ph + depth) + Math.sin(t * 6 + ph) * wob * 0.15, 0.03 + 0.02 * Math.sin(t * 9), L * t * Math.sin(ph + depth) + Math.cos(t * 5 + ph) * wob * 0.15];
       pts.push(p);
     }
-    addTube(b, pts, pts.map((_, i) => 0.026 * scale * (1 - 0.5 * i / n)), 3, { col: () => [0.8, 0.8, 0.8], wind: (p) => P.sway * (P.type === 'hanging' ? Math.pow(Math.abs(p[1]) / L, 1.5) : 0.2), surf: 1 });
+    addTube(b, pts, pts.map((_, i) => 0.026 * scale * (P.thick || 1) * (1 - 0.5 * i / n)), 3, { col: () => [0.8, 0.8, 0.8], wind: (p) => P.sway * (P.type === 'hanging' ? Math.pow(Math.abs(p[1]) / L, 1.5) : 0.2), surf: 1 });
     const step = lod ? 2 : 1;
     for (let i = 1; i <= n; i += 1) {
       const az = i * 2.4 + rand() * 0.6, ln = R(rand, P.leafLen) * scale, wd = ln * 0.75, el = P.type === 'creeper' ? R(rand, [0.05, 0.3]) : R(rand, [-0.5, 0.2]);
       const d = [Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el)], sd = [-Math.sin(az), 0, Math.cos(az)];
       const u0 = rand() * 4, v0 = rand() * 4;
       if (i % step) continue;
+      if (P.leafEvery && i % P.leafEvery) continue;
       addLoft(b, leafRows(pts[i], d, sd, ln, wd, 0.2, [0.3, 1, 0.75, 0]), { face: [0, 1, 0], uw: wd, u0, v0, col: (u) => { const s = 0.55 + 0.45 * u; return [s, s, s]; }, wind: (p) => P.sway * (P.type === 'hanging' ? Math.pow(Math.abs(p[1]) / L, 1.5) : 0.3) });
     }
   };
+  if (P.type === 'roots') {                                  // 땅 위로 드러난 뿌리: 중심에서 아치를 그리며 뻗어 다시 땅속으로
+    const nr = RI(rand, P.count), rt = R(rand, P.rootR), np = lod ? 4 : 6;
+    const root = (az, L, h, r0, sg) => {
+      const dv = [Math.cos(az), 0, Math.sin(az)], pts = [], radii = [];
+      for (let i = 0; i < np; i++) { const t = i / (np - 1); pts.push([dv[0] * L * t, -0.05 + h * Math.pow(Math.sin(Math.PI * Math.min(1, t * 0.9)), 0.8) * (1 - t * 0.3) - t * t * 0.15, dv[2] * L * t]); radii.push(r0 * (1 - 0.8 * t) + 0.02); }
+      addTube(b, pts, radii, sg, { col: (t) => { const c = 0.6 + 0.4 * t; return [c, c, c]; }, surf: 1 });
+      return pts;
+    };
+    for (let k = 0; k < nr; k++) {
+      const az = (k / nr) * TAU + rand() * 0.7, L = len * R(rand, [0.6, 1.1]), h = L * R(rand, [0.14, 0.26]), r0 = rt * R(rand, [0.7, 1.1]), sb = [rand(), rand()];
+      const pts = root(az, L, h, r0, lod ? 3 : 4);
+      if (!lod) { const q = pts[3], a2 = az + (sb[0] < 0.5 ? 0.7 : -0.7); const dv = [Math.cos(a2), 0, Math.sin(a2)]; addTube(b, [q, [q[0] + dv[0] * L * 0.2, q[1] + 0.03, q[2] + dv[2] * L * 0.2], [q[0] + dv[0] * L * 0.4, q[1] - 0.1, q[2] + dv[2] * L * 0.4]], [r0 * 0.35, r0 * 0.25, 0.02], 3, { col: () => [0.8, 0.8, 0.8], surf: 1 }); }
+    }
+    b.meta = { coll: 0, kind: 'vine' };
+    return b;
+  }
   strand(len, 1, 0);
   const nbr = P.branches ? RI(rand, P.branches) : 0;
   for (let k = 0; k < nbr; k++) strand(len * R(rand, [0.4, 0.6]), 0.7, (k % 2 ? 1 : -1) * R(rand, [0.5, 1.1]));
-  b.meta = { coll: 0, kind: 'vine' };
+  b.meta = { coll: 0, kind: 'vine', hang: P.type === 'hanging' };
   return b;
 }
 
@@ -624,7 +759,7 @@ export const SPECIES = {
   tree_pine: { base: 'tree', fam: 'tree_pine', scale: [0.85, 1.3], style: { hue: [-0.1, 0.1], sat: [0.85, 1.1], val: [0.8, 1.1], accents: [0xf2f6ff], accent: [0, 1] }, fin: { upBlend: [0, 0.3], maskUp: { lo: 0.35, hi: 0.7, surf: 1 } },
     P: { height: [9, 13], trunkR: [0.25, 0.35], trunkFrac: 0.98, taper: 0.12, flare: 0.5, lean: [0, 0.08], bend: [0.2, 0.5], seg: 7, roots: [3, 4], sway: 0.25,
       br: { n: [0, 0], from: 0.4, to: 0.9, len: [0.1, 0.2], elev: [0.3, 0.6], droop: 0.1, twigs: false },
-      crown: { type: 'cone', tiers: [5, 9], R: [0.14, 0.28], bare: [0.12, 0.3], ragged: 0.22 } } },
+      crown: { type: 'cone', tiers: [5, 9], R: [0.14, 0.28], bare: [0.12, 0.3], ragged: 0.22, wobble: 0.06 } } },
   tree_jungle: { base: 'tree', fam: 'tree_jungle', scale: [0.85, 1.2], style: { hue: [-0.15, 0.2], sat: [0.85, 1.2], val: [0.8, 1.1], accent: [0, 0] }, fin: { upBlend: [0, 0.45] },
     P: { height: [12, 17], trunkR: [0.4, 0.6], trunkFrac: 0.82, taper: 0.55, flare: 1.6, lean: [0, 0.1], bend: [0.3, 0.8], seg: 9, roots: [5, 7], sway: 0.3,
       br: { n: [4, 6], from: 0.6, to: 1.0, len: [0.25, 0.4], elev: [0.35, 0.6], droop: 0.05, twigs: false },
@@ -702,6 +837,135 @@ export const SPECIES = {
     P: { type: 'climbing', length: [2.5, 5], turns: [1.4, 3.2], hug: [0.3, 0.55], wobble: [1, 1], leafLen: [0.3, 0.5], branches: [0, 0], sway: 0.05 } },
   vine_creeper: { base: 'vine', fam: 'vine', scale: [0.8, 1.3], style: { hue: [-0.15, 0.2], sat: [0.85, 1.2], val: [0.8, 1.15], accent: [0, 0] }, fin: { upBlend: [0.3, 0.3] },
     P: { type: 'creeper', length: [1.2, 2.4], wobble: [0.6, 1.8], leafLen: [0.16, 0.26], branches: [1, 3], sway: 0.06 } },
+};
+
+// ====================== 지형별 확장 ======================
+// 아래 종류는 전부 위의 베이스(tree/rock/grass/flower/mushroom/stump/plant/vine)의 파라미터 변형입니다.
+Object.assign(FAMILIES, {
+  tree_palm:     { A: { tex: 'dirt', tile: [0.5, 0.25], tint: [2.8, 2.5, 2.1] }, B: { tex: 'grass', tile: [0.5, 0.5], tint: [2.4, 3.2, 2.5] }, rough: 0.9, wind: 1.2, double: true },
+  tree_burnt:    { A: { tex: 'dirt', tile: [0.45, 0.22], tint: [2.4, 2.2, 2.0] }, B: { tex: 'grass_gold', tile: [0.5, 0.5], tint: [1.4, 0.9, 0.5] }, acc: 3.2, rough: 0.98, wind: 0.8, double: false },
+  tree_snowbare: { A: { tex: 'dirt', tile: [0.45, 0.22], tint: [2.0, 1.9, 1.9] }, B: { tex: 'dirt', tile: [0.45, 0.22], tint: [2.0, 1.9, 1.9] }, acc: 2.8, rough: 0.95, wind: 0.9, double: false },
+  cactus:        { A: { tex: 'grass_dark', tile: [1.0, 1.0], tint: [3.0, 4.6, 3.4] }, B: { tex: 'grass_dark', tile: [1.0, 1.0], tint: [3.0, 4.6, 3.4] }, acc: 2.6, rough: 0.7, wind: 0.15, double: false },
+  rock_ice:      { A: { tex: 'ice', tile: [0.4, 0.4], tint: [1.6, 1.8, 2.0] }, B: { tex: 'ice', tile: [0.4, 0.4], tint: [1.6, 1.8, 2.0] }, rough: 0.3, wind: 0, double: false },
+  rock_basalt:   { A: { tex: 'lava_rock', tile: [0.3, 0.3], tint: [5, 5, 5] }, B: { tex: 'lava_rock', tile: [0.3, 0.3], tint: [5, 5, 5] }, rough: 0.85, wind: 0, double: false },
+  rock_wet:      { A: { tex: 'rock', tile: [0.35, 0.35], tint: [6, 6, 6.4] }, B: { tex: 'rock', tile: [0.35, 0.35], tint: [6, 6, 6.4] }, rough: 0.35, wind: 0, double: false },
+  ash:           { A: { tex: 'village_dirt', tile: [0.4, 0.4], tint: [1.3, 1.4, 1.6] }, B: { tex: 'village_dirt', tile: [0.4, 0.4], tint: [1.3, 1.4, 1.6] }, rough: 1, wind: 0, double: false },
+  dry_plant:     { A: { tex: 'grass_gold', tile: [0.8, 0.8], tint: [2.0, 1.7, 1.1] }, B: { tex: 'dirt', tile: [0.8, 0.8], tint: [2.6, 2.3, 2.0] }, rough: 0.9, wind: 1.1, double: true },
+  coral:         { A: { tex: 'desert_sand', tile: [1.2, 1.2], tint: [1.5, 1.2, 1.1] }, B: { tex: 'desert_sand', tile: [1.2, 1.2], tint: [1.5, 1.2, 1.1] }, rough: 0.5, wind: 0.3, double: false },
+  kelp:          { A: { tex: 'grass_dark', tile: [0.8, 0.8], tint: [3.0, 4.4, 2.4] }, B: { tex: 'grass_dark', tile: [0.8, 0.8], tint: [3.0, 4.4, 2.4] }, rough: 0.8, wind: 1.6, double: true },
+  driftwood:     { A: { tex: 'village_dirt', tile: [0.5, 0.25], tint: [2.2, 2.1, 2.0] }, B: { tex: 'village_dirt', tile: [0.5, 0.25], tint: [2.2, 2.1, 2.0] }, rough: 1, wind: 0, double: false },
+});
+const G = SPECIES;                                       // 기존 프리셋을 복사해서 변형 (처음부터 새로 만들지 않음)
+const WHITE = [0xf4f8ff, 0xe8eff8], EMBER = [0xff5a1a, 0xff7a2a], ASH = [0x6e6a66, 0x5a5753];
+Object.assign(SPECIES, {
+  // ===== 정글 =====
+  tree_jungle_giant: { ...G.tree_jungle, scale: [0.9, 1.15],                       // 대표 거대 나무: 일반 정글 나무(12~17)보다 2배 이상
+    P: { ...G.tree_jungle.P, height: [30, 38], trunkR: [1.3, 1.8], trunkFrac: 0.78, taper: 0.5, flare: 2.6, seg: 12, roots: [9, 12], rootLen: 1.8, sway: 0.35,
+      br: { n: [6, 8], from: 0.55, to: 1.0, len: [0.28, 0.4], elev: [0.3, 0.55], droop: 0.05, twigs: false },
+      crown: { type: 'blob', r: [0.14, 0.2], flat: [0.35, 0.5], noise: 0.25, fill: [4, 6], spread: 0.3 } } },
+  tree_jungle_slender: { ...G.tree_jungle, scale: [0.9, 1.2],
+    P: { ...G.tree_jungle.P, height: [12, 22], trunkR: [0.18, 0.26], trunkFrac: 0.9, taper: 0.35, flare: 0.5, lean: [0, 0.25], bend: [0.5, 1.6], roots: [2, 3], seg: 7,
+      br: { n: [3, 5], from: 0.75, to: 1.0, len: [0.12, 0.2], elev: [0.5, 0.8], droop: 0.05, twigs: false },
+      crown: { type: 'blob', r: [0.08, 0.16], flat: [0.5, 0.9], noise: 0.3, fill: [1, 4], spread: 0.15 } } },
+  tree_palm: { base: 'tree', fam: 'tree_palm', scale: [0.85, 1.25], style: { hue: [-0.12, 0.15], sat: [0.85, 1.2], val: [0.85, 1.15], accent: [0, 0] }, fin: { upBlend: [0, 0.35] },
+    P: { height: [5, 9], trunkR: [0.15, 0.22], trunkFrac: 0.95, taper: 0.55, flare: 0.35, lean: [0.1, 0.35], bend: [1, 2], seg: 7, roots: [0, 0], sway: 0.45,
+      br: { n: [0, 0], from: 0.5, to: 1, len: [0.1, 0.2], elev: [0.3, 0.6], droop: 0, twigs: false }, crown: { type: 'palm', fronds: [8, 12], len: [2.2, 3.4] } } },
+  tree_fern: { ...G.tree_jungle, fam: 'tree_palm', scale: [0.9, 1.3], fin: { upBlend: [0, 0.35] },
+    P: { height: [1.6, 3.2], trunkR: [0.1, 0.16], trunkFrac: 0.95, taper: 0.8, flare: 0.5, lean: [0, 0.1], bend: [0.3, 0.8], seg: 6, roots: [0, 0], sway: 0.3,
+      br: { n: [0, 0], from: 0.5, to: 1, len: [0.1, 0.2], elev: [0.3, 0.6], droop: 0, twigs: false }, crown: { type: 'palm', fronds: [10, 14], len: [1.0, 1.6] } } },
+  stump_jungle: { ...G.stump_hollow, scale: [0.9, 1.5], style: { ...G.stump_hollow.style, accent: [0.4, 1] }, P: { ...G.stump_hollow.P, radius: [0.5, 0.9], height: [0.6, 1.3], flare: 0.9, roots: [5, 8], stubs: [1, 2] } },
+  mushroom_giant: { ...G.mushroom_toadstool, scale: [0.9, 1.5],
+    P: { shape: 'dome', count: [1, 1], capR: [0.3, 0.5], capH: [0.2, 0.32], stemH: [0.45, 0.8], stemR: [0.06, 0.1], stemTop: 0.7, tilt: [0, 0.15], spots: [8, 14] } },
+  plant_fern_large: { ...G.plant_fern, scale: [0.9, 1.4], P: { type: 'fern', fronds: [10, 14], len: [1.2, 1.9], sway: 0.2 } },
+  flower_lily: { ...G.flower_daisy, scale: [0.9, 1.3], style: { ...G.flower_daisy.style, accents: [0xff8fb1, 0xffffff, 0xf6c431, 0xe84a5f] },
+    P: { heads: [1, 1], height: [0.5, 0.8], lean: [0, 0.2], bend: [0.3, 0.8], leaves: [3, 4], petals: [6, 6], petalW: [0.07, 0.09], petalL: [0.16, 0.22], open: [1.0, 1.3], curl: 0.15, flare: 0.1, centerR: 0.03, sway: 0.1 } },
+  flower_spike: { ...G.flower_daisy, scale: [0.9, 1.3], style: { ...G.flower_daisy.style, accents: [0x9b59b6, 0x6aa8ff, 0xffffff, 0xff8fb1] },
+    P: { heads: [1, 2], height: [0.4, 0.7], lean: [0, 0.15], bend: [0.1, 0.4], leaves: [2, 3], spike: [7, 10], petals: [4, 5], petalW: [0.03, 0.04], petalL: [0.055, 0.07], open: [1.0, 1.3], curl: 0, flare: 0, centerR: 0, sway: 0.1 } },
+  roots_exposed: { ...G.vine_creeper, scale: [0.9, 1.5], fin: {}, P: { type: 'roots', count: [4, 6], rootR: [0.14, 0.24], length: [1.6, 3.2], sway: 0 } },
+  vine_thick: { ...G.vine_hanging, scale: [0.9, 1.3], P: { ...G.vine_hanging.P, thick: 2.6, leafEvery: 3, leafLen: [0.25, 0.4], length: [3, 6] } },
+  // ===== 평원 =====
+  tree_wide: { ...G.tree_oak, scale: [0.9, 1.25],
+    P: { ...G.tree_oak.P, height: [5.5, 8], trunkR: [0.35, 0.5], trunkFrac: 0.42, taper: 0.55, flare: 1.0,
+      br: { n: [5, 7], from: 0.45, to: 0.95, len: [0.45, 0.7], elev: [0.15, 0.45], droop: 0.12, twigs: true },
+      crown: { type: 'blob', r: [0.22, 0.3], flat: [0.45, 0.65], noise: 0.22, fill: [4, 6], spread: 0.4 } } },
+  grass_wheat: { ...G.grass_dry, scale: [0.9, 1.3], P: { blades: [10, 15], height: [0.7, 1.1], width: 0.035, spread: 0.2, curl: 0.35, lean: 0.12, taper: 1.0, rows: 6, outward: 0.5, edge: 0.2, sway: 0.3, bulge: 0.08, headFrac: 1, headCol: [1, 0.82, 0.45] } },
+  plant_shrub_small: { ...G.plant_bush, scale: [0.9, 1.4], P: { type: 'bush', radius: [0.18, 0.32], blobs: [3, 4], berries: [3, 6], sway: 0.12 } },
+  rock_pebbles: { ...G.rock_cluster, scale: [0.8, 1.4], P: { radius: [0.12, 0.22], sx: [1, 1.3], sy: [0.6, 0.9], sz: [1, 1.3], noise: 0.25, freq: 1.4, flatten: 0.3, taper: 0, chips: [3, 5], group: [4, 7], strata: 0, chipSub: 0 } },
+  // ===== 사막 =====
+  cactus_saguaro: { base: 'tree', fam: 'cactus', scale: [0.8, 1.3], style: { hue: [-0.1, 0.1], sat: [0.8, 1.1], val: [0.8, 1.15], accent: [0, 0] }, fin: { upBlend: [0, 0] },
+    P: { height: [3, 6], trunkR: [0.22, 0.32], trunkFrac: 1.0, taper: 0.85, flare: 0.25, lean: [0, 0.12], bend: [0, 0.3], seg: 18, roots: [0, 0], sway: 0.04, rib: { n: [6, 8], amp: 0.1 }, dome: true,
+      br: { n: [1, 4], from: 0.25, to: 0.7, len: [0.15, 0.4], elev: [0, 0], droop: 0, twigs: false, elbow: true, rArm: 0.62 }, crown: { type: 'none' } } },
+  cactus_column: { ...G.tree_dead, fam: 'cactus', scale: [0.8, 1.4], style: { hue: [-0.1, 0.1], sat: [0.8, 1.1], val: [0.8, 1.15], accent: [0, 0] }, fin: {},
+    P: { height: [0.8, 1.5], trunkR: [0.1, 0.15], trunkFrac: 1.0, taper: 0.8, flare: 0.3, lean: [0, 0.1], bend: [0, 0.3], seg: 14, roots: [0, 0], sway: 0.04, rib: { n: [5, 6], amp: 0.14 }, dome: true,
+      br: { n: [0, 1], from: 0.3, to: 0.5, len: [0.2, 0.3], elev: [0, 0], droop: 0, twigs: false, elbow: true, rArm: 0.6 }, crown: { type: 'none' } } },
+  cactus_barrel: { ...G.tree_dead, fam: 'cactus', scale: [0.8, 1.4], style: { hue: [-0.1, 0.1], sat: [0.8, 1.1], val: [0.8, 1.15], accent: [0, 0] }, fin: {},
+    P: { height: [0.5, 0.9], trunkR: [0.26, 0.38], trunkFrac: 1.0, taper: 0.6, belly: 0.5, flare: 0.1, lean: [0, 0.05], bend: [0, 0.1], seg: 22, roots: [0, 0], sway: 0.02, rib: { n: [9, 11], amp: 0.14 }, dome: true, domeFlat: true,
+      br: { n: [0, 0], from: 0.3, to: 0.5, len: [0.2, 0.3], elev: [0, 0], droop: 0, twigs: false }, crown: { type: 'none' } } },
+  cactus_prickly: { ...G.tree_dead, fam: 'cactus', scale: [0.8, 1.4], style: { hue: [-0.1, 0.1], sat: [0.8, 1.1], val: [0.8, 1.15], accent: [0, 0] }, fin: {},
+    P: { height: [0.01, 0.02], trunkR: [0.04, 0.05], trunkFrac: 1.0, taper: 1, flare: 0, lean: [0, 0], bend: [0, 0], seg: 4, roots: [0, 0], sway: 0.05, noTrunk: true, coll: 0.3,
+      br: { n: [0, 0], from: 0.3, to: 0.5, len: [0.2, 0.3], elev: [0, 0], droop: 0, twigs: false }, crown: { type: 'pads', n: [5, 9], size: [0.22, 0.32] } } },
+  rock_arch: { ...G.rock_sandstone, scale: [1.2, 2.2], fin: { deindex: true, smooth: 0.15, tri: true },
+    P: { radius: [1, 1], sx: [1, 1], sy: [1, 1], sz: [1, 1], noise: 0.26, freq: 1.7, flatten: 0, taper: 0, chips: [0, 0], strata: 1.0, arch: { span: [5, 7], height: [3.6, 5], thick: [1.1, 1.5] } } },
+  rock_mesa: { ...G.rock_sandstone, scale: [1.0, 1.8],
+    P: { radius: [2.5, 4], sx: [1, 1.3], sy: [1, 1], sz: [1, 1.3], noise: 0.1, freq: 1.5, flatten: 0.6, taper: 0, chips: [0, 0], strata: 1.0, stack: { layers: [4, 6], taper: 0.25, thick: [0.9, 1.3], ftAll: true } } },
+  rock_hoodoo: { ...G.rock_sandstone, scale: [1.0, 1.8],
+    P: { radius: [0.7, 1.1], sx: [0.9, 1.1], sy: [1, 1], sz: [0.9, 1.1], noise: 0.22, freq: 1.6, flatten: 0, taper: 0, chips: [0, 0], strata: 1.0, stack: { layers: [3, 7], neck: [0.4, 0.7], cap: [1.1, 1.5], thick: [0.7, 1.2] } } },
+  rock_weathered: { ...G.rock_sandstone, style: { ...G.rock_sandstone.style, sat: [0.45, 0.8] }, fin: { deindex: true, smooth: 0.1, tri: true },
+    P: { radius: [0.7, 1.6], sx: [1, 1.4], sy: [0.6, 0.9], sz: [0.9, 1.3], noise: 0.38, freq: 2.6, flatten: 0.3, taper: 0, chips: [1, 3], strata: 0.6 } },
+  tumbleweed: { base: 'plant', fam: 'dry_plant', scale: [0.8, 1.4], style: { hue: [-0.12, 0.12], sat: [0.7, 1.1], val: [0.75, 1.15], accent: [0, 0] }, fin: {}, P: { type: 'tumble', radius: [0.28, 0.45], arcs: [14, 20], sway: 0.02 } },
+  plant_shrub_dry: { ...G.plant_fern, fam: 'dry_plant', scale: [0.8, 1.3], style: { hue: [-0.12, 0.12], sat: [0.7, 1.1], val: [0.75, 1.15], accent: [0, 0] }, fin: {}, P: { type: 'twiggy', height: [0.7, 1.2], twigs: [9, 14], sway: 0.12 } },
+  // ===== 설원 =====
+  tree_snow_pine: { ...G.tree_pine, scale: [0.9, 1.3], style: { hue: [-0.05, 0.05], sat: [0.8, 1], val: [0.8, 1.05], accents: WHITE, accent: [0.85, 1] }, fin: { upBlend: [0, 0.3], maskUp: { lo: 0.3, hi: 0.6 } },
+    P: { ...G.tree_pine.P, crown: { ...G.tree_pine.P.crown, ragged: 0.3 } } },
+  tree_snow_spruce: { ...G.tree_pine, scale: [0.9, 1.3], style: { hue: [-0.05, 0.05], sat: [0.8, 1], val: [0.8, 1.05], accents: WHITE, accent: [0.6, 1] }, fin: { upBlend: [0, 0.3], maskUp: { lo: 0.4, hi: 0.75 } },
+    P: { ...G.tree_pine.P, height: [11, 15], trunkR: [0.22, 0.3], crown: { ...G.tree_pine.P.crown, tiers: [8, 11], R: [0.1, 0.16], ragged: 0.32 } } },
+  tree_snow_bare: { ...G.tree_oak, fam: 'tree_snowbare', scale: [0.9, 1.25], style: { hue: [-0.05, 0.05], sat: [0.8, 1], val: [0.8, 1.1], accents: WHITE, accent: [0.9, 1] }, fin: { maskUp: { lo: 0.4, hi: 0.7 } },
+    P: { ...G.tree_oak.P, height: [6.5, 9.5], trunkFrac: 0.8, sway: 0.15, snowCaps: true, br: { n: [9, 13], from: 0.3, to: 0.98, len: [0.3, 0.5], elev: [0.5, 1.0], droop: 0.1, twigs: true }, crown: { type: 'none' } } },
+  rock_snowy: { ...G.rock_snow, style: { ...G.rock_snow.style, accent: [0.9, 1] }, fin: { deindex: true, smooth: 0.05, tri: true, maskUp: { lo: 0.3, hi: 0.65 } } },
+  ice_crystal: { base: 'rock', fam: 'rock_ice', scale: [0.8, 1.5], style: { hue: [-0.08, 0.08], sat: [0.9, 1.2], val: [0.9, 1.2], accent: [0, 0] }, fin: { deindex: true, smooth: 0, tri: true },
+    P: { radius: [0.3, 0.55], sx: [0.45, 0.7], sy: [1.6, 3.0], sz: [0.45, 0.7], noise: 0.1, freq: 2, flatten: 0.1, taper: 0.75, chips: [2, 4], strata: 0, shear: 0.25 } },
+  icicle: { base: 'rock', fam: 'rock_ice', scale: [0.8, 1.5], style: { hue: [-0.08, 0.08], sat: [0.9, 1.2], val: [0.9, 1.2], accent: [0, 0] }, fin: { deindex: true, smooth: 0, tri: true },
+    P: { radius: [0.08, 0.14], sx: [0.8, 1], sy: [2.5, 4.5], sz: [0.8, 1], noise: 0.08, freq: 2, flatten: 0, taper: 0.85, chips: [2, 5], strata: 0, invert: true } },
+  // ===== 화산 =====
+  tree_burnt_full: { ...G.tree_dead, fam: 'tree_burnt', scale: [0.85, 1.25], style: { hue: [-0.03, 0.03], sat: [0.8, 1], val: [0.45, 1.0], accents: EMBER, accent: [0, 0.8] },
+    P: { ...G.tree_dead.P, height: [4, 10], trunkFrac: 0.85, taper: 0.4, lean: [0.05, 0.4], bend: [1, 3], char: 1.0, embers: 0.9, br: { n: [3, 7], from: 0.25, to: 0.85, len: [0.12, 0.3], elev: [0.3, 0.8], droop: 0.15, twigs: false } } },
+  tree_burnt_partial: { ...G.tree_dead, fam: 'tree_burnt', scale: [0.85, 1.25], style: { hue: [-0.03, 0.03], sat: [0.8, 1], val: [0.55, 1.1], accents: EMBER, accent: [0, 0.6] }, fin: { upBlend: [0, 0.4] },
+    P: { ...G.tree_dead.P, height: [5.5, 8.5], trunkFrac: 0.72, char: 0.5, embers: 0.6, br: { n: [5, 7], from: 0.35, to: 0.9, len: [0.2, 0.35], elev: [0.3, 0.8], droop: 0.1, twigs: true },
+      crown: { type: 'blob', r: [0.07, 0.11], flat: [0.5, 0.8], noise: 0.35, fill: [0, 1], spread: 0.15 } } },
+  stump_burnt: { ...G.stump_broken, fam: 'tree_burnt', style: { ...G.stump_broken.style, accent: [0, 0] }, fin: {}, P: { ...G.stump_broken.P, radius: [0.3, 0.55], height: [0.5, 1.1], char: 1, jag: 0.4, stubs: [0, 2] } },
+  log_burnt: { ...G.log_fallen, fam: 'tree_burnt', style: { ...G.log_fallen.style, accent: [0, 0] }, fin: {}, P: { ...G.log_fallen.P, char: 0.9, radius: [0.25, 0.4], length: [2.2, 4], stubs: [2, 4] } },
+  branch_burnt: { ...G.log_fallen, fam: 'tree_burnt', scale: [0.8, 1.3], style: { ...G.log_fallen.style, accent: [0, 0] }, fin: {}, P: { ...G.log_fallen.P, char: 1, radius: [0.05, 0.1], length: [1, 2], stubs: [3, 5], flare: 0, roots: [0, 0] } },
+  rock_lava_ashy: { ...G.rock_lava, style: { hue: [-0.05, 0.1], sat: [0.8, 1.3], val: [0.8, 1.2], accents: ASH, accent: [0.6, 1] }, fin: { deindex: true, smooth: 0, tri: true, maskUp: { lo: 0.35, hi: 0.7 } } },
+  rock_basalt: { base: 'rock', fam: 'rock_basalt', scale: [0.8, 1.4], style: { hue: [-0.05, 0.05], sat: [0.7, 1.1], val: [0.8, 1.2], accent: [0, 0] }, fin: { deindex: true, smooth: 0, tri: true },
+    P: { radius: [0.8, 1.6], sx: [0.8, 1.2], sy: [1.0, 1.6], sz: [0.8, 1.2], noise: 0.12, freq: 2.5, flatten: 0.1, taper: 0, chips: [2, 4], strata: 0, shear: 0.15 } },
+  ash_mound: { base: 'rock', fam: 'ash', scale: [0.8, 1.5], style: { hue: [-0.05, 0.05], sat: [0.7, 1.1], val: [0.75, 1.2], accent: [0, 0] }, fin: { deindex: true, smooth: 0.9, tri: true },
+    P: { radius: [1.0, 2.2], sx: [1, 1.4], sy: [0.18, 0.32], sz: [1, 1.4], noise: 0.12, freq: 1.2, flatten: 0.15, taper: 0, chips: [3, 6], strata: 0 } },
+  ash_patch: { base: 'rock', fam: 'ash', scale: [0.9, 1.6], style: { hue: [-0.05, 0.05], sat: [0.7, 1.1], val: [0.7, 1.15], accent: [0, 0] }, fin: { deindex: true, smooth: 0.95, tri: true },
+    P: { radius: [1.5, 3.2], sx: [1, 1.3], sy: [0.05, 0.09], sz: [1, 1.3], noise: 0.1, freq: 1.0, flatten: 0, taper: 0, chips: [0, 0], strata: 0 } },
+  // ===== 바다 (수면/해저 구현은 건드리지 않음: 해안·얕은 물 장식만) =====
+  driftwood: { ...G.log_fallen, fam: 'driftwood', scale: [0.8, 1.3], style: { hue: [-0.05, 0.05], sat: [0.4, 0.8], val: [0.8, 1.3], accent: [0, 0] }, fin: {}, P: { ...G.log_fallen.P, radius: [0.1, 0.22], length: [1.5, 3.2], flare: 0.1, roots: [0, 1], stubs: [2, 4] } },
+  rock_sea: { ...G.rock_boulder, fam: 'rock_wet', scale: [0.8, 1.3], fin: { deindex: true, smooth: 0.5, tri: true }, P: { ...G.rock_boulder.P, radius: [0.5, 1.4], sy: [0.5, 0.8], noise: 0.2 } },
+  reed_cattail: { ...G.grass_tall, scale: [0.9, 1.3], P: { blades: [8, 12], height: [1.2, 1.8], width: 0.045, spread: 0.25, curl: 0.3, lean: 0.1, taper: 1.2, rows: 6, outward: 0.4, edge: 0.2, sway: 0.3, bulge: 0.09, headFrac: 0.5, headCol: [0.55, 0.33, 0.15] } },
+  seaweed: { base: 'plant', fam: 'kelp', scale: [0.8, 1.3], style: { hue: [-0.2, 0.25], sat: [0.8, 1.2], val: [0.8, 1.15], accent: [0, 0] }, fin: { upBlend: [0.3, 0.3] }, P: { type: 'kelp', blades: [5, 9], height: [0.8, 1.6], width: [0.09, 0.14], sway: 0.3 } },
+  coral: { ...G.tree_dead, fam: 'coral', scale: [0.8, 1.4], style: { hue: [-0.7, 0.7], sat: [0.9, 1.4], val: [0.85, 1.2], accent: [0, 0] }, fin: {},
+    P: { height: [0.4, 0.8], trunkR: [0.04, 0.06], trunkFrac: 0.3, taper: 0.8, flare: 0.3, lean: [0, 0.1], bend: [0.5, 1], seg: 5, roots: [0, 0], sway: 0.12,
+      br: { n: [9, 14], from: 0.05, to: 0.95, len: [0.6, 1.1], elev: [0.4, 1.2], droop: 0, twigs: true }, crown: { type: 'none' } } },
+});
+
+// 지형별 제작 목록 (역할별). nature-test.html 갤러리와 다음 단계 배치 규칙이 이걸 기준으로 씀
+export const BIOMES = {
+  jungle: { label: '정글(숲)', roles: {
+    대표나무: ['tree_jungle_giant'], 나무: ['tree_jungle', 'tree_jungle_slender', 'tree_palm', 'tree_fern'], 그루터기: ['stump_jungle', 'stump_cut', 'log_fallen'],
+    버섯: ['mushroom_giant', 'mushroom_button', 'mushroom_toadstool', 'mushroom_conical', 'mushroom_cluster'], '잔디·양치': ['grass_broad', 'grass_tall', 'plant_fern', 'plant_fern_large'],
+    야생화: ['flower_lily', 'flower_spike', 'flower_cluster', 'flower_bell'], '뿌리·덩굴': ['roots_exposed', 'vine_hanging', 'vine_thick', 'vine_climbing', 'vine_creeper'], '바위·작은 식물': ['rock_mossy', 'plant_rosette', 'plant_sapling'] } },
+  plains: { label: '평원', roles: {
+    나무: ['tree_oak', 'tree_birch', 'tree_wide'], 잔디: ['grass_short', 'grass_tall', 'grass_wheat'], 야생화: ['flower_daisy', 'flower_tulip', 'flower_bell', 'flower_cluster', 'flower_spike'],
+    버섯: ['mushroom_button', 'mushroom_toadstool', 'mushroom_conical', 'mushroom_cluster'], '관목·작은 식물': ['plant_bush', 'plant_shrub_small', 'plant_rosette'], 바위: ['rock_boulder', 'rock_pebbles', 'rock_slab', 'rock_mossy'] } },
+  desert: { label: '사막', roles: {
+    선인장: ['cactus_saguaro', 'cactus_column', 'cactus_barrel', 'cactus_prickly'], '사암 암석': ['rock_arch', 'rock_mesa', 'rock_hoodoo', 'rock_sandstone', 'rock_weathered'], '식물': ['tumbleweed', 'plant_shrub_dry', 'grass_dry'], 고목: ['tree_dead'] } },
+  snow: { label: '설원', roles: { '눈 덮인 나무': ['tree_snow_pine', 'tree_snow_spruce', 'tree_snow_bare'], '바위·얼음': ['rock_snowy', 'rock_snow', 'ice_crystal', 'icicle'] } },
+  volcano: { label: '화산', roles: { '탄 나무': ['tree_burnt_full', 'tree_burnt_partial'], '그루터기·고목': ['stump_burnt', 'log_burnt', 'branch_burnt'], '암석·재': ['rock_lava', 'rock_lava_ashy', 'rock_basalt', 'ash_mound', 'ash_patch'] } },
+  ocean: { label: '바다(해안·얕은 물)', roles: { 해안: ['driftwood', 'rock_sea', 'reed_cattail'], '얕은 물': ['seaweed', 'coral'] } },
 };
 
 export const SPECIES_IDS = Object.keys(SPECIES);
