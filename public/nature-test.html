@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>자연 오브젝트 베이스 갤러리</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#a8c8e8;font:13px/1.4 system-ui,sans-serif}
+  #ui{position:fixed;top:8px;left:8px;background:#000a;color:#fff;padding:10px 12px;border-radius:8px;max-width:270px;z-index:2}
+  #ui label{display:block;margin:6px 0 2px} #ui input[type=range]{width:100%} #ui button,#ui select{margin:4px 4px 0 0}
+  #stat{margin-top:8px;white-space:pre;font-family:ui-monospace,monospace;font-size:12px}
+  #tip{position:fixed;bottom:8px;left:8px;color:#fff;background:#0007;padding:4px 8px;border-radius:6px;font-size:12px}
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+</script></head>
+<body>
+<div id="ui">
+  <b>자연 오브젝트 베이스</b> (지형 없음, 평지 테스트)
+  <label>바람 세기 <span id="vw">1.0</span></label><input id="wind" type="range" min="0" max="3" step="0.05" value="1">
+  <label>바람 방향 <span id="vd">20</span>°</label><input id="dir" type="range" min="0" max="360" step="5" value="20">
+  <label>전체 밝기 <span id="vb">1.0</span></label><input id="bright" type="range" min="0.4" max="2.5" step="0.05" value="1">
+  <label>LOD</label>
+  <select id="lod"><option value="0">LOD0 (가까이)</option><option value="1">LOD1 (멀리)</option></select>
+  <button id="reroll">색 다시 뽑기</button><button id="wire">와이어프레임</button>
+  <hr><label>대량 인스턴싱 성능 테스트 (테스트 땅 위, 게임 지형과 무관)</label>
+  <select id="n"><option>1000</option><option selected>5000</option><option>20000</option></select>
+  <button id="stress">생성</button><button id="clear">지우기</button>
+  <div id="stat"></div>
+</div>
+<div id="tip">마우스: 회전/이동/줌. 줄=종류, 가로 4개=같은 베이스에서 나온 변종 4개 (색·크기·형태 모두 다름)</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createNatureKit } from './js/nature.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWidth, innerHeight); document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0xa8c8e8); scene.fog = new THREE.Fog(0xa8c8e8, 90, 420);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x556655, 0.9));
+const sun = new THREE.DirectionalLight(0xfff2d0, 1.0); sun.position.set(80, 120, 40); scene.add(sun);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 600);
+const controls = new OrbitControls(camera, renderer.domElement);
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
+
+const kit = createNatureKit();                       // 텍스처는 /textures/*.jpg 재사용
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshLambertMaterial({ color: 0x6f8f45 }));
+ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; scene.add(ground);
+// 크기 기준자: 캐릭터 약 2.5 유닛
+const ref = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 2.5, 12), new THREE.MeshLambertMaterial({ color: 0xcc4444 })); ref.position.set(-4, 1.25, 4); scene.add(ref);
+
+// ----- 갤러리: 종류별 줄, 변종 4개 -----
+const rows = { 나무: 'tree_', 바위: 'rock_', '풀/잔디': 'grass_', 꽃: 'flower_', 버섯: 'mushroom_', 그루터기: ['stump_', 'log_'], '작은 식물': 'plant_', 덩굴: 'vine_' };
+const spacing = { 나무: 9, 바위: 5, '풀/잔디': 1.6, 꽃: 1.2, 버섯: 1.2, 그루터기: 2.6, '작은 식물': 2.4, 덩굴: 2.4 };
+const meshes = []; let z = 0, rerollRand = kit.mulberry32(1);
+const galleryItems = [];
+for (const [label, pre] of Object.entries(rows)) {
+  const ids = kit.ids.filter((id) => [].concat(pre).some((p) => id.startsWith(p)));
+  const sp = spacing[label];
+  ids.forEach((id, ci) => {
+    const vs = kit.getVariants(id);
+    vs.forEach((v, vi) => {
+      const mesh = kit.createInstanced(v, 1, 0);
+      galleryItems.push({ mesh, v, id, x: ci * (sp * 4.6) + vi * sp, z });
+    });
+  });
+  z -= sp * 2.4 + 2;
+}
+function layout() {
+  const st = new Map();
+  for (const it of galleryItems) {
+    const style = kit.randomStyle(it.id, rerollRand), sc = 1;
+    kit.setInstance(it.mesh, 0, { x: it.x, y: 0, z: it.z, yaw: it.v.index * 1.3, scale: sc }, style);
+    kit.commit(it.mesh, 1);
+    if (!it.mesh.parent) scene.add(it.mesh);
+  }
+}
+layout();
+camera.position.set(14, 12, 24); controls.target.set(14, 3, -10); controls.update();
+
+// ----- UI -----
+const $ = (id) => document.getElementById(id);
+$('wind').oninput = (e) => { $('vw').textContent = (+e.target.value).toFixed(1); kit.setWind(+e.target.value); };
+$('dir').oninput = (e) => { $('vd').textContent = e.target.value; kit.setWind(+$('wind').value, +e.target.value); };
+$('bright').oninput = (e) => { $('vb').textContent = (+e.target.value).toFixed(1); kit.uniforms.uBright.value = +e.target.value; };
+$('reroll').onclick = () => { rerollRand = kit.mulberry32(Math.floor(Math.random() * 1e9)); layout(); };
+let wire = false; $('wire').onclick = () => { wire = !wire; Object.keys(kit.families).forEach((f) => { kit.material(f).wireframe = wire; }); };
+$('lod').onchange = (e) => {
+  const lod = +e.target.value;
+  for (const it of galleryItems) {
+    scene.remove(it.mesh); kit.disposeInstanced(it.mesh);
+    it.mesh = kit.createInstanced(it.v, 1, lod);
+  }
+  layout();
+};
+kit.setWind(1, 20);
+
+// ----- 인스턴싱 성능 테스트: 한 변종 = InstancedMesh 1개. 테스트 땅(-300~-100 z)에 뿌림 -----
+let stressMeshes = [];
+$('clear').onclick = () => { stressMeshes.forEach((m) => { scene.remove(m); kit.disposeInstanced(m); }); stressMeshes = []; };
+$('stress').onclick = () => {
+  $('clear').onclick();
+  const N = +$('n').value, lod = +$('lod').value, r = kit.mulberry32(42);
+  // 현실적인 비율: 풀/꽃 많이, 나무/바위 적게
+  const weight = { tree: 3, rock: 3, grass: 40, flower: 12, mushroom: 3, stump: 1, log: 1, plant: 8, vine: 1 };
+  const jobs = [];
+  for (const id of kit.ids) { const w = weight[id.split('_')[0]]; for (let i = 0; i < 4; i++) jobs.push({ id, v: i, w: w / 4 }); }
+  const tot = jobs.reduce((a, j) => a + j.w, 0);
+  for (const j of jobs) {
+    const n = Math.round((N * j.w) / tot); if (!n) continue;
+    const v = kit.getVariants(j.id)[j.v], mesh = kit.createInstanced(v, n, lod);
+    for (let i = 0; i < n; i++) kit.setInstance(mesh, i, { x: (r() - 0.5) * 240, y: 0, z: -220 + (r() - 0.5) * 240, yaw: r() * 6.283, scale: kit.randomScale(j.id, r) }, kit.randomStyle(j.id, r));
+    kit.commit(mesh, n); scene.add(mesh); stressMeshes.push(mesh);
+  }
+  camera.position.set(0, 25, -110); controls.target.set(0, 2, -200); controls.update();
+};
+
+let last = performance.now(), acc = 0, frames = 0;
+renderer.setAnimationLoop(() => {
+  const now = performance.now(), dt = (now - last) / 1000; last = now;
+  kit.update(dt); controls.update(); renderer.render(scene, camera);
+  acc += dt; frames++;
+  if (acc > 0.5) {
+    const i = renderer.info.render;
+    $('stat').textContent = `FPS ${(frames / acc).toFixed(0)}\n드로우콜 ${i.calls}\n삼각형 ${i.triangles.toLocaleString()}\n메시 ${stressMeshes.length + galleryItems.length}`;
+    acc = 0; frames = 0;
+  }
+});
+</script></body></html>
