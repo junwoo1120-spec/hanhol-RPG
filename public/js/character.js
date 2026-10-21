@@ -17,6 +17,9 @@ export const GAIT = {
   strideLen: 5.9,  // 이동속도 / strideLen = 초당 걸음 주기. 값이 클수록 다리가 천천히 움직임
   minHz: 0.9,      // 최소 걸음 주기(초당)
   maxHz: 2.6,      // 최대 걸음 주기(초당)
+  runStrideLen: 10,  // 달리기(조깅) 전용: 이동속도 / runStrideLen = 초당 주기. 클수록 느긋하게 뜀
+  runMinHz: 1.1,     // 조깅 최소 주기(초당)
+  runMaxHz: 1.6,     // 조깅 최대 주기(초당). 이 값이 와다다 정도를 결정
   runFrom: 9,      // 이 속도부터 달리기 자세로 서서히 전환
   runTo: 13,       // 이 속도에서 완전한 달리기 자세
   maxSpeed: 16     // 애니메이션 계산에 쓰는 속도 상한 (속도 배율 켜도 다리가 미친 듯이 돌지 않게)
@@ -407,7 +410,10 @@ function animateGlb(avatar, dt, speed, grounded, vy) {
   // 걸음 속도에 맞춰 재생 속도 조절
   const hz = Math.min(Math.max(sp / GAIT.strideLen, GAIT.minHz), GAIT.maxHz);
   if (rig.state === 'walk') rig.cur.setEffectiveTimeScale(hz * CLIP_DUR.walk);
-  else if (rig.state === 'run') rig.cur.setEffectiveTimeScale(hz * CLIP_DUR.run);
+  else if (rig.state === 'run') {
+    const rhz = Math.min(Math.max(sp / GAIT.runStrideLen, GAIT.runMinHz), GAIT.runMaxHz);
+    rig.cur.setEffectiveTimeScale(rhz * CLIP_DUR.run);
+  }
   else rig.cur.setEffectiveTimeScale(1);
 
   rig.mixer.update(dt);
