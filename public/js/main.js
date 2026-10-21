@@ -176,8 +176,8 @@ function computeUiScale() {
 
 // 플레이어 라벨
 // 캐릭터 표시 배율 (모델·이름표·카메라에 공통 적용)
-const CHAR_SCALE = 4;   // 캐릭터 크기 (모델·이름표·시선 높이)
-const CAM_SCALE = 2;    // 카메라 거리 배율 (CHAR_SCALE보다 작게 두면 화면에서 더 크게 보임)
+const CHAR_SCALE = 1.4;   // 캐릭터 크기 (모델·이름표·시선 높이)
+const CAM_SCALE = 1;    // 카메라 거리 배율 (CHAR_SCALE보다 작게 두면 화면에서 더 크게 보임)
 
 function makeLabel(text) {
   const canvas = document.createElement('canvas');
