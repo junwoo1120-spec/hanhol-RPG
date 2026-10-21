@@ -176,7 +176,8 @@ function computeUiScale() {
 
 // 플레이어 라벨
 // 캐릭터 표시 배율 (모델·이름표·카메라에 공통 적용)
-const CHAR_SCALE = 2;
+const CHAR_SCALE = 4;   // 캐릭터 크기 (모델·이름표·시선 높이)
+const CAM_SCALE = 2;    // 카메라 거리 배율 (CHAR_SCALE보다 작게 두면 화면에서 더 크게 보임)
 
 function makeLabel(text) {
   const canvas = document.createElement('canvas');
@@ -1656,8 +1657,8 @@ function boot(socket, { id, seed }, nick, mode) {
 
     // 3인칭 카메라 (360도 궤도 회전, 시프트락이면 어깨 너머 시점)
     slk += ((shiftLock ? 1 : 0) - slk) * (1 - Math.exp(-10 * dt));
-    const side = 1.3 * slk * CHAR_SCALE;
-    const dist = (9 - 1.5 * slk) * CHAR_SCALE;
+    const side = 1.3 * slk * CAM_SCALE;
+    const dist = (9 - 1.5 * slk) * CAM_SCALE;
 
     const tx = me.x + rx * side;
     const tz = me.z + rz * side;
