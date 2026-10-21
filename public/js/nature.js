@@ -3,13 +3,13 @@
 //   import { createNatureKit } from './nature.js';
 //   const kit = createNatureKit({ time: waterUniforms.uTime });         // 시간 uniform 공유(선택)
 //   const vs  = kit.getVariants('tree_oak');                             // 변종 4개 (LOD0/LOD1 지오메트리)
-//   const mesh = kit.createInstanced(vs[0], 64, /*lod*/ 0);              // 변종 1개 = InstancedMesh 1개 = 드로우콜 1개
+//   const mesh = kit.createInstanced(vs[0], 64, /*lod 0~2*/ 0);              // 변종 1개 = InstancedMesh 1개 = 드로우콜 1개
 //   kit.setInstance(mesh, 0, { x, y, z, yaw, scale }, kit.randomStyle('tree_oak', rand));
 //   kit.commit(mesh, 1);  scene.add(mesh);
 //   매 프레임: kit.update(dt)  (바람 시간)
 //   청크 제거: kit.disposeInstanced(mesh)
 import * as THREE from 'three';
-import { SPECIES, SPECIES_IDS, FAMILIES, TEX_MEAN_LUM, buildSpecies, mulberry32, hashStr } from './nature-geo.js';
+import { SPECIES, SPECIES_IDS, FAMILIES, BIOMES, TEX_MEAN_LUM, buildSpecies, mulberry32, hashStr } from './nature-geo.js';
 import { NAT_VERT_PARS, NAT_VERT_BEGIN, NAT_FRAG_PARS, NAT_FRAG_MAP, NAT_FRAG_COLOR } from './nature-shaders.js';
 
 const lumOf = (t) => 0.299 * t[0] + 0.587 * t[1] + 0.114 * t[2];
@@ -80,15 +80,15 @@ export function createNatureKit(opts = {}) {
     return g;
   }
   const variantCache = new Map();
-  /** 종류 1개의 변종들. 각 변종: {id, index, family, lods:[geo0,geo1], tris:[n0,n1], height, radius, collRadius} */
+  /** 종류 1개의 변종들. 각 변종: {id, index, family, lods:[LOD0,LOD1,LOD2 지오메트리], tris, height, radius, collRadius, colliders} */
   function getVariants(id, { count = 4, seed0 = 1 } = {}) {
     const key = id + ':' + count + ':' + seed0;
     if (variantCache.has(key)) return variantCache.get(key);
     const out = [];
     for (let i = 0; i < count; i++) {
-      const d0 = buildSpecies(id, seed0 + i, 0), d1 = buildSpecies(id, seed0 + i, 1);
-      out.push({ id, index: i, family: d0.family, lods: [toGeometry(d0), toGeometry(d1)], tris: [d0.triCount, d1.triCount],
-        height: d0.height, radius: d0.radius, collRadius: d0.meta.coll || 0, kind: d0.meta.kind });
+      const ds = [0, 1, 2].map((l) => buildSpecies(id, seed0 + i, l)), d0 = ds[0];
+      out.push({ id, index: i, family: d0.family, lods: ds.map(toGeometry), tris: ds.map((d) => d.triCount), colliders: d0.meta.colliders || null,
+        height: d0.height, radius: d0.radius, collRadius: d0.meta.coll || 0, kind: d0.meta.kind, hang: !!d0.meta.hang });
     }
     variantCache.set(key, out);
     return out;
@@ -151,5 +151,5 @@ export function createNatureKit(opts = {}) {
     for (const vs of variantCache.values()) for (const v of vs) v.lods.forEach((g) => g.dispose());
     mats.clear(); ownTex.clear(); variantCache.clear();
   }
-  return { THREE, species: SPECIES, ids: SPECIES_IDS, families: FAMILIES, uniforms: U, material, getVariants, createInstanced, setInstance, commit, disposeInstanced, randomStyle, randomScale, update, setWind, dispose, mulberry32, hashStr };
+  return { THREE, species: SPECIES, ids: SPECIES_IDS, biomes: BIOMES, families: FAMILIES, uniforms: U, material, getVariants, createInstanced, setInstance, commit, disposeInstanced, randomStyle, randomScale, update, setWind, dispose, mulberry32, hashStr };
 }
