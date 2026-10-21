@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><title>자연 오브젝트 베이스 갤러리</title>
+<html lang="ko"><head><meta charset="utf-8"><title>자연 오브젝트 갤러리</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#a8c8e8;font:13px/1.4 system-ui,sans-serif}
-  #ui{position:fixed;top:8px;left:8px;background:#000a;color:#fff;padding:10px 12px;border-radius:8px;max-width:270px;z-index:2}
+  #ui{position:fixed;top:8px;left:8px;background:#000b;color:#fff;padding:10px 12px;border-radius:8px;width:262px;max-height:calc(100% - 40px);overflow:auto;z-index:2}
   #ui label{display:block;margin:6px 0 2px} #ui input[type=range]{width:100%} #ui button,#ui select{margin:4px 4px 0 0}
+  #ui .chk label{display:inline-block;margin:2px 8px 2px 0} #ui hr{border:0;border-top:1px solid #fff4;margin:8px 0}
   #stat{margin-top:8px;white-space:pre;font-family:ui-monospace,monospace;font-size:12px}
   #tip{position:fixed;bottom:8px;left:8px;color:#fff;background:#0007;padding:4px 8px;border-radius:6px;font-size:12px}
 </style>
@@ -13,19 +14,23 @@
 </script></head>
 <body>
 <div id="ui">
-  <b>자연 오브젝트 베이스</b> (지형 없음, 평지 테스트)
+  <b>자연 오브젝트 갤러리</b>
+  <label>보기</label><select id="biome"></select>
   <label>바람 세기 <span id="vw">1.0</span></label><input id="wind" type="range" min="0" max="3" step="0.05" value="1">
   <label>바람 방향 <span id="vd">20</span>°</label><input id="dir" type="range" min="0" max="360" step="5" value="20">
+  <div class="chk"><label><input type="checkbox" id="windoff"> 바람 끄기</label></div>
   <label>전체 밝기 <span id="vb">1.0</span></label><input id="bright" type="range" min="0.4" max="2.5" step="0.05" value="1">
+  <label>해상도 배율 <span id="vr">1.0</span></label><input id="res" type="range" min="0.5" max="2" step="0.25" value="1">
   <label>LOD</label>
-  <select id="lod"><option value="0">LOD0 (가까이)</option><option value="1">LOD1 (멀리)</option></select>
+  <select id="lod"><option value="0">LOD0 (가까이)</option><option value="1">LOD1</option><option value="2">LOD2 (멀리)</option><option value="auto">거리별 자동 (성능 테스트용)</option></select>
   <button id="reroll">색 다시 뽑기</button><button id="wire">와이어프레임</button>
-  <hr><label>대량 인스턴싱 성능 테스트 (테스트 땅 위, 게임 지형과 무관)</label>
+  <label>종류별 숨기기 (체크하면 보임)</label><div class="chk" id="bases"></div>
+  <hr><label>대량 인스턴싱 성능 테스트 (테스트 땅, 게임 지형과 무관)</label>
   <select id="n"><option>1000</option><option selected>5000</option><option>20000</option></select>
   <button id="stress">생성</button><button id="clear">지우기</button>
   <div id="stat"></div>
 </div>
-<div id="tip">마우스: 회전/이동/줌. 줄=종류, 가로 4개=같은 베이스에서 나온 변종 4개 (색·크기·형태 모두 다름)</div>
+<div id="tip">마우스: 회전/이동/줌. 줄=역할, 가로 4개=같은 베이스에서 나온 변종. 빨간 막대=캐릭터 키(2.5)</div>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -36,82 +41,101 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWid
 const scene = new THREE.Scene(); scene.background = new THREE.Color(0xa8c8e8); scene.fog = new THREE.Fog(0xa8c8e8, 90, 420);
 scene.add(new THREE.HemisphereLight(0xffffff, 0x556655, 0.9));
 const sun = new THREE.DirectionalLight(0xfff2d0, 1.0); sun.position.set(80, 120, 40); scene.add(sun);
-const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 600);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 800);
 const controls = new OrbitControls(camera, renderer.domElement);
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
 
-const kit = createNatureKit();                       // 텍스처는 /textures/*.jpg 재사용
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshLambertMaterial({ color: 0x6f8f45 }));
+const kit = createNatureKit();
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), new THREE.MeshLambertMaterial({ color: 0x6f8f45 }));
 ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; scene.add(ground);
-// 크기 기준자: 캐릭터 약 2.5 유닛
-const ref = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 2.5, 12), new THREE.MeshLambertMaterial({ color: 0xcc4444 })); ref.position.set(-4, 1.25, 4); scene.add(ref);
+const ref = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 2.5, 12), new THREE.MeshLambertMaterial({ color: 0xcc4444 })); ref.position.set(-3, 1.25, 3); scene.add(ref);
+const $ = (id) => document.getElementById(id);
 
-// ----- 갤러리: 종류별 줄, 변종 4개 -----
-const rows = { 나무: 'tree_', 바위: 'rock_', '풀/잔디': 'grass_', 꽃: 'flower_', 버섯: 'mushroom_', 그루터기: ['stump_', 'log_'], '작은 식물': 'plant_', 덩굴: 'vine_' };
-const spacing = { 나무: 9, 바위: 5, '풀/잔디': 1.6, 꽃: 1.2, 버섯: 1.2, 그루터기: 2.6, '작은 식물': 2.4, 덩굴: 2.4 };
-const meshes = []; let z = 0, rerollRand = kit.mulberry32(1);
-const galleryItems = [];
-for (const [label, pre] of Object.entries(rows)) {
-  const ids = kit.ids.filter((id) => [].concat(pre).some((p) => id.startsWith(p)));
-  const sp = spacing[label];
-  ids.forEach((id, ci) => {
-    const vs = kit.getVariants(id);
-    vs.forEach((v, vi) => {
-      const mesh = kit.createInstanced(v, 1, 0);
-      galleryItems.push({ mesh, v, id, x: ci * (sp * 4.6) + vi * sp, z });
-    });
-  });
-  z -= sp * 2.4 + 2;
+// ----- 보기 선택: 기본 베이스 / 지형별 목록 -----
+const BASE_ROWS = { 나무: 'tree_', 바위: 'rock_', '풀/잔디': 'grass_', 꽃: 'flower_', 버섯: 'mushroom_', 그루터기: ['stump_', 'log_'], '작은 식물': 'plant_', 덩굴: 'vine_' };
+const baseIds = kit.ids.slice(0, 36);                              // 1~2단계에서 만든 기본 베이스 종류
+const views = { base: { label: '기본 베이스', groups: Object.entries(BASE_ROWS).map(([l, pre]) => [l, baseIds.filter((id) => [].concat(pre).some((p) => id.startsWith(p)))]) } };
+for (const [k, B] of Object.entries(kit.biomes)) views[k] = { label: B.label, groups: Object.entries(B.roles) };
+for (const [k, v] of Object.entries(views)) $('biome').add(new Option(v.label, k));
+$('biome').value = 'jungle';
+const bases = ['tree', 'rock', 'grass', 'flower', 'mushroom', 'stump', 'plant', 'vine'], baseOn = Object.fromEntries(bases.map((b) => [b, true]));
+$('bases').innerHTML = bases.map((b) => `<label><input type="checkbox" data-b="${b}" checked> ${b}</label>`).join('');
+$('bases').onchange = (e) => { baseOn[e.target.dataset.b] = e.target.checked; applyVisibility(); };
+function applyVisibility() { for (const m of [...galleryMeshes, ...stressMeshes]) m.visible = baseOn[m.userData.base]; }
+
+let galleryItems = [], galleryMeshes = [], rerollRand = kit.mulberry32(1);
+function clearGallery() { galleryMeshes.forEach((m) => { scene.remove(m); kit.disposeInstanced(m); }); galleryMeshes = []; galleryItems = []; }
+function buildGallery() {
+  clearGallery();
+  const lod = $('lod').value === 'auto' ? 0 : +$('lod').value;
+  let z = 0, minX = 0, maxX = 0, minZ = 0;
+  for (const [, ids] of views[$('biome').value].groups) {
+    let x = 0, depth = 1;
+    for (const id of ids) {
+      const vs = kit.getVariants(id), sp = Math.max(1.0, Math.max(...vs.map((v) => v.radius)) * 2.3);
+      vs.forEach((v, vi) => {
+        const mesh = kit.createInstanced(v, 1, lod); mesh.userData.base = kit.species[id].base;
+        galleryItems.push({ mesh, id, v, x: x + vi * sp, z }); galleryMeshes.push(mesh);
+      });
+      x += sp * 4 + sp * 0.6; depth = Math.max(depth, sp);
+    }
+    maxX = Math.max(maxX, x); z -= depth * 1.3 + 3; minZ = Math.min(minZ, z);
+  }
+  layout();
+  const span = Math.max(maxX, -minZ, 12), cx = maxX / 2, cz = minZ / 2;
+  camera.position.set(cx, span * 0.35 + 4, cz + span * 0.75 + 8); controls.target.set(cx, 2, cz); controls.update();
+  applyVisibility();
 }
 function layout() {
-  const st = new Map();
   for (const it of galleryItems) {
-    const style = kit.randomStyle(it.id, rerollRand), sc = 1;
-    kit.setInstance(it.mesh, 0, { x: it.x, y: 0, z: it.z, yaw: it.v.index * 1.3, scale: sc }, style);
+    kit.setInstance(it.mesh, 0, { x: it.x, y: it.v.hang ? 4 : 0, z: it.z, yaw: it.v.index * 1.3, scale: 1 }, kit.randomStyle(it.id, rerollRand));
     kit.commit(it.mesh, 1);
     if (!it.mesh.parent) scene.add(it.mesh);
   }
 }
-layout();
-camera.position.set(14, 12, 24); controls.target.set(14, 3, -10); controls.update();
 
 // ----- UI -----
-const $ = (id) => document.getElementById(id);
-$('wind').oninput = (e) => { $('vw').textContent = (+e.target.value).toFixed(1); kit.setWind(+e.target.value); };
-$('dir').oninput = (e) => { $('vd').textContent = e.target.value; kit.setWind(+$('wind').value, +e.target.value); };
+$('wind').oninput = (e) => { $('vw').textContent = (+e.target.value).toFixed(1); if (!$('windoff').checked) kit.setWind(+e.target.value); };
+$('dir').oninput = (e) => { $('vd').textContent = e.target.value; kit.setWind(+$('wind').value, +e.target.value); if ($('windoff').checked) kit.uniforms.uWind.value = 0; };
+$('windoff').onchange = (e) => { kit.uniforms.uWind.value = e.target.checked ? 0 : +$('wind').value; };
 $('bright').oninput = (e) => { $('vb').textContent = (+e.target.value).toFixed(1); kit.uniforms.uBright.value = +e.target.value; };
+$('res').oninput = (e) => { $('vr').textContent = (+e.target.value).toFixed(2); renderer.setPixelRatio(+e.target.value); renderer.setSize(innerWidth, innerHeight); };
 $('reroll').onclick = () => { rerollRand = kit.mulberry32(Math.floor(Math.random() * 1e9)); layout(); };
 let wire = false; $('wire').onclick = () => { wire = !wire; Object.keys(kit.families).forEach((f) => { kit.material(f).wireframe = wire; }); };
-$('lod').onchange = (e) => {
-  const lod = +e.target.value;
-  for (const it of galleryItems) {
-    scene.remove(it.mesh); kit.disposeInstanced(it.mesh);
-    it.mesh = kit.createInstanced(it.v, 1, lod);
-  }
-  layout();
-};
+$('biome').onchange = buildGallery; $('lod').onchange = buildGallery;
 kit.setWind(1, 20);
 
-// ----- 인스턴싱 성능 테스트: 한 변종 = InstancedMesh 1개. 테스트 땅(-300~-100 z)에 뿌림 -----
+// ----- 인스턴싱 성능 테스트 -----
+// 한 변종 = InstancedMesh 1개. '거리별 자동'은 다음 단계 배치 계획(가까이 LOD0 / 중간 LOD1 / 멀리 LOD2, 작은 것은 먼 곳 생략)을 흉내냄
 let stressMeshes = [];
 $('clear').onclick = () => { stressMeshes.forEach((m) => { scene.remove(m); kit.disposeInstanced(m); }); stressMeshes = []; };
+const W = { tree: 3, rock: 3, grass: 40, flower: 12, mushroom: 3, stump: 1, plant: 8, vine: 1 }, SMALL = new Set(['grass', 'flower', 'mushroom', 'plant', 'vine']);
 $('stress').onclick = () => {
   $('clear').onclick();
-  const N = +$('n').value, lod = +$('lod').value, r = kit.mulberry32(42);
-  // 현실적인 비율: 풀/꽃 많이, 나무/바위 적게
-  const weight = { tree: 3, rock: 3, grass: 40, flower: 12, mushroom: 3, stump: 1, log: 1, plant: 8, vine: 1 };
-  const jobs = [];
-  for (const id of kit.ids) { const w = weight[id.split('_')[0]]; for (let i = 0; i < 4; i++) jobs.push({ id, v: i, w: w / 4 }); }
+  const N = +$('n').value, mode = $('lod').value, r = kit.mulberry32(42), cam = { x: 0, z: -110 };
+  const ids = views[$('biome').value].groups.flatMap(([, l]) => l), jobs = [];
+  for (const id of ids) for (let i = 0; i < 4; i++) jobs.push({ id, v: i, w: W[kit.species[id].base] / 4 });
   const tot = jobs.reduce((a, j) => a + j.w, 0);
   for (const j of jobs) {
     const n = Math.round((N * j.w) / tot); if (!n) continue;
-    const v = kit.getVariants(j.id)[j.v], mesh = kit.createInstanced(v, n, lod);
-    for (let i = 0; i < n; i++) kit.setInstance(mesh, i, { x: (r() - 0.5) * 240, y: 0, z: -220 + (r() - 0.5) * 240, yaw: r() * 6.283, scale: kit.randomScale(j.id, r) }, kit.randomStyle(j.id, r));
-    kit.commit(mesh, n); scene.add(mesh); stressMeshes.push(mesh);
+    const v = kit.getVariants(j.id)[j.v], base = kit.species[j.id].base, byLod = [[], [], []];
+    for (let i = 0; i < n; i++) {
+      const x = (r() - 0.5) * 240, z = -220 + (r() - 0.5) * 240, d = Math.hypot(x - cam.x, z - cam.z);
+      let lod = mode === 'auto' ? (d < 40 ? 0 : d < 90 ? 1 : 2) : +mode;
+      if (mode === 'auto' && SMALL.has(base) && d > 70) continue;
+      byLod[lod].push({ x, y: v.hang ? 4 : 0, z, yaw: r() * 6.283, scale: kit.randomScale(j.id, r), id: j.id, st: kit.randomStyle(j.id, r) });
+    }
+    byLod.forEach((list, lod) => {
+      if (!list.length) return;
+      const mesh = kit.createInstanced(v, list.length, lod); mesh.userData.base = base;
+      list.forEach((o, i) => kit.setInstance(mesh, i, o, o.st)); kit.commit(mesh, list.length);
+      scene.add(mesh); stressMeshes.push(mesh);
+    });
   }
-  camera.position.set(0, 25, -110); controls.target.set(0, 2, -200); controls.update();
+  camera.position.set(0, 25, -110); controls.target.set(0, 2, -200); controls.update(); applyVisibility();
 };
 
+buildGallery();
 let last = performance.now(), acc = 0, frames = 0;
 renderer.setAnimationLoop(() => {
   const now = performance.now(), dt = (now - last) / 1000; last = now;
@@ -119,7 +143,7 @@ renderer.setAnimationLoop(() => {
   acc += dt; frames++;
   if (acc > 0.5) {
     const i = renderer.info.render;
-    $('stat').textContent = `FPS ${(frames / acc).toFixed(0)}\n드로우콜 ${i.calls}\n삼각형 ${i.triangles.toLocaleString()}\n메시 ${stressMeshes.length + galleryItems.length}`;
+    $('stat').textContent = `FPS ${(frames / acc).toFixed(0)}\n드로우콜 ${i.calls}\n삼각형 ${i.triangles.toLocaleString()}\n메시 ${stressMeshes.length + galleryMeshes.length}`;
     acc = 0; frames = 0;
   }
 });
