@@ -14,7 +14,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 // ---------- 조정용 값 ----------
 export const GAIT = {
-  strideLen: 4.2,  // 이동속도 / strideLen = 초당 걸음 주기. 값이 클수록 다리가 천천히 움직임
+  strideLen: 8.4,  // 이동속도 / strideLen = 초당 걸음 주기. 값이 클수록 다리가 천천히 움직임
   minHz: 0.9,      // 최소 걸음 주기(초당)
   maxHz: 2.6,      // 최대 걸음 주기(초당)
   runFrom: 9,      // 이 속도부터 달리기 자세로 서서히 전환
