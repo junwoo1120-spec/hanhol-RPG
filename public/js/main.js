@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS } from './terrain.js';
 import { buildVillage } from './village.js';
-import { makeHumanoid, animateHumanoid } from './character.js';
+import { makeHumanoid, animateHumanoid, humanReady } from './character.js';
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
