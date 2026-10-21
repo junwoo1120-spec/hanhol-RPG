@@ -175,6 +175,9 @@ function computeUiScale() {
 }
 
 // 플레이어 라벨
+// 캐릭터 표시 배율 (모델·이름표·카메라에 공통 적용)
+const CHAR_SCALE = 2;
+
 function makeLabel(text) {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
@@ -197,8 +200,8 @@ function makeLabel(text) {
     })
   );
 
-  sprite.scale.set(3, 0.75, 1);
-  sprite.position.y = 2.6;
+  sprite.scale.set(3 * CHAR_SCALE, 0.75 * CHAR_SCALE, 1);
+  sprite.position.y = 2.6 * CHAR_SCALE;
 
   return sprite;
 }
@@ -209,6 +212,7 @@ function makeAvatar(nick, color) {
 
   // 사람 모양 캐릭터 (children[0]) + 닉네임 표시 (children[1])
   const body = makeHumanoid(color);
+  body.scale.setScalar(CHAR_SCALE);
   group.add(body);
   group.add(makeLabel(nick));
   group.userData.rig = body.userData.rig;
@@ -1652,8 +1656,8 @@ function boot(socket, { id, seed }, nick, mode) {
 
     // 3인칭 카메라 (360도 궤도 회전, 시프트락이면 어깨 너머 시점)
     slk += ((shiftLock ? 1 : 0) - slk) * (1 - Math.exp(-10 * dt));
-    const side = 1.3 * slk;
-    const dist = 9 - 1.5 * slk;
+    const side = 1.3 * slk * CHAR_SCALE;
+    const dist = (9 - 1.5 * slk) * CHAR_SCALE;
 
     const tx = me.x + rx * side;
     const tz = me.z + rz * side;
@@ -1662,12 +1666,12 @@ function boot(socket, { id, seed }, nick, mode) {
     const cz = tz + Math.cos(me.yaw) * Math.cos(me.pitch) * dist;
 
     const cy = Math.max(
-      me.y + Math.sin(me.pitch) * dist + 1.5,
-      T.height(cx, cz) + 1.5
+      me.y + Math.sin(me.pitch) * dist + 1.5 * CHAR_SCALE,
+      T.height(cx, cz) + 1.5 * CHAR_SCALE
     );
 
     camera.position.set(cx, cy, cz);
-    camera.lookAt(tx, me.y + 1.5, tz);
+    camera.lookAt(tx, me.y + 1.5 * CHAR_SCALE, tz);
 
     // 물: 격자에 맞춰 움직여서 파도가 떨리지 않게 하고, 시간을 흘려보냄 (용암도 같은 시간 사용)
     water.position.x = Math.round(me.x / WATER_STEP) * WATER_STEP;
