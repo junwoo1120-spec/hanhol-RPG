@@ -13,3 +13,4 @@
 - 베이스 8종에서 파생한 81종(SPECIES). 정글/평원/사막/설원/화산/바다 목록은 nature-geo.js의 BIOMES
 - LOD0/1/2 지원. 배치는 다음 단계: 청크 훅에서 createInstanced/disposeInstanced, 거리별 LOD, 밀도 상한
 - 바다는 수면·해저 구현을 건드리지 않고 해안/얕은 물 장식만 추가
+- 상세 인수인계: PROJECT_HANDOFF.md (단계가 끝날 때마다 갱신)
