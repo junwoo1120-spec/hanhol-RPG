@@ -9,8 +9,10 @@
 - 바람: 정점 가중치(nat.x)+인스턴스 위상으로 구현만 해 둠. 지형·청크 시스템(main.js, terrain.js, server.js)은 수정하지 않음
 - 다음: 청크 생성/제거 훅에서 kit.createInstanced / disposeInstanced 호출, 바이옴별 밀도 규칙(T.detail 가중치로 마을·용암·얼음 제외), 거리별 LOD 전환
 
-# 지형별 자연 오브젝트 (3단계, 배치 전)
+# 지형별 자연 오브젝트 (3단계 모델 + 4단계 배치)
 - 베이스 8종에서 파생한 81종(SPECIES). 정글/평원/사막/설원/화산/바다 목록은 nature-geo.js의 BIOMES
-- LOD0/1/2 지원. 배치는 다음 단계: 청크 훅에서 createInstanced/disposeInstanced, 거리별 LOD, 밀도 상한
+- LOD0/1/2 지원
+- 4단계 배치: nature-placement.js(시드+셀 해시로 결정적 배치, 청크 경계 안전, 지형 가중치/경사/고도/지면 재질 반영) + nature-world.js(전역 인스턴스 풀, 거리별 LOD, 시야 컬링, 프레임 분산). main.js는 청크 생성/제거/루프에 연결만 함
+- 검증: node tools/nature-placement-test.mjs
 - 바다는 수면·해저 구현을 건드리지 않고 해안/얕은 물 장식만 추가
 - 상세 인수인계: PROJECT_HANDOFF.md (단계가 끝날 때마다 갱신)
