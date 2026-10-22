@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS } from './terrain.js';
 import { buildVillage } from './village.js';
 import { makeHumanoid, animateHumanoid, humanReady } from './character.js';
+import { createNatureKit } from './nature.js';
+import { createNatureWorld } from './nature-world.js';
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
@@ -580,6 +582,14 @@ function boot(socket, { id, seed }, nick, mode) {
   const texSnowRock = loadTex('/textures/snow_rock.jpg');    // 설원: 눈 덮힌 바위
   const texIce = loadTex('/textures/ice.jpg');               // 설원: 얼음
 
+  // 자연 오브젝트(나무·바위·풀·꽃 등): 땅 텍스처와 시간 uniform을 공유해서 GPU 중복 없이 쓴다.
+  // 지형별 배치는 nature-placement.js, 청크별 인스턴싱/거리별 LOD는 nature-world.js
+  const natureKit = createNatureKit({
+    time: waterUniforms.uTime,
+    textures: { grass: texGrass, grass_gold: texGold, grass_dark: texJungle, dirt: texDirt, village_dirt: texVillage, desert_sand: texSand, rock: texRock, lava_rock: texLavaRock, snow: texSnow, snow_rock: texSnowRock, ice: texIce },
+  });
+  const nature = createNatureWorld({ scene, kit: natureKit, T, seed, chunkSize: S });
+
   const terrainMat = new THREE.MeshLambertMaterial({
     vertexColors: true
   });
@@ -845,6 +855,7 @@ function boot(socket, { id, seed }, nick, mode) {
 
     scene.add(mesh);
     chunks.set(key, mesh);
+    nature.requestChunk(cx, cz);   // 이미 요청된 청크(해상도만 올리는 재생성)는 무시됨
   }
 
   // 주변 청크 로딩 및 먼 청크 제거
@@ -862,6 +873,7 @@ function boot(socket, { id, seed }, nick, mode) {
         scene.remove(mesh);
         mesh.geometry.dispose();
         chunks.delete(key);
+        nature.removeChunk(mesh.userData.cx, mesh.userData.cz);
       }
     }
 
@@ -1725,9 +1737,16 @@ function boot(socket, { id, seed }, nick, mode) {
       });
     }
 
+    // 자연 오브젝트: 배치 계산은 프레임 예산 안에서, 빠른 이동(×30 이상)에는 새 배치를 미룸
+    nature.update(camera, { fast: fast && fastMult >= 30 });
+    const ns = nature.stats();
+    const ri = renderer.info.render;   // 직전 프레임 값 (render 전에 읽음)
+
     $('hud').textContent =
       `X ${me.x.toFixed(0)}  Z ${me.z.toFixed(0)}\n` +
-      `청크 ${chunks.size}  접속 ${remotes.size + 1}명`;
+      `청크 ${chunks.size}  접속 ${remotes.size + 1}명\n` +
+      `자연 ${ns.instances}개  대기 ${ns.queued}\n` +
+      `드로우콜 ${ri.calls}  삼각형 ${ri.triangles}`;
 
     renderer.render(scene, camera);
   }
