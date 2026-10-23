@@ -25,9 +25,9 @@ const FOOT = {
 export const HOUSES = [];   // { type, x, z, rot, k, seed, roof }
 const OBBS = [];            // 충돌 상자 (월드 좌표)
 
-function place(type, x, z, k, seed, roof) {
-  // 로컬 +z 가 (sinθ, cosθ) 를 향함 → 광장 쪽을 보도록 θ 계산
-  const rot = Math.atan2(VILLAGE.x - x, VILLAGE.z - z);
+function place(type, x, z, k, seed, roof, yaw = 0) {
+  // 로컬 +z 가 (sinθ, cosθ) 를 향함 → 기본은 광장 쪽을 보고, yaw 만큼 살짝 틀어서 자연스럽게
+  const rot = Math.atan2(VILLAGE.x - x, VILLAGE.z - z) + yaw;
   HOUSES.push({ type, x, z, rot, k, seed, roof });
   const c = Math.cos(rot), s = Math.sin(rot);
   for (const f of FOOT[type]) {
@@ -44,22 +44,33 @@ const VX = VILLAGE.x, VZ = VILLAGE.z;
 // 여관 (제일 큰 집) - 시작 지점 뒤편에 딱 하나
 place('INN', VX, VZ + INN_DIST, 1, 101, 'roofNavy');
 
-// 안쪽 고리: 원래 집터 6곳 중 여관이 차지한 2곳(뒤쪽)을 뺀 4곳
-const INNER = { 0: ['C', 1.0, 'roofNavy'], 3: ['A', 1.0, 'roofRed'], 4: ['D', 1.05, 'roofBrown'], 5: ['A', 0.95, 'roofNavy'] };
-for (const i of Object.keys(INNER)) {
-  const a = (i / 6) * TAU, [t, k, roof] = INNER[i];
-  place(t, VX + Math.cos(a) * 55, VZ + Math.sin(a) * 55, k, 200 + +i, roof);
-}
-
-// 바깥 고리: 집터 10곳
-const OUTER = [
-  ['B', 1.0, 'roofNavy'], ['C', 0.95, 'roofNavy'], ['A', 1.05, 'roofRed'], ['D', 1.0, 'roofBrown'], ['C', 1.05, 'roofNavy'],
-  ['A', 0.95, 'roofNavy'], ['B', 0.9, 'roofNavy'], ['D', 1.05, 'roofRed'], ['A', 1.0, 'roofBrown'], ['C', 0.9, 'roofNavy'],
+// 나머지 집: 일부러 대칭을 깨고 손으로 배치. 몇 채씩 붙어 있는 동네와 외따로 떨어진 집이 섞여 있다.
+// [종류, 중심에서 x, 중심에서 z, 크기, 지붕, 방향 틀기(라디안)]
+const SPOTS = [
+  // 광장 서쪽: 길가에 늘어선 세 채 (바짝 붙음)
+  ['C', -35, -9, 1.00, 'roofNavy', 0.10],
+  ['A', -33, -24, 0.95, 'roofRed', -0.15],
+  ['D', -46, -33, 1.05, 'roofBrown', 0.30],
+  // 광장 동쪽: 두 채가 어깨를 맞대고, 탑은 조금 떨어져 있음
+  ['D', 34, -12, 1.00, 'roofBrown', -0.12],
+  ['A', 36, 2, 1.05, 'roofNavy', 0.08],
+  ['B', 31, 24, 1.00, 'roofNavy', 0.0],
+  // 북쪽 멀리: 띄엄띄엄
+  ['A', 12, -49, 1.00, 'roofRed', 0.20],
+  ['C', -14, -66, 0.95, 'roofNavy', -0.25],
+  ['B', 52, -52, 0.90, 'roofNavy', 0.15],
+  // 동쪽 외곽: 서로 붙은 한 쌍 + 홀로 있는 오두막
+  ['C', 66, -26, 1.00, 'roofNavy', 0.05],
+  ['D', 79, -10, 1.00, 'roofRed', -0.35],
+  // 서쪽 외곽
+  ['A', -70, 6, 1.00, 'roofBrown', 0.20],
+  ['B', -66, 34, 0.92, 'roofNavy', -0.10],
+  // 여관 뒤쪽 멀리
+  ['D', 48, 66, 1.00, 'roofBrown', -0.2],
 ];
-OUTER.forEach(([t, k, roof], i) => {
-  const a = (i / 10) * TAU + 0.3;
-  place(t, VX + Math.cos(a) * 95, VZ + Math.sin(a) * 95, k, 300 + i, roof);
-});
+SPOTS.forEach(([t, x, z, k, roof, yaw], i) => place(t, VX + x, VZ + z, k, 200 + i, roof, yaw));
+
+export const BUILDING_BOXES = OBBS;   // 테스트용
 
 // 월드 좌표 (x,z)에서 상자까지의 가장 가까운 점 (로컬 좌표) 계산
 function local(o, x, z) {
