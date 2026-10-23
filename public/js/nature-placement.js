@@ -11,6 +11,7 @@
 //   const items = placer.placeChunk(cx, cz);       // 한 번에 (테스트용)
 import { SPECIES } from './nature-geo.js';
 import { WATER_LEVEL, VILLAGE, PLAY_RADIUS, coneRatio } from './terrain.js';
+import { nearBuilding } from './village-layout.js';
 
 export const CHUNK = 32;                       // main.js의 S와 같아야 함
 export const SKIP_HANG = new Set(['vine_hanging', 'vine_thick', 'vine_climbing', 'icicle']); // 매달리는 것/벽 타는 것은 이번 단계에서 배치하지 않음
@@ -221,6 +222,7 @@ export function createPlacer(T, seedIn) {
   }
 
   function decide(layer, x, z, prio, rBiome, rSpec, rAcc, rVar, r) {
+    if (nearBuilding(x, z, 4)) return null;                           // 마을 건물 자리(+여유 4칸)는 비움
     if (coneRatio(x, z) < CONE_CLEAR) return null;                   // 화산 옆면/분화구 안쪽은 비움
     const s = site(x, z);
     if (s.h > 300) return null;
