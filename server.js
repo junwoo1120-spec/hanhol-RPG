@@ -8,7 +8,7 @@ const io = new Server(server);
 app.use(express.static('public'));
 
 const SEED = Number(process.env.WORLD_SEED) || 12345;
-const MAX_PLAYERS = 10;
+const MAX_PLAYERS = 20;
 const MAX_SPEED = 30;      // units/sec (달리기 14 + 여유)
 const FAST_MULT = 100;     // 클라이언트 FAST_MULT와 같은 값
 const players = new Map();
