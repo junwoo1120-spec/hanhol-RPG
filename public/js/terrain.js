@@ -74,6 +74,14 @@ const PEAKS = [
   { x: -1900, z: 2400, R: 500, H: 190 },
 ];
 
+// 화산 원뿔 중심에서 떨어진 정도 (0 = 분화구 중심, 1 = 산 가장자리, 그 이상 = 산 밖). 자연 오브젝트 배치에서 화산 몸통을 비울 때 사용.
+export function coneRatio(x, z) {
+  const u = x * K, v = z * K;
+  let m = Infinity;
+  for (const c of CONES) m = Math.min(m, Math.hypot(u - c.x, v - c.z) / c.R);
+  return m;
+}
+
 export function makeTerrain(seed) {
   const s = (Number(seed) | 0) || 1;
 
