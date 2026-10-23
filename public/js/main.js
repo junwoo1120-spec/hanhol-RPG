@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS } from './terrain.js';
 import { buildVillage } from './village.js';
+import { buildHouses } from './buildings.js';
+import { collideBuildings } from './village-layout.js';
 import { makeHumanoid, animateHumanoid, humanReady } from './character.js';
 import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
@@ -538,6 +540,7 @@ function boot(socket, { id, seed }, nick, mode) {
 
   // 시작마을 터 (선으로만 표시)
   buildVillage(scene);
+  buildHouses(scene);   // 여관 + 마을 집들
 
   // 청크 공통 인덱스 (해상도별로 한 번만 만들어 재사용)
   const indexCache = {};
@@ -1620,7 +1623,8 @@ function boot(socket, { id, seed }, nick, mode) {
       // 나무/큰 바위 충돌 (속도 배율 켠 개발용 이동 중에는 무시)
       if (!fast) {
         const cc = nature.collide(px, pz, 0.4 * CHAR_SCALE);
-        px = cc.x; pz = cc.z;
+        const bc = collideBuildings(cc.x, cc.z, 0.4 * CHAR_SCALE);   // 집은 통과 불가
+        px = bc.x; pz = bc.z;
       }
 
       moved = Math.hypot(px - me.x, pz - me.z);
