@@ -353,7 +353,7 @@ async function connect(nick, mode) {
   });
 
   socket.on('full', () => {
-    resetLogin('서버가 가득 찼어요 (최대 10명)');
+    resetLogin('서버가 가득 찼어요 (최대 20명)');
   });
 
   socket.on('init', (data) => {
@@ -1615,6 +1615,12 @@ function boot(socket, { id, seed }, nick, mode) {
       if (pr > PLAY_RADIUS) {
         px *= PLAY_RADIUS / pr;
         pz *= PLAY_RADIUS / pr;
+      }
+
+      // 나무/큰 바위 충돌 (속도 배율 켠 개발용 이동 중에는 무시)
+      if (!fast) {
+        const cc = nature.collide(px, pz, 0.4 * CHAR_SCALE);
+        px = cc.x; pz = cc.z;
       }
 
       moved = Math.hypot(px - me.x, pz - me.z);
