@@ -5,6 +5,7 @@
 //    카메라가 일정 거리 움직이거나 방향이 바뀌거나 청크가 바뀌면 풀을 다시 채운다(repack): 거리별 LOD 선택, 생략 거리 밖/뒤쪽 제외.
 //  - GPU 자원은 풀에만 있어서 청크 제거는 데이터만 지우면 된다(청크 경계에서 깜빡임/누수 없음).
 import { createPlacer, composeMatrix, drawRule, CHUNK } from './nature-placement.js';
+import { SPECIES } from './nature-geo.js';
 
 const REPACK_MOVE = 4;            // 이만큼 움직이면 다시 채움 (유닛)
 const REPACK_TURN = 15 * Math.PI / 180;   // 시야 방향이 이만큼 바뀌면 다시 채움
@@ -12,7 +13,12 @@ const REPACK_MIN_MS = 120;        // 다시 채우기 최소 간격
 const CONE_MARGIN = 35 * Math.PI / 180;   // 화면 시야각 바깥 여유 (방향 갱신 15도 < 여유 35도 이므로 가장자리에서 안 비어 보임)
 const NEAR_ALL = 12;              // 이 안쪽은 방향과 상관없이 모두 그림
 
-export function createNatureWorld({ scene, kit, T, seed, chunkSize = CHUNK, budgetMs = 2.5 }) {
+// 안개(main.js: Fog far = VIEW*S-8 = 152) 밖은 배경색과 같아져 보이지 않으므로 그리지 않는다.
+const MAX_DRAW = 150;
+const POOL_IDLE_MS = 40000;       // 이 시간 동안 한 개도 안 그린 풀은 GPU 버퍼/배열을 해제(필요하면 다시 만든다)
+const THIN_IDS = new Set(['plant_fern', 'plant_rosette', 'plant_sapling', 'rock_pebbles', 'ash_patch']);
+
+export function createNatureWorld({ scene, kit, T, seed, chunkSize = CHUNK, budgetMs = 2.5, maxDraw = MAX_DRAW }) {
   const placer = createPlacer(T, seed);
   const chunks = new Map();       // key -> { n, slot:Uint16Array, mat:Float32Array, sty:Float32Array }
   const queue = [];               // 배치 계산 대기 { key, cx, cz }
@@ -25,7 +31,7 @@ export function createNatureWorld({ scene, kit, T, seed, chunkSize = CHUNK, budg
   const variantCache = new Map();
   const accentCache = new Map();
   const pools = new Map();        // slot*3+lod -> { mesh, cap, n }
-    let cull2 = new Float32Array(256), l0sq = new Float32Array(256), l1sq = new Float32Array(256), bigF = new Uint8Array(256);
+    let cull2 = new Float32Array(256), l0sq = new Float32Array(256), l1sq = new Float32Array(256), bigF = new Uint8Array(256), thinF = new Uint8Array(256), slot0 = new Int32Array(256), thin0 = new Float32Array(256), cullD = new Float32Array(256);
 
   function slotOf(id, v, nv) {
     const k = id + ':' + v;
@@ -39,9 +45,14 @@ export function createNatureWorld({ scene, kit, T, seed, chunkSize = CHUNK, budg
     slotIndex.set(k, s);
     if (s >= cull2.length) {
       const n = cull2.length * 2, g = (a, T2) => { const b = new T2(n); b.set(a); return b; };
-      cull2 = g(cull2, Float32Array); l0sq = g(l0sq, Float32Array); l1sq = g(l1sq, Float32Array); bigF = g(bigF, Uint8Array);
+      cull2 = g(cull2, Float32Array); l0sq = g(l0sq, Float32Array); l1sq = g(l1sq, Float32Array); bigF = g(bigF, Uint8Array); thinF = g(thinF, Uint8Array); slot0 = g(slot0, Int32Array); thin0 = g(thin0, Float32Array); cullD = g(cullD, Float32Array);
     }
-    cull2[s] = r.cull * r.cull; l0sq[s] = r.l0 * r.l0; l1sq[s] = r.l1 * r.l1; bigF[s] = r.big ? 1 : 0;
+    const cull = Math.min(r.cull, maxDraw), b = SPECIES[id].base;
+    cull2[s] = cull * cull; cullD[s] = cull; l0sq[s] = r.l0 * r.l0; l1sq[s] = r.l1 * r.l1; bigF[s] = r.big ? 1 : 0;
+    // 작은 풀/꽃/버섯은 멀수록 일정 비율만 그림(아이템별 고정 난수 → 깜빡임 없이 서서히 성겨짐)
+    slot0[s] = s;
+    thinF[s] = (b === 'grass' || b === 'flower' || b === 'mushroom' || THIN_IDS.has(id)) ? 1 : 0; thin0[s] = cull * 0.55;
+    if (v % nv !== 0) { const s0 = slotOf(id, 0, nv); slot0[s] = s0; }   // LOD2(먼 거리)는 변종 0번을 공유 → 드로우콜 감소 (멀리서는 변종 차이가 안 보임)
     return s;
   }
 
@@ -121,14 +132,14 @@ export function createNatureWorld({ scene, kit, T, seed, chunkSize = CHUNK, budg
 
   // ----- 다시 채우기 -----
   let dirty = true, lastX = 1e9, lastZ = 1e9, lastYaw = 1e9, lastT = 0;
-  let stat = { instances: 0, pools: 0, tris: 0, items: 0, chunks: 0, repacks: 0, lastRepackMs: 0 };
+  let stat = { thinned: 0, freedPools: 0, instances: 0, pools: 0, tris: 0, items: 0, chunks: 0, repacks: 0, lastRepackMs: 0 };
   const need = new Map();
 
   function repack(cx, cz, fx, fz, cosL, fast) {
     const t0 = performance.now();
     for (const p of pools.values()) p.n = 0;
     need.clear();
-    let inst = 0;
+    let inst = 0, thinned = 0;
     for (const ch of chunks.values()) {
       const slot = ch.slot, mat = ch.mat, sty = ch.sty;
       for (let i = 0, n = ch.n; i < n; i++) {
@@ -140,10 +151,14 @@ export function createNatureWorld({ scene, kit, T, seed, chunkSize = CHUNK, budg
           if (fast && d2 > 3600) continue;                                  // 빠른 이동 중에는 60칸 밖은 생략
           if (dx * fx + dz * fz < cosL * Math.sqrt(d2)) continue;           // 시야 뒤쪽은 제외
         }
+        if (thinF[s] && d2 > thin0[s] * thin0[s]) {                         // 먼 작은 식물 솎기: 거리 55%~100% 구간에서 100%→0%
+          const f = 1 - (Math.sqrt(d2) - thin0[s]) / (cullD[s] - thin0[s]);
+          if (sty[i * 8 + 3] * 0.15915 > f) { thinned++; continue; }
+        }
         const lod = d2 < l0sq[s] ? 0 : d2 < l1sq[s] ? 1 : 2;
-        const pk = s * 3 + lod;
+        const ps = lod === 2 ? slot0[s] : s, pk = ps * 3 + lod;
         let p = pools.get(pk);
-        if (!p) { p = makePool(s, lod, 32); pools.set(pk, p); }
+        if (!p) { p = makePool(ps, lod, 32); pools.set(pk, p); }
         const idx = p.n;
         if (idx >= p.cap) { need.set(pk, (need.get(pk) || p.cap) + 1); p.n++; continue; }   // 넘침: 개수만 세고 다음에 키움
         p.n++;
@@ -160,19 +175,31 @@ export function createNatureWorld({ scene, kit, T, seed, chunkSize = CHUNK, budg
       for (const [pk] of need) { const s = Math.floor(pk / 3), lod = pk % 3; growPool(pk, s, lod, (pools.get(pk).n) | 0); }
       return repack(cx, cz, fx, fz, cosL, fast);     // 새 풀(n=0)로 한 번 더 채움. 넘친 만큼 키웠으므로 다시 넘치지 않음
     }
-    finish(t0, inst);
+    finish(t0, inst, thinned);
   }
-  function finish(t0, inst) {
-    let tris = 0, np = 0;
-    for (const p of pools.values()) {
+  // 채운 개수만큼만 GPU로 올림(three r159+의 updateRange). 구버전이면 전체 업로드로 대체됨.
+  function touch(attr, n) {
+    if (attr.addUpdateRange) { attr.clearUpdateRanges(); attr.addUpdateRange(0, n * attr.itemSize); }
+    attr.needsUpdate = true;
+  }
+  function finish(t0, inst, thinned = 0) {
+    let tris = 0, np = 0, freed = 0;
+    const now = performance.now();
+    for (const [pk, p] of pools) {
       const m = p.mesh;
       m.count = p.n; m.visible = p.n > 0;
-      if (p.n > 0) {
-        m.instanceMatrix.needsUpdate = true; p.a.needsUpdate = true; p.b.needsUpdate = true; np++;
+      if (p.n === 0) {                                  // 오래 안 쓰인 풀 정리 (이동으로 지나간 지역의 종류/LOD)
+        if (!p.idle) p.idle = now;
+        else if (now - p.idle > POOL_IDLE_MS) { scene.remove(m); kit.disposeInstanced(m); pools.delete(pk); freed++; }
+        continue;
+      }
+      p.idle = 0;
+      {
+        touch(m.instanceMatrix, p.n); touch(p.a, p.n); touch(p.b, p.n); np++;
         const g = m.geometry; tris += p.n * ((g.index ? g.index.count : g.attributes.position.count) / 3);
       }
     }
-    stat.instances = inst; stat.pools = np; stat.tris = tris; stat.repacks++; stat.lastRepackMs = performance.now() - t0;
+    stat.instances = inst; stat.thinned = thinned; stat.freedPools = (stat.freedPools || 0) + freed; stat.pools = np; stat.tris = tris; stat.repacks++; stat.lastRepackMs = performance.now() - t0;
     dirty = false;
   }
 
