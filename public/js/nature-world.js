@@ -4,7 +4,7 @@
 //  - 청크가 생기면 배치 계산(nature-placement.js)을 프레임 예산(ms) 안에서 조금씩 돌려 데이터만 저장하고(행렬 미리 계산),
 //    카메라가 일정 거리 움직이거나 방향이 바뀌거나 청크가 바뀌면 풀을 다시 채운다(repack): 거리별 LOD 선택, 생략 거리 밖/뒤쪽 제외.
 //  - GPU 자원은 풀에만 있어서 청크 제거는 데이터만 지우면 된다(청크 경계에서 깜빡임/누수 없음).
-import { createPlacer, composeMatrix, drawRule, CHUNK } from './nature-placement.js';
+import { createPlacer, composeMatrix, drawRule, solidRadius, CHUNK } from './nature-placement.js';
 import { SPECIES } from './nature-geo.js';
 
 const REPACK_MOVE = 4;            // 이만큼 움직이면 다시 채움 (유닛)
@@ -65,16 +65,19 @@ export function createNatureWorld({ scene, kit, T, seed, chunkSize = CHUNK, budg
   // 배치 결과(객체 목록) -> 청크 데이터(typed array)
   function pack(items) {
     const n = items.length;
-    const d = { n, slot: new Uint16Array(n), mat: new Float32Array(n * 16), sty: new Float32Array(n * 8) };
+    const d = { n, slot: new Uint16Array(n), mat: new Float32Array(n * 16), sty: new Float32Array(n * 8), col: null };
+    const col = [];
     for (let i = 0; i < n; i++) {
       const it = items[i];
       d.slot[i] = slotOf(it.id, it.v, placer.nvar[it.layer]);
       composeMatrix(d.mat, i * 16, it);
+      const cr = solidRadius(it); if (cr > 0) col.push(it.x, it.z, cr);   // 충돌체 (x, z, 반지름)
       const st = it.style, o = i * 8;
       d.sty[o] = st.hue; d.sty[o + 1] = st.sat; d.sty[o + 2] = st.val; d.sty[o + 3] = st.phase;
       if (st.accent !== undefined) { const a = accentRGB(st.accent); d.sty[o + 4] = a[0]; d.sty[o + 5] = a[1]; d.sty[o + 6] = a[2]; }
       d.sty[o + 7] = st.accentAmt || 0;
     }
+    if (col.length) d.col = new Float32Array(col);
     return d;
   }
 
@@ -228,8 +231,32 @@ export function createNatureWorld({ scene, kit, T, seed, chunkSize = CHUNK, budg
     stat.chunks = chunks.size; stat.items = 0; for (const c of chunks.values()) stat.items += c.n;
   }
 
+  // 플레이어(반지름 pr)가 나무/큰 바위와 겹치면 밖으로 밀어낸다. 밀어내기라서 벽을 따라 미끄러진다.
+  const _out = { x: 0, z: 0 };
+  function collide(x, z, pr = 0.4) {
+    const cx0 = Math.floor(x / chunkSize), cz0 = Math.floor(z / chunkSize);
+    for (let pass = 0; pass < 3; pass++) {
+      let hit = false;
+      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const ch = chunks.get(keyOf(cx0 + dx, cz0 + dz));
+        if (!ch || !ch.col) continue;
+        const c = ch.col;
+        for (let i = 0; i < c.length; i += 3) {
+          const ddx = x - c[i], ddz = z - c[i + 1], rr = c[i + 2] + pr, d2 = ddx * ddx + ddz * ddz;
+          if (d2 >= rr * rr) continue;
+          const d = Math.sqrt(d2);
+          if (d < 1e-4) { x = c[i] + rr; } else { x = c[i] + ddx / d * rr; z = c[i + 1] + ddz / d * rr; }
+          hit = true;
+        }
+      }
+      if (!hit) break;
+    }
+    _out.x = x; _out.z = z;
+    return _out;
+  }
+
   return {
-    requestChunk, removeChunk, update, placer,
+    requestChunk, removeChunk, update, placer, collide,
     stats: () => ({ ...stat, queued: queue.length + (running ? 1 : 0), slots: slots.length }),
     // 테스트/디버그용: 큐를 끝까지 처리
     flush() { while (queue.length || running) pump(1000); },
