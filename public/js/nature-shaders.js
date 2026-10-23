@@ -44,16 +44,19 @@ vNatAcc = aInstB.xyz;
     vec3 natOrg = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
     mat3 natR = mat3(1.0);
   #endif
-  vec2 natWd = normalize(uWindDir + vec2(1e-5));
-  float natPh = aInstA.w;
-  float natGust = 0.5 + 0.5 * sin(dot(natOrg.xz, natWd) * 0.05 - uTime * 0.8 + sin(uTime * 0.23 + natPh * 0.1) * 1.5);
-  float natAmp = uWind * uWindMul * (0.35 + 0.9 * natGust);
-  float natFlut = sin(uTime * 2.3 + natPh + position.x * 3.1 + position.z * 2.7) * 0.25;
-  vec3 natAlong = natR * vec3(natWd.x, 0.0, natWd.y);
-  vec3 natAcross = natR * vec3(-natWd.y, 0.0, natWd.x);
-  float natW = aNat.x * natAmp;
-  transformed.xz += natAlong.xz * natW + natAcross.xz * natW * natFlut;
-  transformed.y -= abs(natW) * 0.12;
+  // 바람: 흔들리는 정점(aNat.x>0)이 있는 재질에서만 계산 (바위/그루터기/선인장 대부분은 건너뜀)
+  float natW = aNat.x * uWind * uWindMul;
+  if (natW != 0.0) {
+    vec2 natWd = normalize(uWindDir + vec2(1e-5));
+    float natPh = aInstA.w;
+    float natGust = 0.5 + 0.5 * sin(dot(natOrg.xz, natWd) * 0.05 - uTime * 0.8 + sin(uTime * 0.23 + natPh * 0.1) * 1.5);
+    natW *= 0.35 + 0.9 * natGust;
+    float natFlut = sin(uTime * 2.3 + natPh + position.x * 3.1 + position.z * 2.7) * 0.25;
+    vec3 natAlong = natR * vec3(natWd.x, 0.0, natWd.y);
+    vec3 natAcross = natR * vec3(-natWd.y, 0.0, natWd.x);
+    transformed.xz += natAlong.xz * natW + natAcross.xz * natW * natFlut;
+    transformed.y -= abs(natW) * 0.12;
+  }
   vNatH = max(position.y, 0.0) * natS;
   vNatUp = (transpose(natR) * normal).y;
   #ifdef USE_INSTANCING
