@@ -10,10 +10,33 @@
 //   const gen = placer.chunkGenerator(cx, cz);     // 제너레이터: 한 단계씩 실행해 프레임에 분산 가능
 //   const items = placer.placeChunk(cx, cz);       // 한 번에 (테스트용)
 import { SPECIES } from './nature-geo.js';
-import { WATER_LEVEL, VILLAGE, PLAY_RADIUS } from './terrain.js';
+import { WATER_LEVEL, VILLAGE, PLAY_RADIUS, coneRatio } from './terrain.js';
 
 export const CHUNK = 32;                       // main.js의 S와 같아야 함
 export const SKIP_HANG = new Set(['vine_hanging', 'vine_thick', 'vine_climbing', 'icicle']); // 매달리는 것/벽 타는 것은 이번 단계에서 배치하지 않음
+
+// ---------- 지역별 개수 배율 (1 = 그대로, 0.5 = 절반) ----------
+// tree: 나무(선인장 제외), rock: 일반 바위(거대 바위 지형·얼음 결정·바닥 눈더미 제외)
+export const DENSITY = {
+  volcano: { tree: 1 / 2, rock: 1 / 3 },
+  snow:    { tree: 1 / 2, rock: 1 / 4 },
+  desert:  { tree: 1,     rock: 1 / 2 },   // 사막은 선인장 외 나무를 아예 만들지 않음 (decide 참고)
+  plains:  { tree: 3 / 5, rock: 1 },
+};
+export const CONE_CLEAR = 1.0;   // 화산 원뿔(옆면+분화구) 안쪽은 자연 오브젝트 없음. 1 = 산 가장자리까지
+
+// ---------- 충돌 (플레이어가 통과하지 못하는 것) ----------
+export const BLOCK_BIG_ROCKS = true;                      // false로 바꾸면 나무만 막힘
+const PASSABLE = new Set(['rock_pebbles', 'ash_mound', 'ash_patch', 'icicle']);   // 작은 돌/낮은 더미: 통과 가능
+const BIG_ROCK_FP = 0.9;                                  // 발밑 반지름이 이보다 작은 바위는 "작은 돌"로 보고 통과 가능
+// 오브젝트 하나의 충돌 반지름 (0이면 통과 가능)
+export function solidRadius(it) {
+  if (it.biome === 'shallow') return 0;                   // 물속 산호 등은 막지 않음
+  const base = SPECIES[it.id].base;
+  if (base === 'tree') return Math.max(0.3, it.fp * 0.3);                       // 나무: 몸통 정도만 막음 (수관 아래는 걸어다닐 수 있음)
+  if (BLOCK_BIG_ROCKS && base === 'rock' && !PASSABLE.has(it.id) && it.fp >= BIG_ROCK_FP) return it.fp * 0.7;
+  return 0;
+}
 
 // ---------- 층 설정 ----------
 export const L_GIANT = 0, L_TREE = 1, L_MID = 2, L_GROUND = 3;
@@ -198,6 +221,7 @@ export function createPlacer(T, seedIn) {
   }
 
   function decide(layer, x, z, prio, rBiome, rSpec, rAcc, rVar, r) {
+    if (coneRatio(x, z) < CONE_CLEAR) return null;                   // 화산 옆면/분화구 안쪽은 비움
     const s = site(x, z);
     if (s.h > 300) return null;
     // 시작마을 / 분화구 용암 / 얼음 호수 제외
@@ -245,6 +269,15 @@ export function createPlacer(T, seedIn) {
       entry = chooseEntry(table, rSpec);
     }
     if (!entry || SKIP_HANG.has(entry.id)) return null;
+    {
+      const sp0 = SPECIES[entry.id], dn = DENSITY[bn];
+      const isTree = sp0.base === 'tree' && !entry.id.startsWith('cactus') && bn !== 'shallow';
+      if (bn === 'desert' && isTree) return null;                   // 사막: 선인장 외 나무 삭제
+      if (dn) {
+        if (isTree) p *= dn.tree;
+        else if (sp0.base === 'rock' && layer === L_MID && entry.id !== 'ice_crystal') p *= dn.rock;
+      }
+    }
     p *= edge;
     if (rAcc >= p) return null;
     if (s.g > entry.g) return null;
