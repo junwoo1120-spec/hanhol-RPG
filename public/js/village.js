@@ -40,16 +40,9 @@ export function buildVillage(scene) {
          X + Math.cos(a2) * R, Z + Math.sin(a2) * R, 0.8);
   }
 
-  rect(X, Z, 36, 36, 0);                                   // 중앙 광장
+  rect(X, Z, 36, 36, 0);                                   // 중앙 광장 (시작 지점)
 
-  for (let i = 0; i < 6; i++) {                            // 안쪽 집터 6개
-    const a = (i / 6) * Math.PI * 2;
-    rect(X + Math.cos(a) * 55, Z + Math.sin(a) * 55, 18, 14, a + Math.PI / 2);
-  }
-  for (let i = 0; i < 10; i++) {                           // 바깥 집터 10개
-    const a = (i / 10) * Math.PI * 2 + 0.3;
-    rect(X + Math.cos(a) * 95, Z + Math.sin(a) * 95, 16, 12, a + Math.PI / 2);
-  }
+  // 집터 표시 선은 이제 필요 없음: 실제 건물이 buildings.js / village-layout.js 에서 그 자리에 세워짐
 
   scene.add(group);
 }
