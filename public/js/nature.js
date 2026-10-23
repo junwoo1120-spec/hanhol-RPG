@@ -10,7 +10,7 @@
 //   청크 제거: kit.disposeInstanced(mesh)
 import * as THREE from 'three';
 import { SPECIES, SPECIES_IDS, FAMILIES, BIOMES, TEX_MEAN_LUM, buildSpecies, mulberry32, hashStr } from './nature-geo.js';
-import { NAT_VERT_PARS, NAT_VERT_BEGIN, NAT_FRAG_PARS, NAT_FRAG_MAP, NAT_FRAG_COLOR } from './nature-shaders.js';
+import { NAT_VERT_PARS, NAT_VERT_BEGIN, NAT_FRAG_PARS, NAT_FRAG_MAP, NAT_FRAG_COLOR, NAT_FRAG_SPEC, NAT_FRAG_NORMAL } from './nature-shaders.js';
 
 const lumOf = (t) => 0.299 * t[0] + 0.587 * t[1] + 0.114 * t[2];
 
@@ -19,7 +19,7 @@ export function createNatureKit(opts = {}) {
   const loader = new THREE.TextureLoader();
   const ownTex = new Map(), extTex = opts.textures || {};
   // 전역 바람/시간 uniform (모든 자연 재질이 공유). opts.time 으로 기존 시간 uniform을 그대로 쓸 수 있음
-  const U = { uTime: opts.time || { value: 0 }, uWind: { value: opts.wind ?? 1 }, uWindDir: { value: new THREE.Vector2(1, 0.4) }, uBright: { value: opts.brightness ?? 1 } };
+  const U = { uTime: opts.time || { value: 0 }, uWind: { value: opts.wind ?? 1 }, uWindDir: { value: new THREE.Vector2(1, 0.4) }, uBright: { value: opts.brightness ?? 1 }, uWaterY: { value: opts.waterLevel ?? 0 } };   // uWaterY: 수면 높이(terrain의 WATER_LEVEL과 같게)
   const external = !!opts.time;
 
   function tex(name) {
@@ -37,20 +37,26 @@ export function createNatureKit(opts = {}) {
   const mats = new Map();
   function material(fam) {
     if (mats.has(fam)) return mats.get(fam);
-    const F = FAMILIES[fam];
+    const F = FAMILIES[fam], fx = F.fx || {};
     const uni = {
       uTexA: { value: tex(F.A.tex) }, uTexB: { value: tex(F.B.tex) },
       uTile: { value: new THREE.Vector4(F.A.tile[0], F.A.tile[1], F.B.tile[0], F.B.tile[1]) },
       uTintA: { value: new THREE.Vector3(...F.A.tint) }, uTintB: { value: new THREE.Vector3(...F.B.tint) },
       uMean: { value: new THREE.Vector2(TEX_MEAN_LUM[F.A.tex] * lumOf(F.A.tint), TEX_MEAN_LUM[F.B.tex] * lumOf(F.B.tint)) },
       uWindMul: { value: F.wind }, uAccGain: { value: F.acc ?? 2.4 },
+      // 표면 표현(F.fx, 전부 선택). 기본값은 약한 요철+얼룩만 → fx 없는 재질도 평평하지 않게
+      uFxA: { value: new THREE.Vector4(fx.bump ?? 0.8, fx.mottle ?? 0.25, fx.hue ?? 0.12, fx.scale ?? 1.6) },
+      uFxB: { value: new THREE.Vector4(fx.low?.[3] ?? 0.5, fx.low?.[4] ?? 0, fx.top?.[3] ?? 0, fx.spec ?? 0) },
+      uFxC: { value: new THREE.Vector4(fx.band?.[0] ?? 0, fx.band?.[1] ?? 0, U.uWaterY.value, 0) },
+      uLowTint: { value: new THREE.Vector3(fx.low?.[0] ?? 1, fx.low?.[1] ?? 1, fx.low?.[2] ?? 1) },
+      uTopTint: { value: new THREE.Vector3(fx.top?.[0] ?? 1, fx.top?.[1] ?? 1, fx.top?.[2] ?? 1) },
       uTime: U.uTime, uWind: U.uWind, uWindDir: U.uWindDir, uBright: U.uBright,
     };
     // 거칠기: 0.8 이상은 Lambert(싸다), 미만은 Phong(반짝임). 바위/버섯 등 표면 느낌 조절용
     const common = { vertexColors: true, side: F.double ? THREE.DoubleSide : THREE.FrontSide };
     const m = F.rough >= 0.8
       ? new THREE.MeshLambertMaterial(common)
-      : new THREE.MeshPhongMaterial({ ...common, shininess: 4 + (1 - F.rough) * 70, specular: new THREE.Color().setScalar((1 - F.rough) * 0.25) });
+      : new THREE.MeshPhongMaterial({ ...common, shininess: 6 + (1 - F.rough) * 36, specular: new THREE.Color().setScalar((1 - F.rough) * 0.16) });
     m.name = 'nat_' + fam;
     m.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, uni);
@@ -60,9 +66,11 @@ export function createNatureKit(opts = {}) {
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', '#include <common>\n' + NAT_FRAG_PARS)
         .replace('#include <map_fragment>', NAT_FRAG_MAP)
-        .replace('#include <color_fragment>', '#include <color_fragment>\n' + NAT_FRAG_COLOR);
+        .replace('#include <color_fragment>', '#include <color_fragment>\n' + NAT_FRAG_COLOR)
+        .replace('#include <specularmap_fragment>', NAT_FRAG_SPEC)
+        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + NAT_FRAG_NORMAL);
     };
-    m.customProgramCacheKey = () => 'nat_v1_' + (F.rough >= 0.8 ? 'L' : 'P');
+    m.customProgramCacheKey = () => 'nat_v2_' + (F.rough >= 0.8 ? 'L' : 'P');
     mats.set(fam, m);
     return m;
   }
