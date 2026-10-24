@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { VILLAGE } from './terrain.js';
-import { HOUSES } from './village-layout.js';
+import { HOUSES, ROOM, INTERIOR, FLOOR_Y, isDoorOpen, houseAt, roomLight } from './village-layout.js';
 
 // 시작마을 건물: 반목조(튜더식) 집 / 휘어진 지붕의 탑 / 4층 연립 건물 / 작은 오두막 / 여관
 // 전부 코드로 만든 도형을 재질별로 합쳐서 그린다 (마을 전체가 드로우콜 십여 개).
@@ -98,6 +98,40 @@ function roofTex(base, seed) {
   });
 }
 
+// 러그: 붉은 바탕 + 테두리 + 마름모 무늬
+function rugTex() {
+  return canvasTex(128, (g, S) => {
+    g.fillStyle = '#7b2f3b'; g.fillRect(0, 0, S, S);
+    g.strokeStyle = '#e3c88a'; g.lineWidth = 6; g.strokeRect(8, 8, S - 16, S - 16);
+    g.strokeStyle = '#2f3f66'; g.lineWidth = 4; g.strokeRect(20, 20, S - 40, S - 40);
+    g.fillStyle = '#e3c88a';
+    g.beginPath(); g.moveTo(S / 2, 34); g.lineTo(S - 34, S / 2); g.lineTo(S / 2, S - 34); g.lineTo(34, S / 2); g.closePath(); g.fill();
+    g.fillStyle = '#2f3f66';
+    g.beginPath(); g.moveTo(S / 2, 52); g.lineTo(S - 52, S / 2); g.lineTo(S / 2, S - 52); g.lineTo(52, S / 2); g.closePath(); g.fill();
+  });
+}
+
+// 책장: 책등이 꽂힌 모습 (4단)
+function booksTex() {
+  const t = canvasTex(256, (g, S) => {
+    const r = rng(77), cols = ['#8a2f3c', '#2f4a7d', '#3d6b4a', '#c79a3b', '#6a4a82', '#a3532f', '#d8d2c0', '#2c3140'];
+    g.fillStyle = '#2a1e16'; g.fillRect(0, 0, S, S);
+    const rowH = S / 4;
+    for (let row = 0; row < 4; row++) {
+      let x = 4;
+      while (x < S - 6) {
+        const w = 8 + r() * 12, h = rowH * (0.62 + r() * 0.3);
+        g.fillStyle = cols[Math.floor(r() * cols.length)];
+        g.fillRect(x, (row + 1) * rowH - 4 - h, w, h);
+        g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(x + 1, (row + 1) * rowH - 4 - h + 6, w - 2, 2);
+        x += w + 1;
+      }
+    }
+  });
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+}
+
 function signTex() {
   const t = canvasTex(256, (g, S) => {
     g.fillStyle = '#5a3a22'; g.fillRect(0, 0, S, S);
@@ -132,8 +166,26 @@ const MAT = {
   dark: new THREE.MeshBasicMaterial({ color: 0x111a33 }),   // 꺼진 창
   lamp: new THREE.MeshBasicMaterial({ color: 0xffd45e }),
   sign: lam(signTex()),
+  // 실내
+  floor: lam(woodTex('#8c6c4a', 21)),
+  timberLight: lam(woodTex('#7b5b3b', 22)),
+  rug: lam(rugTex()),
+  books: lam(booksTex()),
+  clothR: new THREE.MeshLambertMaterial({ color: 0x8d2f3f }),
+  clothB: new THREE.MeshLambertMaterial({ color: 0x2f4a7d }),
+  linen: new THREE.MeshLambertMaterial({ color: 0xe8e2d2 }),
+  candle: new THREE.MeshLambertMaterial({ color: 0xf2ead2 }),
+  ceramic: new THREE.MeshLambertMaterial({ color: 0xe9e1cf }),
+  mug: new THREE.MeshLambertMaterial({ color: 0x8a5a38 }),
+  glassG: new THREE.MeshLambertMaterial({ color: 0x2f6b4a }),
+  glassA: new THREE.MeshLambertMaterial({ color: 0xb9782b }),
+  flame: new THREE.MeshBasicMaterial({ color: 0xffc04d }),
+  fire: new THREE.MeshBasicMaterial({ color: 0xff6a1f }),
+  sky: new THREE.MeshBasicMaterial({ color: 0xbfdcff }),     // 안쪽에서 본 창 (낮 하늘색)
+  doorLeaf: null,
 };
-const TILE = { plaster: 6, plasterWarm: 6, navy: 6, stone: 4, timber: 3, timberBlue: 3, doorWood: 2, roofRed: 4, roofNavy: 4, roofBrown: 4 };
+MAT.doorLeaf = MAT.doorWood;
+const TILE = { floor: 4, timberLight: 3, plaster: 6, plasterWarm: 6, navy: 6, stone: 4, timber: 3, timberBlue: 3, doorWood: 2, roofRed: 4, roofNavy: 4, roofBrown: 4 };
 
 // ---------- 도형 모으기 ----------
 function boxGeo(w, h, d, tile) {
@@ -150,7 +202,7 @@ function boxGeo(w, h, d, tile) {
 }
 
 class Batch {
-  constructor() { this.parts = {}; this.stack = [new THREE.Matrix4()]; }
+  constructor() { this.parts = {}; this.stack = [new THREE.Matrix4()]; this.doors = []; this.houseIdx = -1; }
   get m() { return this.stack[this.stack.length - 1]; }
   push(x = 0, y = 0, z = 0, ry = 0, rz = 0, rx = 0, s = 1) {
     const m = new THREE.Matrix4().compose(
@@ -220,8 +272,8 @@ function sqWin(b, u, v, w, h, lit, z0 = 0.25) {
   b.box('stone', w + 0.8, 0.16, 0.45, u, v - 0.3, z0 + 0.12);
 }
 
-// 아치형 나무문 (double = 양문)
-function door(b, u, w, h, dbl = false, z0 = 0.25) {
+// 장식용 아치형 나무문 (열리지 않음)
+function doorStatic(b, u, w, h, dbl = false, z0 = 0.25) {
   b.geo('stone', archExtrude(w + 0.9, h + 0.55, 0.3), u, 0, z0);
   b.geo('doorWood', archExtrude(w, h, 0.22), u, 0, z0 + 0.2);
   const zf = z0 + 0.45;
@@ -237,22 +289,117 @@ function brace(b, key, u1, v1, u2, v2, z, th = 0.3) {
   b.box(key, L, 0.26, th, (u1 + u2) / 2, (v1 + v2) / 2, z, 0, ang);
 }
 
+// 위치/크기를 지정한 아치 (원점 = 바닥 중앙을 ox,y0 만큼 옮김)
+function archAt(ox, y0, w, h) {
+  const s = new THREE.Shape(), hw = w / 2, sh = h * 0.62, c = sh + (h - sh) * 0.75;
+  s.moveTo(ox - hw, y0); s.lineTo(ox + hw, y0); s.lineTo(ox + hw, y0 + sh);
+  s.quadraticCurveTo(ox + hw, y0 + c, ox, y0 + h);
+  s.quadraticCurveTo(ox - hw, y0 + c, ox - hw, y0 + sh);
+  s.lineTo(ox - hw, y0);
+  return s;
+}
+
+// 문짝 모양 (경첩이 원점, +x 쪽으로 뻗음). half = 'L'/'R' 이면 양문의 절반
+function leafShape(lw, h, half) {
+  const s = new THREE.Shape(), sh = h * 0.62, c = sh + (h - sh) * 0.75;
+  if (!half) {
+    s.moveTo(0, 0); s.lineTo(lw, 0); s.lineTo(lw, sh);
+    s.quadraticCurveTo(lw, c, lw / 2, h); s.quadraticCurveTo(0, c, 0, sh); s.lineTo(0, 0);
+  } else if (half === 'L') {          // 왼쪽 문짝: 경첩이 바깥(왼쪽), 가운데(+x)가 가장 높음
+    s.moveTo(0, 0); s.lineTo(lw, 0); s.lineTo(lw, h); s.quadraticCurveTo(0, c, 0, sh); s.lineTo(0, 0);
+  } else {                            // 오른쪽 문짝: 경첩이 바깥(오른쪽), 가운데(-x)가 가장 높음
+    s.moveTo(0, 0); s.lineTo(-lw, 0); s.lineTo(-lw, h); s.quadraticCurveTo(0, c, 0, sh); s.lineTo(0, 0);
+  }
+  return s;
+}
+
+// 열리는 문짝 하나를 만들어서 기록해 둔다. 경첩 위치(u) 와 방향(dir=+1: +x로 뻗음)
+function addLeaf(b, hingeU, lw, h, half, dir) {
+  const lb = new Batch();
+  const geo = new THREE.ExtrudeGeometry(leafShape(lw, h, half), { depth: 0.16, bevelEnabled: false, curveSegments: 6 });
+  lb.geo('doorWood', geo, 0, 0, 0, 0, 0, 0, [0.5, 0.5]);
+  const x0 = dir > 0 ? 0 : -lw;
+  for (const f of [0.28, 0.62]) {                          // 쇠 띠 (앞/뒤)
+    lb.box('iron', lw * 0.96, 0.12, 0.05, x0 + lw / 2, h * f, 0.18);
+    lb.box('iron', lw * 0.96, 0.12, 0.05, x0 + lw / 2, h * f, -0.02);
+  }
+  const hx = dir > 0 ? lw - 0.22 : -lw + 0.22;             // 손잡이 (바깥 모서리 반대쪽 = 문 가운데 쪽)
+  lb.box('iron', 0.1, 0.1, 0.12, hx, h * 0.42, 0.24);
+  lb.box('iron', 0.1, 0.1, 0.12, hx, h * 0.42, -0.08);
+  b.push(hingeU, 0.03, -0.08);
+  b.doors.push({ house: b.houseIdx, matrix: b.m.clone(), leaf: lb.finish(), sign: dir > 0 ? 1 : -1 });
+  b.pop();
+}
+
+// 열리는 문: 벽에 아치 구멍은 timberWall 이 뚫고, 여기서는 돌 문틀 + 문짝을 만든다
+function liveDoor(b, D) {
+  const outer = archAt(D.u, -0.3, D.w + 0.9, D.h + 0.85);
+  outer.holes.push(archAt(D.u, 0.02, D.w, D.h));
+  b.geo('stone', new THREE.ExtrudeGeometry(outer, { depth: 0.3, bevelEnabled: false, curveSegments: 6 }), 0, 0, 0.25, 0, 0, 0, [0.25, 0.25]);
+  b.box('stone', D.w + 1.3, 0.08, 0.8, D.u, 0.04, 0.7);   // 문턱 돌
+  const lw = D.w - 0.06, h = D.h - 0.05;
+  if (D.double) {
+    addLeaf(b, D.u - lw / 2, lw / 2, h, 'L', +1);
+    addLeaf(b, D.u + lw / 2, lw / 2, h, 'R', -1);
+  } else addLeaf(b, D.u - lw / 2, lw, h, null, +1);
+}
+
+// 안쪽에서 본 창 (벽 안쪽 면에 붙임). 바깥 창과 같은 자리
+function inWin(b, win) {
+  b.push(0, 0, -0.25, Math.PI);
+  const u = -win.u, v = win.v;
+  if (win.kind === 'g') {
+    b.geo('frame', archExtrude(win.w + 0.4, win.h + 0.35, 0.1), u, v - 0.15, 0);
+    b.geo('sky', archFlat(win.w, win.h), u, v, 0.11);
+    for (const dx of [-win.w / 6, win.w / 6]) b.box('frame', 0.06, win.h * 0.6, 0.04, u + dx, v + win.h * 0.3, 0.14);
+    b.box('frame', 0.06, win.h * 0.92, 0.04, u, v + win.h * 0.46, 0.14);
+    b.box('frame', win.w, 0.06, 0.04, u, v + win.h * 0.38, 0.14);
+  } else {
+    b.box('frame', win.w + 0.4, win.h + 0.4, 0.1, u, v + win.h / 2, 0.05);
+    b.box('sky', win.w, win.h, 0.04, u, v + win.h / 2, 0.11);
+    b.box('frame', 0.08, win.h, 0.04, u, v + win.h / 2, 0.14);
+    b.box('frame', win.w, 0.08, 0.04, u, v + win.h / 2, 0.14);
+  }
+  b.box('timberLight', win.w + 0.7, 0.1, 0.35, u, v - 0.2, 0.17);
+  b.pop();
+}
+
 // 반목조 벽 한 면. 벽 면은 z=0 평면, 바깥쪽이 +z, 아래가 v=0.
-// o: w, h, panel(벽 재질), beam(뼈대 재질), nx(세로 칸 수), rows(가로 보 높이들), braces, wins, door
+// o: w, h, panel(벽 재질), beam(뼈대 재질), nx(세로 칸 수), rows(가로 보 높이들), braces, wins, door, inside(들어갈 수 있는 방이면 안쪽 창도 만듦)
+// door.live 이면 벽에 진짜 아치 구멍을 뚫고 열리는 문을 단다 (구멍은 벽 바깥 장식 파츠가 안쪽으로 삐져나오지 않게 벽 두께 안에서만 뚫림)
 function timberWall(b, o) {
   const { w, h } = o, BW = 0.34, BZ = 0.2, BT = 0.34, nx = o.nx || 1;
-  b.box(o.panel, w, h, 0.5, 0, h / 2, 0);
-  b.box(o.beam, w, BW, BT, 0, BW / 2, BZ);
+  const live = o.door && o.door.live, D = o.door;
+  const gap = live ? D.w / 2 + 0.45 : 0;
+  if (live) {
+    const sh = new THREE.Shape();
+    sh.moveTo(-w / 2, -0.3); sh.lineTo(w / 2, -0.3); sh.lineTo(w / 2, h); sh.lineTo(-w / 2, h); sh.lineTo(-w / 2, -0.3);
+    sh.holes.push(archAt(D.u, 0.02, D.w, D.h));
+    const t = TILE[o.panel] || 6;
+    b.geo(o.panel, new THREE.ExtrudeGeometry(sh, { depth: 0.5, bevelEnabled: false, curveSegments: 6 }), 0, 0, -0.25, 0, 0, 0, [1 / t, 1 / t]);
+  } else b.box(o.panel, w, h, 0.5, 0, h / 2, 0);
+  // 아래 보: 문 자리는 비움
+  if (live) {
+    const l1 = D.u - gap + w / 2, l2 = w / 2 - (D.u + gap);
+    if (l1 > 0.1) b.box(o.beam, l1, BW, BT, -w / 2 + l1 / 2, BW / 2, BZ);
+    if (l2 > 0.1) b.box(o.beam, l2, BW, BT, w / 2 - l2 / 2, BW / 2, BZ);
+  } else b.box(o.beam, w, BW, BT, 0, BW / 2, BZ);
   b.box(o.beam, w, BW, BT, 0, h - BW / 2, BZ);
-  for (let i = 0; i <= nx; i++) b.box(o.beam, BW, h, BT, -w / 2 + BW / 2 + (i * (w - BW)) / nx, h / 2, BZ);
+  for (let i = 0; i <= nx; i++) {
+    const u = -w / 2 + BW / 2 + (i * (w - BW)) / nx;
+    if (live && Math.abs(u - D.u) < gap) continue;
+    b.box(o.beam, BW, h, BT, u, h / 2, BZ);
+  }
   for (const v of o.rows || []) b.box(o.beam, w, BW * 0.8, BT, 0, v, BZ);
   for (const [u1, v1, u2, v2] of o.braces || []) brace(b, o.beam, u1, v1, u2, v2, BZ);
   for (const win of o.wins || []) {
     if (win.decal) b.box('plaster', win.w + 1.0, win.h + 0.9, 0.1, win.u, win.v + win.h / 2, 0.28);
     if (win.kind === 'g') gothic(b, win.u, win.v, win.w, win.h, win.lit);
     else sqWin(b, win.u, win.v, win.w, win.h, win.lit);
+    if (o.inside) inWin(b, win);
   }
-  if (o.door) door(b, o.door.u, o.door.w, o.door.h, o.door.double);
+  if (live) liveDoor(b, D);
+  else if (o.door) doorStatic(b, o.door.u, o.door.w, o.door.h, o.door.double);
 }
 
 // 건물 네 면 + 모서리 기둥. spec(face, 면너비) → timberWall 옵션
@@ -264,6 +411,33 @@ function ring(b, o, spec) {
     b.pop();
   }
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box(o.beam, 0.55, o.h, 0.55, (sx * o.w) / 2, o.y + o.h / 2, (sz * o.d) / 2);
+}
+
+// 바깥쪽 돌 밑단 (벽 아래 0.8). 문이 있으면 문 자리는 비움. 안쪽으로는 아무것도 안 튀어나옴
+function plinth(b, w, d, doorW) {
+  const H = 0.8, T = 0.2, o = 0.37;
+  b.box('stone', w + 0.9, H, T, 0, H / 2, -d / 2 - o);
+  b.box('stone', T, H, d + 0.9, -w / 2 - o, H / 2, 0);
+  b.box('stone', T, H, d + 0.9, w / 2 + o, H / 2, 0);
+  if (doorW > 0) {
+    const g = doorW / 2 + 0.5, len = w / 2 + 0.45 - g;
+    b.box('stone', len, H, T, -(g + len / 2), H / 2, d / 2 + o);
+    b.box('stone', len, H, T, g + len / 2, H / 2, d / 2 + o);
+  } else b.box('stone', w + 0.9, H, T, 0, H / 2, d / 2 + o);
+}
+
+// 방 안쪽 마감: 나무 바닥 + 회반죽 천장 + 노출 보
+function shell(b, R) {
+  b.box('floor', R.w - 0.5, 0.1, R.d - 0.5, 0, 0, 0);
+  b.box('plaster', R.w - 0.5, 0.3, R.d - 0.5, 0, R.h - 0.2, 0);
+  const n = Math.max(2, Math.round(R.d / 3.2));
+  for (let i = 0; i < n; i++) b.box('timber', R.w - 0.5, 0.3, 0.28, 0, R.h - 0.5, -R.d / 2 + 0.25 + ((i + 0.5) * (R.d - 0.5)) / n);
+  // 벽 아래 걸레받이 (안쪽)
+  const seg = (R.w - 0.5) / 2 - R.dw / 2 - 0.1;                 // 앞쪽은 문 자리를 비움
+  if (seg > 0.1) for (const sx of [-1, 1]) b.box('timberLight', seg, 0.22, 0.08, sx * ((R.w - 0.5) / 2 - seg / 2), 0.16, R.d / 2 - 0.29);
+  b.box('timberLight', R.w - 0.5, 0.22, 0.08, 0, 0.16, -R.d / 2 + 0.29);
+  b.box('timberLight', 0.08, 0.22, R.d - 0.5, R.w / 2 - 0.29, 0.16, 0);
+  b.box('timberLight', 0.08, 0.22, R.d - 0.5, -R.w / 2 + 0.29, 0.16, 0);
 }
 
 // 칸 중앙 위치들
@@ -333,69 +507,263 @@ function lampPost(b, x, z) {
   lantern(b, x + 1.05, 4.4, z);
 }
 
+// ---------- 가구 ----------
+// 가구 좌표: 바닥 윗면 중앙이 원점, 앞면이 +z. (village-layout.js 의 INTERIOR 목록과 같은 이름/크기)
+function tableware(b, w, d, h) {
+  b.box('candle', 0.12, 0.34, 0.12, 0, h + 0.06 + 0.17, 0);
+  b.box('flame', 0.07, 0.13, 0.07, 0, h + 0.06 + 0.34 + 0.06, 0);
+  for (const [px, pz] of [[-w * 0.28, d * 0.18], [w * 0.28, -d * 0.18]]) b.geo('ceramic', new THREE.CylinderGeometry(0.27, 0.22, 0.05, 12), px, h + 0.085, pz);
+  b.geo('mug', new THREE.CylinderGeometry(0.1, 0.1, 0.2, 8), w * 0.12, h + 0.16, d * 0.2);
+}
+
+const FURN = {
+  table(b, it) {
+    const { w, d } = it, h = 1.0;
+    b.box('timberLight', w, 0.12, d, 0, h, 0);
+    b.box('timber', w - 0.3, 0.1, d - 0.3, 0, h - 0.11, 0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('timber', 0.18, h - 0.06, 0.18, sx * (w / 2 - 0.2), (h - 0.06) / 2, sz * (d / 2 - 0.2));
+    tableware(b, w, d, h);
+  },
+  round(b, it) {
+    const r = it.w / 2, h = 1.0;
+    b.geo('timberLight', new THREE.CylinderGeometry(r, r, 0.12, 20), 0, h, 0);
+    b.geo('timber', new THREE.CylinderGeometry(0.16, 0.2, h - 0.06, 8), 0, (h - 0.06) / 2, 0);
+    b.geo('timber', new THREE.CylinderGeometry(0.5, 0.55, 0.1, 10), 0, 0.05, 0);
+    tableware(b, r * 1.2, r * 1.2, h);
+  },
+  chair(b) {
+    b.box('timberLight', 0.55, 0.09, 0.55, 0, 0.58, 0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('timber', 0.09, 0.58, 0.09, sx * 0.23, 0.29, sz * 0.23);
+    b.box('timberLight', 0.55, 0.75, 0.07, 0, 0.98, -0.24);
+    b.box('timber', 0.07, 0.8, 0.07, -0.24, 0.98, -0.24);
+    b.box('timber', 0.07, 0.8, 0.07, 0.24, 0.98, -0.24);
+  },
+  stool(b) {
+    b.geo('timberLight', new THREE.CylinderGeometry(0.28, 0.28, 0.09, 10), 0, 0.62, 0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('timber', 0.08, 0.6, 0.08, sx * 0.17, 0.3, sz * 0.17);
+    b.box('timber', 0.4, 0.05, 0.05, 0, 0.25, 0);
+  },
+  desk(b, it) {
+    const { w, d } = it, h = 1.0;
+    b.box('timberLight', w, 0.1, d, 0, h, 0);
+    for (const sx of [-1, 1]) {
+      b.box('timber', 0.8, h - 0.05, d - 0.1, sx * (w / 2 - 0.45), (h - 0.05) / 2, 0);
+      b.box('iron', 0.2, 0.05, 0.05, sx * (w / 2 - 0.45), h * 0.72, d / 2 - 0.02);
+      b.box('iron', 0.2, 0.05, 0.05, sx * (w / 2 - 0.45), h * 0.4, d / 2 - 0.02);
+    }
+    b.box('clothB', 0.5, 0.1, 0.36, -0.2, h + 0.1, -0.05);
+    b.box('clothR', 0.46, 0.08, 0.34, -0.2, h + 0.19, -0.05);
+    b.box('linen', 0.5, 0.02, 0.4, 0.35, h + 0.06, 0.1);
+    b.box('lamp', 0.2, 0.3, 0.2, w * 0.36, h + 0.2, -d * 0.2);
+    b.box('iron', 0.26, 0.05, 0.26, w * 0.36, h + 0.37, -d * 0.2);
+  },
+  bed(b, it) {
+    const { w, d } = it, cl = it.cloth || 'clothR';
+    b.box('timber', w, 0.3, d, 0, 0.3, 0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('timber', 0.14, 0.3, 0.14, sx * (w / 2 - 0.1), 0.15, sz * (d / 2 - 0.1));
+    b.box('timberLight', w, 1.0, 0.12, 0, 0.8, -d / 2 + 0.06);
+    b.box('timberLight', w, 0.55, 0.1, 0, 0.58, d / 2 - 0.05);
+    b.box('linen', w - 0.16, 0.22, d - 0.3, 0, 0.56, 0);
+    b.box(cl, w - 0.1, 0.1, d * 0.62, 0, 0.7, d * 0.17);
+    b.box('linen', 0.62, 0.14, 0.42, -w * 0.22, 0.74, -d / 2 + 0.45);
+    b.box('linen', 0.62, 0.14, 0.42, w * 0.22, 0.74, -d / 2 + 0.45);
+  },
+  shelf(b, it) {
+    const { w, d } = it, H = 3.0;
+    b.box('timber', 0.1, H, d, -w / 2 + 0.05, H / 2, 0);
+    b.box('timber', 0.1, H, d, w / 2 - 0.05, H / 2, 0);
+    for (const y of [0.08, 0.9, 1.7, 2.5, 2.96]) b.box('timber', w, 0.08, d, 0, y, 0);
+    b.box('books', w - 0.2, H - 0.2, 0.06, 0, H / 2, -d / 2 + 0.12);
+    b.box('clothR', 0.1, 0.4, 0.28, -w * 0.3, 1.12, 0.0);
+    b.box('clothB', 0.1, 0.36, 0.26, -w * 0.3 + 0.12, 1.1, 0.0);
+    b.box('ceramic', 0.3, 0.3, 0.3, w * 0.25, 1.9, 0.0);
+  },
+  wardrobe(b, it) {
+    const { w, d } = it, H = 2.6;
+    b.box('timber', w, H, d, 0, H / 2, 0);
+    b.box('timberLight', w + 0.15, 0.18, d + 0.15, 0, H + 0.09, 0);
+    b.box('frame', 0.05, H - 0.4, 0.05, 0, H / 2, d / 2 + 0.02);
+    for (const sx of [-1, 1]) b.box('iron', 0.08, 0.22, 0.08, sx * 0.2, 1.3, d / 2 + 0.05);
+  },
+  chest(b, it) {
+    const { w, d } = it;
+    b.box('timber', w, 0.7, d, 0, 0.35, 0);
+    b.box('timberLight', w + 0.06, 0.18, d + 0.06, 0, 0.78, 0);
+    for (const sx of [-1, 1]) b.box('iron', 0.1, 0.9, d + 0.1, sx * (w / 2 - 0.2), 0.45, 0);
+    b.box('iron', 0.12, 0.16, 0.06, 0, 0.62, d / 2 + 0.03);
+  },
+  stand(b) {
+    b.box('timber', 0.55, 0.75, 0.55, 0, 0.375, 0);
+    b.box('timberLight', 0.62, 0.06, 0.62, 0, 0.78, 0);
+    b.box('lamp', 0.18, 0.26, 0.18, 0, 0.94, 0);
+    b.box('iron', 0.24, 0.05, 0.24, 0, 1.09, 0);
+  },
+  lamp(b) {
+    b.geo('iron', new THREE.CylinderGeometry(0.25, 0.3, 0.1, 10), 0, 0.05, 0);
+    b.box('iron', 0.08, 2.2, 0.08, 0, 1.15, 0);
+    b.geo('lamp', new THREE.CylinderGeometry(0.3, 0.4, 0.6, 10), 0, 2.5, 0);
+    b.box('iron', 0.5, 0.06, 0.5, 0, 2.82, 0);
+  },
+  barrel(b) {
+    b.geo('timber', new THREE.CylinderGeometry(0.5, 0.45, 1.05, 10), 0, 0.52, 0);
+    b.geo('iron', new THREE.CylinderGeometry(0.52, 0.52, 0.07, 10), 0, 0.28, 0);
+    b.geo('iron', new THREE.CylinderGeometry(0.52, 0.52, 0.07, 10), 0, 0.8, 0);
+  },
+  crate(b, it) {
+    const w = it.w - 0.1;
+    b.box('timberLight', w, 0.9, w, 0, 0.45, 0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('timber', 0.1, 0.94, 0.1, sx * (w / 2), 0.47, sz * (w / 2));
+  },
+  stove(b, it) {
+    const { w, d } = it;
+    b.box('stone', w, 1.1, d, 0, 0.55, 0);
+    b.box('iron', w - 0.1, 0.08, d - 0.1, 0, 1.14, 0);
+    b.box('fire', 0.4, 0.3, 0.05, 0, 0.55, d / 2 + 0.01);
+    b.box('iron', 0.5, 0.4, 0.04, 0, 0.55, d / 2 + 0.03);
+    b.box('iron', 0.2, 2.2, 0.2, w * 0.25, 2.3, -d * 0.25);
+    b.geo('iron', new THREE.CylinderGeometry(0.22, 0.22, 0.45, 8), -w * 0.2, 1.4, 0);
+    b.geo('ceramic', new THREE.CylinderGeometry(0.2, 0.17, 0.2, 8), w * 0.15, 1.28, 0.1);
+  },
+  fireplace(b, it, R) {
+    const { w, d } = it, H = 3.2, ow = w - 1.4;
+    for (const sx of [-1, 1]) b.box('stone', 0.7, H, d, sx * (w / 2 - 0.35), H / 2, 0);
+    b.box('stone', w, 0.9, d, 0, H - 0.45, 0);
+    b.box('stone', ow, H - 0.9, 0.25, 0, (H - 0.9) / 2, -d / 2 + 0.125);
+    b.box('stone', ow, 0.12, d - 0.2, 0, 0.06, 0);
+    b.box('timberLight', w + 0.4, 0.15, d + 0.3, 0, H - 0.9, 0.05);
+    const top = R.h - 0.35;
+    if (top > H + 0.1) b.box('stone', w - 0.8, top - H, d - 0.3, 0, (H + top) / 2, -0.05);
+    b.box('timber', 0.9, 0.16, 0.16, 0, 0.2, 0.05, 0.25); b.box('timber', 0.9, 0.16, 0.16, 0, 0.36, -0.05, -0.25);
+    b.box('fire', ow * 0.7, 0.55, 0.4, 0, 0.62, -0.1);
+    b.box('flame', ow * 0.4, 0.5, 0.25, 0, 0.9, -0.1);
+  },
+  bar(b, it) {
+    const { w, d } = it;
+    b.box('timber', w, 1.1, d, 0, 0.55, 0);
+    b.box('timberLight', w + 0.3, 0.12, d + 0.3, 0, 1.16, 0);
+    b.box('iron', w - 0.3, 0.08, 0.08, 0, 0.3, d / 2 + 0.12);
+    for (let i = 0; i < 6; i++) b.geo('mug', new THREE.CylinderGeometry(0.12, 0.1, 0.24, 8), -w / 2 + 1 + (i * (w - 2)) / 5, 1.34, d * 0.1);
+    for (const x of [-w * 0.2, 0, w * 0.2]) { b.box('iron', 0.1, 0.35, 0.1, x, 1.4, -d * 0.3); b.box('iron', 0.1, 0.1, 0.28, x, 1.52, -d * 0.2); }
+  },
+  backbar(b, it) {
+    const { w, d } = it;
+    b.box('timber', w, 3.0, 0.1, 0, 1.5, -d / 2 + 0.05);
+    b.box('timber', 0.1, 3.0, d, -w / 2 + 0.05, 1.5, 0); b.box('timber', 0.1, 3.0, d, w / 2 - 0.05, 1.5, 0);
+    b.box('timber', w, 1.0, d, 0, 0.5, 0);
+    for (const y of [1.25, 1.95, 2.65]) {
+      b.box('timberLight', w, 0.08, d, 0, y, 0);
+      for (let x = -w / 2 + 0.7, n = 0; x < w / 2 - 0.5; x += 0.65, n++) {
+        b.geo(n % 2 ? 'glassG' : 'glassA', new THREE.CylinderGeometry(0.12, 0.13, 0.5, 8), x, y + 0.29, 0.02 * (n % 3));
+        b.geo(n % 2 ? 'glassG' : 'glassA', new THREE.CylinderGeometry(0.05, 0.12, 0.2, 8), x, y + 0.64, 0.02 * (n % 3));
+      }
+    }
+  },
+  screen(b, it) {
+    const { w, d } = it, H = 2.2;
+    b.box('timber', w, H, d, 0, H / 2, 0);
+    b.box('plasterWarm', w - 0.4, H - 0.6, d + 0.04, 0, H / 2, 0);
+    b.box('timberLight', w + 0.1, 0.1, d + 0.1, 0, H + 0.05, 0);
+  },
+  rug(b, it) { b.box('rug', it.w, 0.04, it.d, 0, 0.02, 0); },
+  chandelier(b, it, R) {
+    const top = R.h - 0.5 - FLOOR_Y, y = top - 1.0;
+    b.box('iron', 0.05, top - y, 0.05, 0, (top + y) / 2, 0);
+    b.geo('iron', new THREE.TorusGeometry(0.8, 0.045, 6, 18), 0, y, 0, 0, 0, Math.PI / 2);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2, x = Math.cos(a) * 0.8, z = Math.sin(a) * 0.8;
+      b.box('candle', 0.1, 0.28, 0.1, x, y + 0.18, z);
+      b.box('flame', 0.06, 0.12, 0.06, x, y + 0.4, z);
+    }
+    b.box('lamp', 0.28, 0.28, 0.28, 0, y - 0.12, 0);
+  },
+  sconce(b, it) {
+    const y = it.y || 2.4;
+    b.box('iron', 0.26, 0.36, 0.05, 0, y, 0.025);
+    b.box('iron', 0.06, 0.06, 0.3, 0, y - 0.1, 0.18);
+    b.box('candle', 0.1, 0.22, 0.1, 0, y + 0.04, 0.3);
+    b.box('flame', 0.06, 0.12, 0.06, 0, y + 0.21, 0.3);
+  },
+};
+
+// 방에 가구를 놓는다 (집 로컬 좌표, 바닥 윗면 기준)
+function furnish(b, type, R) {
+  INTERIOR[type].forEach((it, i) => {
+    b.push(it.x, FLOOR_Y, it.z, it.ry || 0);
+    FURN[it.k](b, it, R, i);
+    b.pop();
+  });
+}
+
 // ---------- 건물 종류 ----------
+// 1층(문이 있는 층)에는 열리는 문 + 안쪽 마감 + 가구가 들어간다. 위층은 겉모습만.
+
 // A: 튜더식 2층집 (2층이 앞으로 튀어나온 구조 + 가파른 붉은 지붕 + 고딕 창)
 function buildA(b, o) {
-  const r = rng(o.seed);
-  const w = 8.4, d = 7.4, fh = 0.7, h1 = 3.8, h2 = 3.8, W2 = w + 1.2, D2 = d + 1.2;
-  b.box('stone', w + 0.5, fh + 0.5, d + 0.5, 0, fh / 2 - 0.25, 0);
+  const R = ROOM.A, r = rng(o.seed), enter = !o.noDoor;
+  const w = R.w, d = R.d, fh = 0, h1 = R.h, h2 = 3.8, W2 = w + 1.2, D2 = d + 1.2;
+  plinth(b, w, d, enter ? R.dw : 0);
   ring(b, { w, d, y: fh, h: h1, panel: 'plasterWarm', beam: 'timber' }, (f, ww) => {
-    if (f === 'f') return { nx: 1, door: { u: 0, w: 1.7, h: 2.9 }, braces: [[-ww / 2 + 0.2, h1 - 0.2, -ww / 2 + 1.6, h1 - 1.7], [ww / 2 - 0.2, h1 - 0.2, ww / 2 - 1.6, h1 - 1.7]] };
-    return { nx: 1, wins: [{ u: 0, v: 1.0, w: 1.1, h: 1.3, kind: 's', lit: r() < 0.6 }] };
+    if (f === 'f') return { nx: 1, inside: enter, door: { u: 0, w: R.dw, h: R.dh, live: enter }, braces: [[-ww / 2 + 0.2, h1 - 0.2, -ww / 2 + 1.6, h1 - 1.7], [ww / 2 - 0.2, h1 - 0.2, ww / 2 - 1.6, h1 - 1.7]] };
+    return { nx: 1, inside: enter, wins: [{ u: 0, v: 1.0, w: 1.1, h: 1.3, kind: 's', lit: r() < 0.6 }] };
   });
+  if (enter) { shell(b, R); furnish(b, 'A', R); }
   // 2층을 받치는 보와 버팀목
-  b.box('timber', W2 + 0.3, 0.5, D2 + 0.3, 0, fh + h1, 0);
+  b.box('timber', W2 + 0.3, 0.5, D2 + 0.3, 0, fh + h1 + 0.1, 0);
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     b.push(0, 0, sz * (d / 2 + 0.05));
-    brace(b, 'timber', sx * (w / 2), fh + h1 - 1.5, sx * (W2 / 2 - 0.15), fh + h1 - 0.2, 0, 0.3);
+    brace(b, 'timber', sx * (w / 2), fh + h1 - 1.5, sx * (W2 / 2 - 0.15), fh + h1 - 0.1, 0, 0.3);
     b.pop();
     b.push(sx * (w / 2 + 0.05), 0, 0, Math.PI / 2);
-    brace(b, 'timber', -sz * (d / 2), fh + h1 - 1.5, -sz * (D2 / 2 - 0.15), fh + h1 - 0.2, 0, 0.3);
+    brace(b, 'timber', -sz * (d / 2), fh + h1 - 1.5, -sz * (D2 / 2 - 0.15), fh + h1 - 0.1, 0, 0.3);
     b.pop();
   }
-  const y2 = fh + h1 + 0.2, hh = h2 - 0.2;
+  const y2 = fh + h1 + 0.3, hh = h2 - 0.3;
   ring(b, { w: W2, d: D2, y: y2, h: hh, panel: 'plaster', beam: 'timber' }, (f, ww) => {
     if (f === 'f') return { nx: 1, rows: [hh * 0.5], wins: [{ u: 0, v: 0.8, w: 1.5, h: 2.3, kind: 'g', lit: true }], braces: [[-ww / 2 + 0.2, hh - 0.2, -ww / 2 + 1.5, hh * 0.55], [ww / 2 - 0.2, hh - 0.2, ww / 2 - 1.5, hh * 0.55]] };
     const nx = f === 'b' ? 1 : 2;
     return { nx, wins: cellsU(ww, nx).map(u => ({ u, v: 0.9, w: 1.1, h: 1.6, kind: 's', lit: r() < 0.65 })) };
   });
-  // 지붕
-  const y0 = fh + h1 + h2, hw = W2 / 2, R = 6.4;
-  gableRoof(b, o.roof, hw, y0, R, D2 + 1.6);
-  for (const s of [1, -1]) { b.push(0, y0, (s * D2) / 2, s > 0 ? 0 : Math.PI); gableWall(b, hw, R, 'plaster', 'timber'); b.pop(); }
+  const y0 = fh + h1 + h2, hw = W2 / 2, RR = 6.4;
+  gableRoof(b, o.roof, hw, y0, RR, D2 + 1.6);
+  for (const s of [1, -1]) { b.push(0, y0, (s * D2) / 2, s > 0 ? 0 : Math.PI); gableWall(b, hw, RR, 'plaster', 'timber'); b.pop(); }
   chimney(b, hw * 0.45, y0 + 1.8, -1.5, 5.2);
   b.push((w / 2) + 0.35, 0, d / 2 + 0.2); wallLamp(b, 0, 3.0); b.pop();
 }
 
 // D: 작은 오두막 (갈색 기와 + 고딕 창 둘 + 굴뚝)
 function buildD(b, o) {
-  const r = rng(o.seed);
-  const w = 7.8, d = 6.8, fh = 0.6, h1 = 3.6;
-  b.box('stone', w + 0.5, fh + 0.5, d + 0.5, 0, fh / 2 - 0.25, 0);
+  const R = ROOM.D, r = rng(o.seed);
+  const w = R.w, d = R.d, fh = 0, h1 = R.h;
+  plinth(b, w, d, R.dw);
   ring(b, { w, d, y: fh, h: h1, panel: 'plaster', beam: 'timber' }, (f, ww) => {
-    if (f === 'f') return { nx: 3, door: { u: 0, w: 1.6, h: 2.8 }, wins: [-1, 1].map(s => ({ u: s * (ww / 2 - 1.5), v: 1.0, w: 1.0, h: 1.9, kind: 'g', lit: r() < 0.8 })), rows: [] };
-    return { nx: 2, wins: cellsU(ww, 2).map(u => ({ u, v: 1.0, w: 1.0, h: 1.8, kind: 'g', lit: r() < 0.6 })) };
+    if (f === 'f') return { nx: 3, inside: true, door: { u: 0, w: R.dw, h: R.dh, live: true }, wins: [-1, 1].map(s => ({ u: s * (ww / 2 - 1.5), v: 1.0, w: 1.0, h: 1.9, kind: 'g', lit: r() < 0.8 })) };
+    return { nx: 2, inside: true, wins: cellsU(ww, 2).map(u => ({ u, v: 1.0, w: 1.0, h: 1.8, kind: 'g', lit: r() < 0.6 })) };
   });
-  const y0 = fh + h1, hw = w / 2 + 0.1, R = 4.6;
-  gableRoof(b, o.roof, hw, y0, R, d + 1.6);
+  shell(b, R); furnish(b, 'D', R);
+  const y0 = fh + h1, hw = w / 2 + 0.1, RR = 4.6;
+  gableRoof(b, o.roof, hw, y0, RR, d + 1.6);
   for (const s of [1, -1]) {
-    b.push(0, y0, (s * d) / 2, s > 0 ? 0 : Math.PI); gableWall(b, hw, R, 'plaster', 'timber');
+    b.push(0, y0, (s * d) / 2, s > 0 ? 0 : Math.PI); gableWall(b, hw, RR, 'plaster', 'timber');
     if (s > 0) gothic(b, 0, 0.6, 0.9, 1.7, true);
     b.pop();
   }
   chimney(b, -hw * 0.5, y0 + 1.3, 0.5, 4.2);
 }
 
-// 탑: 남색 벽 + 층마다 고딕 창 둘 + 휘어 올라가는 뾰족 지붕 (사각 로프트)
+// 탑: 남색 벽 + 층마다 고딕 창 둘 + 휘어 올라가는 뾰족 지붕 (사각 로프트). enter 면 1층에 열리는 문 + 서재
 function tower(b, o) {
-  const r = rng(o.seed), sq = o.sq, fh = 0.8, tiers = o.tiers;
-  b.box('stone', sq + 0.6, fh + 0.5, sq + 0.6, 0, fh / 2 - 0.25, 0);
+  const r = rng(o.seed), sq = o.sq, fh = 0, tiers = o.tiers, enter = !!o.enter, R = ROOM.B;
+  plinth(b, sq, sq, enter ? R.dw : 0);
   let y = fh;
   tiers.forEach((th, ti) => {
     ring(b, { w: sq, d: sq, y, h: th, panel: ti === 0 ? 'stone' : 'navy', beam: 'timberBlue' }, (f, ww) => {
-      if (ti === 0) return f === 'f' ? { nx: 1, door: { u: 0, w: 1.7, h: 2.9 } } : { nx: 1 };
+      if (ti === 0) {
+        if (f === 'f') return { nx: 1, inside: enter, door: { u: 0, w: R.dw, h: R.dh, live: enter } };
+        return { nx: 1 };
+      }
       return { nx: 2, wins: cellsU(ww, 2).map(u => ({ u, v: 0.8, w: 1.0, h: th - 1.7, kind: 'g', lit: r() < 0.7, decal: true })) };
     });
+    if (ti === 0 && enter) { shell(b, { ...R, w: sq, d: sq, h: th }); furnish(b, 'B', { ...R, h: th }); }
     y += th;
   });
   b.box('timberBlue', sq + 0.9, 0.5, sq + 0.9, 0, y + 0.05, 0);
@@ -405,13 +773,13 @@ function tower(b, o) {
   b.geo('roofNavy', lathe, 0, y + 0.3, 0, 0, 0, 0, [6, 6]);
   b.box('iron', 0.15, 1.6, 0.15, 0, y + 0.3 + H + 0.5, 0);
 }
-const buildB = (b, o) => tower(b, { seed: o.seed, sq: 6.4, tiers: [4.0, 3.5, 3.5, 3.5, 3.5], roofH: 10 });
+const buildB = (b, o) => tower(b, { seed: o.seed, sq: ROOM.B.w, tiers: [ROOM.B.h, 3.5, 3.5, 3.5, 3.5], roofH: 10, enter: true });
 
 // C: 4층 연립 건물 (남색 뼈대 + 회백색 벽 + 네모 창 격자 + 남색 지붕)
 function buildC(b, o) {
-  const r = rng(o.seed);
-  const w = 11.6, d = 8.8, fh = 0.7, tiers = [4.2, 3.5, 3.5, 3.5];
-  b.box('stone', w + 0.5, fh + 0.5, d + 0.5, 0, fh / 2 - 0.25, 0);
+  const R = ROOM.C, r = rng(o.seed);
+  const w = R.w, d = R.d, fh = 0, tiers = [R.h, 3.5, 3.5, 3.5];
+  plinth(b, w, d, R.dw);
   let y = fh;
   tiers.forEach((th, ti) => {
     ring(b, { w, d, y, h: th, panel: ti === 0 ? 'plasterWarm' : 'plaster', beam: 'timberBlue' }, (f, ww) => {
@@ -422,10 +790,11 @@ function buildC(b, o) {
           wins.push({ u, v: 0.9, w: 1.3, h: 2.4, kind: 'g', lit: r() < 0.8 });
         } else wins.push({ u, v: 0.8, w: 1.7, h: th - 1.8, kind: 's', lit: r() < 0.65 });
       }
-      const spec = { nx, wins };
-      if (ti === 0 && f === 'f') spec.door = { u: 0, w: 1.8, h: 2.9 };
+      const spec = { nx, wins, inside: ti === 0 };
+      if (ti === 0 && f === 'f') spec.door = { u: 0, w: R.dw, h: R.dh, live: true };
       return spec;
     });
+    if (ti === 0) { shell(b, R); furnish(b, 'C', R); }
     y += th;
   });
   b.box('timberBlue', w + 0.9, 0.55, d + 0.9, 0, y + 0.2, 0);
@@ -434,11 +803,11 @@ function buildC(b, o) {
   chimney(b, -w * 0.28, y + 1.0, 0, 4.2);
 }
 
-// 여관: 4층 본관 + 왼쪽 탑 + 오른쪽 튜더식 별관, 정문 차양/간판/등불/통과 상자
+// 여관: 4층 본관 + 왼쪽 탑 + 오른쪽 튜더식 별관, 정문 차양/간판/등불/통과 상자. 1층은 술집 + 침대 칸
 function buildInn(b, o) {
-  const r = rng(o.seed);
-  const w = 30, d = 18, fh = 0.8, tiers = [5.0, 4.0, 4.0, 4.0];
-  b.box('stone', w + 0.6, fh + 0.5, d + 0.6, 0, fh / 2 - 0.25, 0);
+  const R = ROOM.INN, r = rng(o.seed);
+  const w = R.w, d = R.d, fh = 0, tiers = [R.h, 4.0, 4.0, 4.0];
+  plinth(b, w, d, R.dw);
   let y = fh;
   tiers.forEach((th, ti) => {
     ring(b, { w, d, y, h: th, panel: ti === 0 ? 'plasterWarm' : 'plaster', beam: 'timberBlue' }, (f, ww) => {
@@ -449,10 +818,11 @@ function buildInn(b, o) {
           wins.push({ u, v: 1.0, w: 1.7, h: 3.2, kind: 'g', lit: r() < 0.85 });
         } else wins.push({ u, v: 0.9, w: 1.9, h: th - 2.0, kind: 's', lit: r() < 0.7 });
       }
-      const spec = { nx, wins };
-      if (ti === 0 && f === 'f') spec.door = { u: 0, w: 3.0, h: 3.8, double: true };
+      const spec = { nx, wins, inside: ti === 0 };
+      if (ti === 0 && f === 'f') spec.door = { u: 0, w: R.dw, h: R.dh, live: true, double: true };
       return spec;
     });
+    if (ti === 0) { shell(b, R); furnish(b, 'INN', R); }
     y += th;
   });
   // 정문 양옆 벽등
@@ -461,12 +831,12 @@ function buildInn(b, o) {
   b.pop();
   // 정문 차양
   const fz = d / 2;
-  b.box('roofRed', 6.2, 0.3, 3.2, 0, 4.55, fz + 1.35, 0, 0, 0.32);
-  for (const sx of [-1, 1]) b.box('timber', 0.32, 3.7, 0.32, sx * 2.8, 2.6, fz + 2.5);
+  b.box('roofRed', 6.2, 0.3, 3.2, 0, 4.9, fz + 1.35, 0, 0, 0.32);
+  for (const sx of [-1, 1]) b.box('timber', 0.32, 4.0, 0.32, sx * 2.8, 2.7, fz + 2.5);
   // 간판 (차양 위, 벽에 달림)
-  b.box('timber', 3.3, 1.75, 0.2, 0, 7.0, fz + 0.45);
-  b.geo('sign', new THREE.PlaneGeometry(3.0, 1.5), 0, 7.0, fz + 0.57);
-  for (const sx of [-1, 1]) b.box('iron', 0.1, 0.1, 0.5, sx * 1.4, 7.9, fz + 0.3);
+  b.box('timber', 3.3, 1.75, 0.2, 0, 7.4, fz + 0.45);
+  b.geo('sign', new THREE.PlaneGeometry(3.0, 1.5), 0, 7.4, fz + 0.57);
+  for (const sx of [-1, 1]) b.box('iron', 0.1, 0.1, 0.5, sx * 1.4, 8.3, fz + 0.3);
   // 지붕 + 굴뚝 + 다락창
   const rootY = y + 0.45, roofH = 6.8, rl = (w + 2) * 0.55;
   b.box('timberBlue', w + 0.9, 0.55, d + 0.9, 0, y + 0.2, 0);
@@ -474,17 +844,17 @@ function buildInn(b, o) {
   chimney(b, -6, rootY + 2.5, -2.5, 5.2);
   chimney(b, 6, rootY + 2.5, -2.5, 5.2);
   for (const x of [-8, 0, 8]) {                      // 앞쪽 지붕 다락창 3개
-    const t = 0.36, zs = (d / 2 + 1) * (1 - t);      // 이 높이에서 지붕 면의 z
+    const t = 0.36, zs = (d / 2 + 1) * (1 - t);
     const yb = rootY + roofH * t - 0.5;
-    b.box('plaster', 2.4, 2.6, 2.2, x, yb + 1.3, zs - 0.6 + 0.0);
+    b.box('plaster', 2.4, 2.6, 2.2, x, yb + 1.3, zs - 0.6);
     b.push(x, 0, zs - 0.6);
     b.push(0, 0, 1.1); gothic(b, 0, yb + 0.35, 0.9, 1.5, true, 0.0); b.pop();
     gableRoof(b, 'roofRed', 1.3, yb + 2.6, 1.5, 2.8, 0);
     b.pop();
   }
-  // 왼쪽 탑 / 오른쪽 별관
-  b.push(-18.2, 0, 4.6); tower(b, { seed: o.seed + 1, sq: 8, tiers: [4.4, 4, 4, 4, 4, 4], roofH: 12.5 }); b.pop();
-  b.push(19, 0, 4.7); buildA(b, { seed: o.seed + 2, roof: 'roofRed' }); b.pop();
+  // 왼쪽 탑 / 오른쪽 별관 (들어갈 수 없는 덩어리, 문은 장식)
+  b.push(-18.2, 0, 4.6); tower(b, { seed: o.seed + 1, sq: 8, tiers: [4.4, 4, 4, 4, 4, 4], roofH: 12.5, enter: false }); b.pop();
+  b.push(19, 0, 4.7); buildA(b, { seed: o.seed + 2, roof: 'roofRed', noDoor: true }); b.pop();
   // 정문 앞: 가로등, 통, 상자
   lampPost(b, -8, fz + 4.5);
   lampPost(b, 8, fz + 4.5);
@@ -499,16 +869,61 @@ function buildInn(b, o) {
 
 const BUILD = { A: buildA, B: buildB, C: buildC, D: buildD, INN: buildInn };
 
+// ---------- 실행 중 (문 열림 애니메이션 + 실내 조명) ----------
+const RT = { swings: [], ang: [], light: null, group: null };
+const OPEN_ANGLE = 1.75;   // 문이 열리는 각도 (약 100도)
+
 // 마을 건물 전부 만들어서 scene에 올린다 (village-layout.js 의 HOUSES 배치대로)
 export function buildHouses(scene) {
   const b = new Batch();
-  for (const h of HOUSES) {
+  HOUSES.forEach((h, i) => {
+    b.houseIdx = i;
     b.push(h.x, VILLAGE.h, h.z, h.rot, 0, 0, h.k);
     BUILD[h.type](b, h);
     b.pop();
-  }
+  });
   const group = b.finish();
   group.name = 'village-houses';
+  // 열리는 문짝: 경첩 위치에서 돌아가도록 pivot 그룹으로 감싼다
+  for (const rec of b.doors) {
+    const outer = new THREE.Group();
+    rec.matrix.decompose(outer.position, outer.quaternion, outer.scale);
+    const swing = new THREE.Group();
+    swing.add(rec.leaf);
+    outer.add(swing);
+    group.add(outer);
+    (RT.swings[rec.house] ||= []).push({ swing, sign: rec.sign });
+  }
   scene.add(group);
+  // 실내 조명: 지금 들어가 있는 방에만 따뜻한 빛을 하나 켠다 (광원이 많으면 느려져서 하나를 옮겨 씀)
+  RT.light = new THREE.PointLight(0xffd9a0, 0, 20, 1.4);
+  scene.add(RT.light);
+  RT.group = group;
   return group;
+}
+
+// 매 프레임: 문 애니메이션 + 실내 조명 이동. 지금 플레이어가 들어가 있는 집 번호(없으면 -1)를 돌려줌
+export function updateHouses(dt, px, pz) {
+  const k = 1 - Math.exp(-9 * dt);
+  RT.swings.forEach((list, i) => {
+    if (!list) return;
+    const target = isDoorOpen(i) ? OPEN_ANGLE : 0, cur = RT.ang[i] || 0;
+    const next = Math.abs(target - cur) < 0.002 ? target : cur + (target - cur) * k;
+    if (next !== cur || RT.ang[i] === undefined) {
+      RT.ang[i] = next;
+      for (const L of list) L.swing.rotation.y = L.sign * next;
+    }
+  });
+  const hi = houseAt(px, pz);
+  if (RT.light) {
+    let target = 0;
+    if (hi >= 0) {
+      const c = roomLight(hi);
+      RT.light.position.set(c.x, VILLAGE.h + c.y, c.z);
+      RT.light.distance = c.big ? 34 : 18;
+      target = c.big ? 1.5 : 1.2;
+    }
+    RT.light.intensity += (target - RT.light.intensity) * (1 - Math.exp(-6 * dt));
+  }
+  return hi;
 }
