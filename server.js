@@ -12,6 +12,8 @@ const MAX_PLAYERS = 20;
 const MAX_SPEED = 30;      // units/sec (달리기 14 + 여유)
 const FAST_MULT = 100;     // 클라이언트 FAST_MULT와 같은 값
 const players = new Map();
+const openDoors = new Set();   // 열려 있는 문 (집 번호). 접속자끼리 같은 상태를 보도록 서버가 기억
+const MAX_DOORS = 64;
 
 io.on('connection', (socket) => {
   socket.on('join', ({ nick } = {}) => {
@@ -43,6 +45,16 @@ io.on('connection', (socket) => {
       }
     }
     Object.assign(p, { x: m.x, y: m.y, z: m.z, ry: m.ry, t: now, spawned: true });
+  });
+
+  socket.on('doors?', () => {
+    if (players.has(socket.id)) socket.emit('doors', [...openDoors]);
+  });
+
+  socket.on('door', (d) => {
+    if (!players.has(socket.id) || !d || !Number.isInteger(d.i) || d.i < 0 || d.i >= MAX_DOORS) return;
+    if (d.open) openDoors.add(d.i); else openDoors.delete(d.i);
+    socket.broadcast.emit('door', { i: d.i, open: !!d.open });
   });
 
   socket.on('fast', (v) => {
