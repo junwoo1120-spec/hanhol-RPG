@@ -47,6 +47,14 @@ io.on('connection', (socket) => {
     Object.assign(p, { x: m.x, y: m.y, z: m.z, ry: m.ry, t: now, spawned: true });
   });
 
+  // 집 안 공간(땅 밑 방)으로 들어가거나 나올 때 위치를 한 번에 옮김. 속도 검증에 걸려 되돌려지지 않게 서버 위치도 같이 갱신
+  socket.on('tp', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !d || ![d.x, d.y, d.z].every(Number.isFinite)) return;
+    if (Math.abs(d.x) > 5000 || Math.abs(d.z) > 5000 || d.y < -800 || d.y > 800) return;
+    Object.assign(p, { x: d.x, y: d.y, z: d.z, t: Date.now() });
+  });
+
   socket.on('doors?', () => {
     if (players.has(socket.id)) socket.emit('doors', [...openDoors]);
   });
