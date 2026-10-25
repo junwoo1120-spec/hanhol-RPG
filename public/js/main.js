@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS } from './terrain.js';
 import { buildVillage } from './village.js';
-import { buildHouses, updateHouses } from './buildings.js';
+import { buildHouses, updateHouses, setRoomsHidden, setPortalTexture } from './buildings.js';
 import {
-  collideBuildings, collideRoom, nearestDoor, doorInfo, isDoorOpen, setDoorOpen, ROOMS, roomEntry, roomExit, roomReturn,
-  roomFloorY, clampCameraRoom, clampCameraInRoom, innFloor,
+  collideBuildings, collideRoom, nearestDoor, doorInfo, isDoorOpen, setDoorOpen, ROOMS, CORR_ROOM, roomEntry, roomExit, roomRet,
+  roomFloorY, roomGhost, clampCameraRoom, clampCameraInRoom, innFloor, stairsInfo,
 } from './village-layout.js';
 import { makeHumanoid, animateHumanoid, humanReady } from './character.js';
 import { createNatureKit } from './nature.js';
@@ -1206,30 +1206,39 @@ function boot(socket, { id, seed }, nick, mode) {
     socket.emit('tp', { x, y, z });
   }
   function enterRoom(r) {
-    setDoor(ROOMS[r].door, false);                 // 들어가면서 문은 닫힘
+    if (ROOMS[r].door >= 0) setDoor(ROOMS[r].door, false);   // 들어가면서 문은 닫힘
     openedDoor = -1;
     const e = roomEntry(r);
     curRoom = r;
     teleportTo(e.x, e.y, e.z, e.yaw);
   }
   function leaveRoom() {
-    const o = roomReturn(curRoom);
-    curRoom = -1;
-    teleportTo(o.x, o.y, o.z, o.yaw);
+    const ret = roomRet(curRoom);                  // 장식 건물 방 → 문 앞 / 객실 → 복도 방문 앞 / 복도 → 여관 계단 앞
+    curRoom = ret.to === 'room' ? ret.room : -1;
+    teleportTo(ret.x, ret.y, ret.z, ret.yaw);
+  }
+  // 문 앞에서 할 수 있는 동작: 문 열기 → 집 들어가기 (여관 정문만 열고 닫기)
+  function doorAction(di) {
+    const d = doorInfo(di), open = isDoorOpen(di), pos = { x: d.x, y: d.y + (d.kind === 'room' ? 3.6 : 1.7), z: d.z };
+    if (d.kind === 'inn') return { text: open ? '문 닫기' : '문 열기', ...pos, run: () => setDoor(di, !open) };
+    if (!open) return { text: '문 열기', ...pos, run: () => { setDoor(di, true); openedDoor = di; } };
+    return { text: '집 들어가기', ...pos, run: () => enterRoom(d.room) };
   }
   // 지금 할 수 있는 동작 (없으면 null). 안내 문구가 뜰 위치(x,y,z)도 같이 돌려줌
   function currentAction() {
     if (curRoom >= 0) {
       const ex = roomExit(curRoom);
-      if (Math.hypot(me.x - ex.x, me.z - ex.z) < ex.reach) return { text: '밖으로 나가기', x: ex.x, y: ex.y + 1.6, z: ex.z, run: leaveRoom };
-      return null;
+      if (Math.hypot(me.x - ex.x, me.z - ex.z) < ex.reach) return { text: ex.text, x: ex.x, y: ex.y + 3.0, z: ex.z, run: leaveRoom };
+      const di = nearestDoor(me.x, me.z, me.y);    // 복도 방의 방문들
+      return di >= 0 ? doorAction(di) : null;
     }
     const di = nearestDoor(me.x, me.z, me.y);
-    if (di < 0) return null;
-    const d = doorInfo(di), open = isDoorOpen(di), pos = { x: d.x, y: d.y + 1.7, z: d.z };
-    if (d.kind === 'inn') return { text: open ? '문 닫기' : '문 열기', ...pos, run: () => setDoor(di, !open) };
-    if (!open) return { text: '문 열기', ...pos, run: () => { setDoor(di, true); openedDoor = di; } };
-    return { text: '집 들어가기', ...pos, run: () => enterRoom(d.room) };
+    if (di >= 0) return doorAction(di);
+    const st = stairsInfo();                       // 여관 안 계단: 올라갈 수는 없고, 누르면 복도 방으로 이동
+    if (Math.hypot(me.x - st.x, me.z - st.z) < st.reach && Math.abs(me.y - st.y) < 3) {
+      return { text: '계단 올라가기', x: st.x, y: st.hy, z: st.z, run: () => enterRoom(CORR_ROOM.id) };
+    }
+    return null;
   }
   const _hv = new THREE.Vector3();
   function updateDoorHint() {
@@ -1360,6 +1369,35 @@ function boot(socket, { id, seed }, nick, mode) {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
+
+  // ---------- 방 창문: 실제 바깥 풍경 (포털) ----------
+  // 방은 땅 밑에 있지만 방마다 마을 바깥 둘레에 "유령 위치"가 있다. 방 안에 있을 때 플레이어 카메라를 그 위치로 옮겨 놓은
+  // 가짜 카메라로 월드를 한 번 더 그려서(renderTarget) 창 구멍 자리에 화면 좌표 그대로 입힌다 → 창으로 진짜 바깥이 보임.
+  const portalRT = new THREE.WebGLRenderTarget(2, 2, { samples: 2 });
+  const vcam = new THREE.PerspectiveCamera();
+  const _pq = new THREE.Quaternion(), _pv = new THREE.Vector3(), _pUp = new THREE.Vector3(0, 1, 0), _pdb = new THREE.Vector2();
+  function updatePortalCamera() {
+    const g = roomGhost(curRoom);
+    _pv.set(camera.position.x - g.room.x, camera.position.y - g.room.y, camera.position.z - g.room.z);
+    _pq.setFromAxisAngle(_pUp, g.rot);
+    _pv.applyQuaternion(_pq);
+    vcam.copy(camera, false);
+    vcam.position.set(g.x + _pv.x, g.y + _pv.y, g.z + _pv.z);
+    vcam.quaternion.copy(camera.quaternion).premultiply(_pq);
+    vcam.updateMatrixWorld(true);
+  }
+  function renderPortal() {
+    const w = Math.max(2, Math.floor(renderer.domElement.width * 0.7)), h = Math.max(2, Math.floor(renderer.domElement.height * 0.7));
+    if (portalRT.width !== w || portalRT.height !== h) portalRT.setSize(w, h);
+    renderer.getDrawingBufferSize(_pdb);
+    setPortalTexture(portalRT.texture, _pdb.x, _pdb.y);
+    setRoomsHidden(true, curRoom);                 // 방 자체는 가짜 시점에 안 나오게 숨김
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(portalRT);
+    renderer.render(scene, vcam);
+    renderer.setRenderTarget(prev);
+    setRoomsHidden(false, curRoom);
+  }
 
   // ---------- 키보드 모드 전용 UI: 조작 안내, 달리기/시점고정 표시 ----------
   if (!touchMode) {
@@ -1846,7 +1884,8 @@ function boot(socket, { id, seed }, nick, mode) {
     }
 
     // 자연 오브젝트: 배치 계산은 프레임 예산 안에서, 빠른 이동(×30 이상)에는 새 배치를 미룸
-    nature.update(camera, { fast: fast && fastMult >= 30 });
+    if (curRoom >= 0) updatePortalCamera();        // 방 안에서는 유령 위치 기준으로 자연 오브젝트를 불러옴
+    nature.update(curRoom >= 0 ? vcam : camera, { fast: fast && fastMult >= 30 });
     const ns = nature.stats();
     const ri = renderer.info.render;   // 직전 프레임 값 (render 전에 읽음)
 
@@ -1856,7 +1895,19 @@ function boot(socket, { id, seed }, nick, mode) {
       `자연 ${ns.instances}개  대기 ${ns.queued}\n` +
       `드로우콜 ${ri.calls}  삼각형 ${ri.triangles}`;
 
-    renderer.render(scene, camera);
+    if (curRoom >= 0) {
+      renderPortal();                              // 창문에 보일 바깥 풍경을 먼저 그림
+      // 방 안 화면에는 방/조명/캐릭터만 그리면 되므로 땅·자연·마을은 잠깐 숨겨서 그리기 부담을 줄임
+      const keep = new Set([myAvatar]);
+      for (const r of remotes.values()) keep.add(r.g);
+      const hidden = [];
+      for (const o of scene.children) {
+        if (o.isLight || o.userData.keepInRoom || keep.has(o) || !o.visible) continue;
+        o.visible = false; hidden.push(o);
+      }
+      renderer.render(scene, camera);
+      for (const o of hidden) o.visible = true;
+    } else renderer.render(scene, camera);
   }
 
   // 초기 청크를 빠르게 생성
