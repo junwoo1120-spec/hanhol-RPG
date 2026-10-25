@@ -2,7 +2,10 @@ import * as THREE from 'three';
 import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS } from './terrain.js';
 import { buildVillage } from './village.js';
 import { buildHouses, updateHouses } from './buildings.js';
-import { collideBuildings, nearestDoor, isDoorOpen, setDoorOpen, clampCameraInRoom } from './village-layout.js';
+import {
+  collideBuildings, collideRoom, nearestDoor, doorInfo, isDoorOpen, setDoorOpen, ROOMS, roomEntry, roomExit, roomReturn,
+  roomFloorY, clampCameraRoom, clampCameraInRoom, innFloor,
+} from './village-layout.js';
 import { makeHumanoid, animateHumanoid, humanReady } from './character.js';
 import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
@@ -31,7 +34,7 @@ const PITCH_LIMIT = 1.45; // 위아래 회전 한계 (거의 수직까지)
 const HELP_KEYBOARD = [
   [['W', 'A', 'S', 'D'], '이동'],
   [['Space'], '점프'],
-  [['E'], '문 열기/닫기 (문 앞에서)'],
+  [['E'], '문 열기 / 집 들어가기 / 밖으로 나가기'],
   [['Ctrl'], '달리기 켜기/끄기'],
   [['Shift'], '시점 고정 켜기/끄기'],
   [['←', '→', '↑', '↓'], '화면 회전'],
@@ -1184,28 +1187,70 @@ function boot(socket, { id, seed }, nick, mode) {
   }
 
   // ---------- 키보드 / 마우스 ----------
-  // ---------- 문 열기/닫기 (E 키 또는 안내 문구 터치) ----------
+  // ---------- 문 (E 키 또는 문 옆에 뜨는 반투명 안내를 누름) ----------
+  // 장식 건물: 문 열기 → (안쪽은 검음) → 집 들어가기 = 땅 밑 멀리 있는 방으로 이동. 방 안 출구: 밖으로 나가기.
+  // 여관 정문: 문 열기/닫기 (그냥 걸어 들어감). 여관 2층 복도의 방문: 장식 건물과 같은 방식.
+  let curRoom = -1;          // 지금 들어가 있는 방 (-1 = 땅 위)
+  let openedDoor = -1;       // 내가 열어 둔 문 (멀어지면 자동으로 닫음)
   const doorHint = document.createElement('div');
-  doorHint.style.cssText = 'position:fixed;left:50%;bottom:26%;transform:translateX(-50%);padding:8px 16px;border-radius:10px;' +
-    'background:rgba(20,20,30,.7);color:#fff;font:600 16px sans-serif;z-index:20;display:none;cursor:pointer;user-select:none';
+  doorHint.style.cssText = 'position:fixed;left:0;top:0;transform:translate(-50%,-50%);padding:7px 16px;border-radius:12px;' +
+    'background:rgba(15,15,25,.38);border:1px solid rgba(255,255,255,.4);color:rgba(255,255,255,.9);font:600 16px sans-serif;' +
+    'z-index:20;display:none;cursor:pointer;user-select:none;text-shadow:0 1px 3px rgba(0,0,0,.6);backdrop-filter:blur(2px)';
   document.body.appendChild(doorHint);
-  let hintDoor = -1;
-  function toggleDoor() {
-    const di = nearestDoor(me.x, me.z);
-    if (di < 0) return;
-    const open = !isDoorOpen(di);
-    setDoorOpen(di, open);
-    socket.emit('door', { i: di, open });
+  let hintAct = null;
+
+  function setDoor(i, open) { setDoorOpen(i, open); socket.emit('door', { i, open }); }
+  function teleportTo(x, y, z, yaw) {
+    me.x = x; me.y = y; me.z = z; vy = 0; grounded = true;
+    me.yaw = yaw; me.ry = yaw + Math.PI;           // 가는 방향을 바라봄
+    socket.emit('tp', { x, y, z });
   }
+  function enterRoom(r) {
+    setDoor(ROOMS[r].door, false);                 // 들어가면서 문은 닫힘
+    openedDoor = -1;
+    const e = roomEntry(r);
+    curRoom = r;
+    teleportTo(e.x, e.y, e.z, e.yaw);
+  }
+  function leaveRoom() {
+    const o = roomReturn(curRoom);
+    curRoom = -1;
+    teleportTo(o.x, o.y, o.z, o.yaw);
+  }
+  // 지금 할 수 있는 동작 (없으면 null). 안내 문구가 뜰 위치(x,y,z)도 같이 돌려줌
+  function currentAction() {
+    if (curRoom >= 0) {
+      const ex = roomExit(curRoom);
+      if (Math.hypot(me.x - ex.x, me.z - ex.z) < ex.reach) return { text: '밖으로 나가기', x: ex.x, y: ex.y + 1.6, z: ex.z, run: leaveRoom };
+      return null;
+    }
+    const di = nearestDoor(me.x, me.z, me.y);
+    if (di < 0) return null;
+    const d = doorInfo(di), open = isDoorOpen(di), pos = { x: d.x, y: d.y + 1.7, z: d.z };
+    if (d.kind === 'inn') return { text: open ? '문 닫기' : '문 열기', ...pos, run: () => setDoor(di, !open) };
+    if (!open) return { text: '문 열기', ...pos, run: () => { setDoor(di, true); openedDoor = di; } };
+    return { text: '집 들어가기', ...pos, run: () => enterRoom(d.room) };
+  }
+  const _hv = new THREE.Vector3();
   function updateDoorHint() {
-    const di = nearestDoor(me.x, me.z);
-    if (di === hintDoor && di >= 0) { doorHint.textContent = (touchMode ? '' : '[E] ') + (isDoorOpen(di) ? '문 닫기' : '문 열기'); return; }
-    hintDoor = di;
-    doorHint.style.display = di >= 0 ? 'block' : 'none';
-    if (di >= 0) doorHint.textContent = (touchMode ? '' : '[E] ') + (isDoorOpen(di) ? '문 닫기' : '문 열기');
+    if (openedDoor >= 0) {                         // 열어 둔 문에서 멀어지면 닫음
+      const d = doorInfo(openedDoor);
+      if (Math.hypot(me.x - d.x, me.z - d.z) > 9 || Math.abs(me.y - d.y) > 4) { setDoor(openedDoor, false); openedDoor = -1; }
+    }
+    hintAct = currentAction();
+    if (!hintAct) { doorHint.style.display = 'none'; return; }
+    camera.updateMatrixWorld();
+    _hv.set(hintAct.x, hintAct.y, hintAct.z).project(camera);   // 문 위치를 화면 좌표로
+    if (_hv.z > 1) { doorHint.style.display = 'none'; return; }
+    doorHint.style.display = 'block';
+    doorHint.style.left = (_hv.x * 0.5 + 0.5) * window.innerWidth + 'px';
+    doorHint.style.top = (-_hv.y * 0.5 + 0.5) * window.innerHeight + 'px';
+    const txt = (touchMode ? '' : '[E] ') + hintAct.text;
+    if (doorHint.textContent !== txt) doorHint.textContent = txt;
   }
-  doorHint.addEventListener('click', toggleDoor);
-  doorHint.addEventListener('touchstart', (e) => { e.preventDefault(); toggleDoor(); }, { passive: false });
+  function doDoorAction() { const a = hintAct || currentAction(); if (a) a.run(); }
+  doorHint.addEventListener('click', doDoorAction);
+  doorHint.addEventListener('touchstart', (e) => { e.preventDefault(); doDoorAction(); }, { passive: false });
 
   const keys = {};
   const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
@@ -1223,7 +1268,7 @@ function boot(socket, { id, seed }, nick, mode) {
 
     if (e.code === 'Space') jumpBuffer = 0.15;
     if (e.code === 'KeyF') setFast(!fast);
-    if (e.code === 'KeyE') toggleDoor();
+    if (e.code === 'KeyE') doDoorAction();
     if (e.code === 'KeyH') toggleHelp();
     if (e.code === 'BracketLeft') setMult(fastMult - 10);
     if (e.code === 'BracketRight') setMult(fastMult + 10);
@@ -1650,10 +1695,14 @@ function boot(socket, { id, seed }, nick, mode) {
         pz *= PLAY_RADIUS / pr;
       }
 
-      // 나무/큰 바위 충돌 (속도 배율 켠 개발용 이동 중에는 무시)
-      if (!fast) {
-        const cc = nature.collide(px, pz, 0.4 * CHAR_SCALE);
-        const bc = collideBuildings(cc.x, cc.z, 0.4 * CHAR_SCALE);   // 집은 통과 불가
+      // 충돌: 방 안은 벽/가구, 땅 위는 나무/큰 바위/건물 (속도 배율 켠 개발용 이동 중 땅 위에서는 무시)
+      const CR = 0.4 * CHAR_SCALE;
+      if (curRoom >= 0) {
+        const rc = collideRoom(curRoom, px, pz, CR);
+        px = rc.x; pz = rc.z;
+      } else if (!fast) {
+        const cc = nature.collide(px, pz, CR);
+        const bc = collideBuildings(cc.x, cc.z, CR, me.y);
         px = bc.x; pz = bc.z;
       }
 
@@ -1676,7 +1725,13 @@ function boot(socket, { id, seed }, nick, mode) {
     if (keys.Space || jumpHeld) jumpBuffer = Math.max(jumpBuffer, 0.1);
     jumpBuffer = Math.max(0, jumpBuffer - dt);
 
-    const ground = Math.max(T.height(me.x, me.z), WATER_LEVEL - 0.8);
+    // 서 있는 바닥: 방 안 = 방 바닥, 여관 안 = 1층/계단/2층, 그 밖 = 땅
+    let ground;
+    if (curRoom >= 0) ground = roomFloorY(curRoom);
+    else {
+      const fl = innFloor(me.x, me.z, me.y);
+      ground = fl !== null ? fl : Math.max(T.height(me.x, me.z), WATER_LEVEL - 0.8);
+    }
     const stepTol = 0.6 + moved * 2.0;
 
     if (grounded) {
@@ -1703,8 +1758,7 @@ function boot(socket, { id, seed }, nick, mode) {
       }
     }
 
-    const inHouse = updateHouses(dt, me.x, me.z);   // 문 열림 애니메이션 + 실내 조명
-    updateDoorHint();
+    const inHouse = updateHouses(dt, me.x, me.y, me.z, curRoom);   // 문 열림 애니메이션 + 방 보이기 + 실내 조명
     myAvatar.position.set(me.x, me.y, me.z);
     myAvatar.rotation.y = me.ry;
     animateHumanoid(myAvatar, dt, moved / Math.max(dt, 1e-4), grounded, vy);
@@ -1725,11 +1779,15 @@ function boot(socket, { id, seed }, nick, mode) {
       T.height(cx, cz) + 1.5 * CHAR_SCALE
     );
 
-    if (inHouse >= 0) {   // 집 안에서는 카메라가 벽/천장 밖으로 나가지 않게 가둠
+    if (curRoom >= 0) {   // 방 안/여관 안에서는 카메라가 벽/천장 밖으로 나가지 않게 가둠
+      const cc = clampCameraRoom(curRoom, cx, cy, cz);
+      camera.position.set(cc.x, cc.y, cc.z);
+    } else if (inHouse >= 0) {
       const cc = clampCameraInRoom(inHouse, cx, cy, cz, me.y);
       camera.position.set(cc.x, cc.y, cc.z);
     } else camera.position.set(cx, cy, cz);
     camera.lookAt(tx, me.y + 1.5 * CHAR_SCALE, tz);
+    updateDoorHint();   // 문 옆에 뜨는 반투명 안내 (카메라 위치가 정해진 뒤에 화면 좌표로 바꿈)
 
     // 물: 격자에 맞춰 움직여서 파도가 떨리지 않게 하고, 시간을 흘려보냄 (용암도 같은 시간 사용)
     water.position.x = Math.round(me.x / WATER_STEP) * WATER_STEP;
@@ -1747,6 +1805,11 @@ function boot(socket, { id, seed }, nick, mode) {
 
     // 다른 플레이어 위치 보간
     for (const remote of remotes.values()) {
+      // 땅 밑 방에 있는 사람은 땅 위에서 보이면 안 됨 (높이 차이로 판단). 방 출입(순간이동)은 미끄러지지 않고 바로 이동
+      remote.g.visible = Math.abs(remote.t.y - me.y) < 60;
+      if (Math.hypot(remote.t.x - remote.g.position.x, remote.t.z - remote.g.position.z) + Math.abs(remote.t.y - remote.g.position.y) > 25) {
+        remote.g.position.set(remote.t.x, remote.t.y, remote.t.z);
+      }
       const k = 1 - Math.exp(-12 * dt);
       const ox = remote.g.position.x;
       const oy = remote.g.position.y;
