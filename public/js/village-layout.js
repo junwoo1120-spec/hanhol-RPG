@@ -1,6 +1,11 @@
 import { VILLAGE } from './terrain.js';
 
-// 마을 건물 배치 + 충돌 (THREE 의존 없음 → 서버/테스트에서도 import 가능)
+// 마을 건물 배치 + 집 안(방) + 문 + 충돌 (THREE 의존 없음 → 서버/테스트에서도 import 가능)
+//
+// ■ 구조
+//  - 마을 집(여관 제외)은 겉모습만 있는 장식 건물. 문을 열면 안쪽은 검은색이고, "집 들어가기"를 누르면
+//    땅 밑 멀리 있는 방(ROOMS)으로 순간이동한다. 방 안 출구에서 "밖으로 나가기"를 누르면 문 앞으로 돌아온다.
+//  - 여관 1층은 진짜 실내(문을 열고 걸어 들어감) + 계단 + 2층 복도. 복도에 방문이 여러 개 있고, 각 방문은 위와 같은 방식의 방으로 이동.
 //
 // 건물 로컬 좌표: x = 오른쪽, z = 앞쪽(문이 있는 쪽). 건물은 항상 마을 중앙(광장)을 바라보게 놓인다.
 // 시작 지점(0,0)은 광장 한가운데이고, 시작 시 -z 방향을 보고 있으므로 "뒤편" = +z 쪽.
@@ -9,7 +14,7 @@ const TAU = Math.PI * 2;
 export const INN_DIST = 47;          // 여관: 시작 지점에서 +z(뒤편)로 47칸
 export const LAYOUT_RADIUS = 135;    // 이 밖에는 건물이 없음 (충돌 검사 빠른 탈출용)
 
-// 건물 종류별 충돌 상자 (로컬 좌표, 크기는 w x d)
+// 건물 종류별 겉모습 충돌 상자 (로컬 좌표, 크기는 w x d)
 const FOOT = {
   A: [{ x: 0, z: 0, w: 9.8, d: 8.8 }],      // 튜더식 2층집 (붉은 지붕)
   B: [{ x: 0, z: 0, w: 7.4, d: 7.4 }],      // 휘어진 지붕의 탑
@@ -22,21 +27,31 @@ const FOOT = {
   ],
 };
 
-// ---------- 집 안쪽 (1층만 들어갈 수 있음) ----------
-// w, d = 벽 중심선 기준 방 크기, h = 1층 높이(천장), dw/dh = 문 너비/높이. 문은 항상 앞쪽(+z) 벽 가운데.
+
+// ---------- 방 크기 ----------
+// w, d = 벽 중심선 기준 방 크기, h = 천장 높이, dw/dh = 문 너비/높이. 문은 항상 앞쪽(+z) 벽 가운데.
 export const ROOM = {
   A: { w: 8.4, d: 7.4, h: 3.8, dw: 1.7, dh: 2.9 },
   B: { w: 6.4, d: 6.4, h: 4.0, dw: 1.7, dh: 2.9 },
   C: { w: 11.6, d: 8.8, h: 4.2, dw: 1.8, dh: 2.9 },
   D: { w: 7.8, d: 6.8, h: 3.6, dw: 1.6, dh: 2.8 },
   INN: { w: 30, d: 18, h: 5.0, dw: 3.0, dh: 3.8 },
+  GUEST: { w: 8.0, d: 6.4, h: 3.6, dw: 1.6, dh: 2.8 },   // 여관 2층 객실
 };
 const WALL_T = 0.3;            // 벽 충돌 반두께
-const FLOOR_Y = 0.05;          // 바닥 윗면 높이 (땅 기준)
-export { FLOOR_Y };
+export const FLOOR_Y = 0.05;   // 바닥 윗면 높이 (땅 기준)
+export const ROOM_Y = -400;    // 집 안 공간(방)은 땅 밑 이 높이에 있음 → 땅 위에서는 안 보임
 
-// 가구 배치: 집 중심 기준 (x 오른쪽, z 앞쪽=문 쪽). ry = 회전, 기본 앞면은 +z. solid=false 면 통과 가능.
-// w,d = 회전 전 바닥 크기. 의자는 앉는 사람이 +z 쪽을 바라봄.
+// 여관 2층: 복도 + 방문들. 계단은 1층 오른쪽(+x) 벽을 따라 올라감 (여관 로컬 좌표)
+export const INN2 = {
+  floorY: 5.05,                       // 2층 바닥 윗면 (땅 기준)
+  h: 4.0,                             // 2층 층고
+  corr: 2.0,                          // 복도 반폭 (칸막이 벽 중심선 z = ±2)
+  stairs: { x0: 12.0, x1: 14.75, zb: 7.0, zt: 2.0, n: 14 },
+  doorX: [-11.0, -5.8, -0.6, 4.6],    // 복도 양쪽 방문 위치
+  doorW: 1.6, doorH: 2.8,
+};
+
 const PI = Math.PI;
 const NS = false;   // not solid
 export const INTERIOR = {
@@ -152,10 +167,7 @@ export const INTERIOR = {
     // 벽가 가구
     { k: 'wardrobe', x: -14.35, z: 1.5, ry: PI / 2, w: 2.4, d: 0.8 },
     { k: 'chest', x: -14.3, z: 5.5, ry: PI / 2, w: 1.2, d: 0.7 },
-    { k: 'shelf', x: 14.5, z: 3.0, ry: -PI / 2, w: 3.0, d: 0.5 },
-    { k: 'shelf', x: 14.5, z: 6.4, ry: -PI / 2, w: 3.0, d: 0.5 },
     { k: 'lamp', x: -14.1, z: 8.1, w: 0.5, d: 0.5 },
-    { k: 'lamp', x: 14.1, z: 8.1, w: 0.5, d: 0.5 },
     // 조명
     { k: 'chandelier', x: -3.5, z: 1.4, solid: NS },
     { k: 'chandelier', x: 4.8, z: 2.4, solid: NS },
@@ -169,61 +181,93 @@ export const INTERIOR = {
     { k: 'sconce', x: 14.73, z: -1.0, ry: -PI / 2, solid: NS },
     { k: 'sconce', x: -14.73, z: 4.0, ry: PI / 2, solid: NS },
   ],
+  GUEST: [
+    { k: 'bed', x: 2.55, z: -1.45, w: 1.7, d: 3.0, cloth: 'clothB' },
+    { k: 'stand', x: 1.0, z: -2.65, w: 0.55, d: 0.55 },
+    { k: 'rug', x: 0, z: 0.5, w: 3.0, d: 2.4, solid: NS },
+    { k: 'table', x: -2.4, z: 0.1, w: 1.4, d: 0.9 },
+    { k: 'chair', x: -2.4, z: 1.1, ry: PI, w: 0.55, d: 0.55 },
+    { k: 'wardrobe', x: -3.35, z: -1.9, ry: PI / 2, w: 2.0, d: 0.8 },
+    { k: 'lamp', x: 3.3, z: 2.4, w: 0.5, d: 0.5 },
+    { k: 'chandelier', x: 0, z: 0.4, solid: NS },
+    { k: 'sconce', x: -1.8, z: 2.93, ry: PI, solid: NS },
+  ],
 };
 
+
 export const HOUSES = [];   // { type, x, z, rot, k, seed, roof }
-const OBBS = [];            // 충돌 상자 (월드 좌표)
+const OBBS = [];            // 겉모습 전체 상자 (자연 오브젝트 비우기용)
+export const DOORS = [];    // { id, kind: 'house'|'inn'|'room', house, x, z, y, nx, nz, reach, room }
+export const ROOMS = [];    // { id, door, type, x, y, z, R, windows, cols }
+const HCOLS = [];           // 집별 충돌 상자
+const HBOUND = [];          // 집별 대략적인 범위 { x, z, r }
+const DOOR_OPEN = [];       // 문별 열림 상태
+
+// 여관의 탑/별관은 들어갈 수 없는 덩어리 (본관 벽 바깥쪽에 맞춰 줄여 둠)
+const SOLID_EXTRA = { INN: [{ x: -19.1, z: 4.6, w: 7.2, d: 9 }, { x: 19.75, z: 4.7, w: 8.5, d: 8.8 }] };
 
 function place(type, x, z, k, seed, roof, yaw = 0) {
   // 로컬 +z 가 (sinθ, cosθ) 를 향함 → 기본은 광장 쪽을 보고, yaw 만큼 살짝 틀어서 자연스럽게
   const rot = Math.atan2(VILLAGE.x - x, VILLAGE.z - z) + yaw;
   HOUSES.push({ type, x, z, rot, k, seed, roof });
+  const i = HOUSES.length - 1;
   const c = Math.cos(rot), s = Math.sin(rot);
   for (const f of FOOT[type]) {
     OBBS.push({
-      cx: x + (f.x * c + f.z * s) * k,
-      cz: z + (-f.x * s + f.z * c) * k,
+      cx: x + (f.x * c + f.z * s) * k, cz: z + (-f.x * s + f.z * c) * k,
       hw: (f.w * k) / 2, hd: (f.d * k) / 2, c, s,
     });
   }
-  buildColliders(HOUSES.length - 1);
+  buildColliders(i);
+  const R = ROOM[type];
+  DOORS.push({
+    id: DOORS.length, kind: type === 'INN' ? 'inn' : 'house', house: i,
+    x: x + Math.sin(rot) * (R.d / 2) * k, z: z + Math.cos(rot) * (R.d / 2) * k, y: VILLAGE.h,
+    nx: Math.sin(rot), nz: Math.cos(rot), reach: type === 'INN' ? 4.8 : 3.3, room: -1,
+  });
+  DOOR_OPEN[DOORS.length - 1] = false;
 }
 
-// ---------- 충돌 상자 (벽 + 문 + 가구) ----------
-// 집은 속이 빈 상자: 사방이 벽이고 앞벽 가운데만 문 구멍. 문이 닫혀 있으면 구멍도 막힘.
-const HCOLS = [];     // 집별 충돌 상자 목록
-const HBOUND = [];    // 집별 대략적인 범위 { x, z, r }
-const DOOR_OPEN = []; // 집별 문 열림 상태
-// 여관의 탑/별관은 들어갈 수 없는 덩어리 (본관 벽 바깥쪽에 맞춰 줄여 둠)
-const SOLID_EXTRA = { INN: [{ x: -19.1, z: 4.6, w: 7.2, d: 9 }, { x: 19.75, z: 4.7, w: 8.5, d: 8.8 }] };
+// ---------- 충돌 상자 ----------
+// lv: -1 = 모든 층, 0 = 1층에서만, 1 = 2층에서만 (여관)
+function boxFor(h, lx, lz, w, d, yaw = 0, lv = -1, door = -1) {
+  const k = h.k, c0 = Math.cos(h.rot), s0 = Math.sin(h.rot), th = h.rot + yaw;
+  return {
+    cx: h.x + (lx * c0 + lz * s0) * k, cz: h.z + (-lx * s0 + lz * c0) * k,
+    hw: (w * k) / 2, hd: (d * k) / 2, c: Math.cos(th), s: Math.sin(th), lv, door,
+  };
+}
 
 function buildColliders(i) {
-  const h = HOUSES[i], R = ROOM[h.type], k = h.k;
-  const c0 = Math.cos(h.rot), s0 = Math.sin(h.rot), list = [];
-  const add = (lx, lz, w, d, yaw = 0, door = -1) => {
-    const th = h.rot + yaw;
-    list.push({
-      cx: h.x + (lx * c0 + lz * s0) * k, cz: h.z + (-lx * s0 + lz * c0) * k,
-      hw: (w * k) / 2, hd: (d * k) / 2, c: Math.cos(th), s: Math.sin(th), door,
-    });
-  };
-  const W = R.w, D = R.d, DW = R.dw, T = WALL_T * 2;
-  add(0, -D / 2, W + T, T);                                         // 뒷벽
-  add(-W / 2, 0, T, D + T); add(W / 2, 0, T, D + T);                // 옆벽
-  const x0 = -W / 2 - WALL_T, x1 = -DW / 2;                         // 앞벽: 문 구멍 양쪽
-  add((x0 + x1) / 2, D / 2, x1 - x0, T); add(-(x0 + x1) / 2, D / 2, x1 - x0, T);
-  add(0, D / 2, DW + 0.1, T * 0.8, 0, i);                           // 문(닫힘) - 열리면 무시
-  for (const e of SOLID_EXTRA[h.type] || []) add(e.x, e.z, e.w, e.d);
-  for (const it of INTERIOR[h.type]) {
-    if (it.solid === false) continue;
-    const q = it.k === 'chair' || it.k === 'stool' ? 0.1 : 0;      // 의자는 살짝 작게 (좁은 틈 통과)
-    add(it.x, it.z, it.w - q, it.d - q, it.ry || 0);
+  const h = HOUSES[i], R = ROOM[h.type], list = [];
+  if (h.type !== 'INN') {
+    // 장식 건물: 겉모습 전체가 단단한 덩어리
+    for (const f of FOOT[h.type]) list.push(boxFor(h, f.x, f.z, f.w, f.d));
+  } else {
+    // 여관: 속이 빈 상자 (앞벽 가운데만 문 구멍, 문이 닫혀 있으면 구멍도 막힘)
+    const W = R.w, D = R.d, DW = R.dw, T = WALL_T * 2;
+    list.push(boxFor(h, 0, -D / 2, W + T, T));
+    list.push(boxFor(h, -W / 2, 0, T, D + T), boxFor(h, W / 2, 0, T, D + T));
+    const x0 = -W / 2 - WALL_T, x1 = -DW / 2;
+    list.push(boxFor(h, (x0 + x1) / 2, D / 2, x1 - x0, T), boxFor(h, -(x0 + x1) / 2, D / 2, x1 - x0, T));
+    list.push(boxFor(h, 0, D / 2, DW + 0.1, T * 0.8, 0, -1, 0));    // 문(닫힘) - 열리면 무시. 문 번호 0
+    for (const e of SOLID_EXTRA.INN) list.push(boxFor(h, e.x, e.z, e.w, e.d));
+    for (const it of INTERIOR.INN) {                                // 1층 가구 (1층에서만)
+      if (it.solid === false) continue;
+      const q = it.k === 'chair' || it.k === 'stool' ? 0.1 : 0;
+      list.push(boxFor(h, it.x, it.z, it.w - q, it.d - q, it.ry || 0, 0));
+    }
+    // 계단: 서쪽 난간(모든 층), 계단 위쪽 아래의 막힌 벽(1층), 2층 칸막이 벽(2층)
+    const S = INN2.stairs, C = INN2.corr;
+    list.push(boxFor(h, S.x0, (C + S.zb) / 2, 0.4, S.zb - C));
+    list.push(boxFor(h, (S.x0 + S.x1) / 2, C, S.x1 - S.x0, 0.6, 0, 0));
+    list.push(boxFor(h, 0, -C, W - 0.5, 0.6, 0, 1));
+    list.push(boxFor(h, (-W / 2 + 0.25 + S.x0) / 2, C, S.x0 + W / 2 - 0.25, 0.6, 0, 1));
   }
   HCOLS[i] = list;
   let r = 0;
   for (const o of list) r = Math.max(r, Math.hypot(o.cx - h.x, o.cz - h.z) + Math.hypot(o.hw, o.hd));
   HBOUND[i] = { x: h.x, z: h.z, r };
-  DOOR_OPEN[i] = false;
 }
 
 const VX = VILLAGE.x, VZ = VILLAGE.z;
@@ -257,14 +301,173 @@ const SPOTS = [
 ];
 SPOTS.forEach(([t, x, z, k, roof, yaw], i) => place(t, VX + x, VZ + z, k, 200 + i, roof, yaw));
 
+
+// ---------- 여관 2층 복도 방문 ----------
+{
+  const h = HOUSES[0], c = Math.cos(h.rot), s = Math.sin(h.rot);
+  for (const side of [-1, 1]) for (const dx of INN2.doorX) {
+    const lz = side * INN2.corr, nlz = -side;               // 북쪽 벽(-z) 문은 +z(복도) 쪽을 봄, 남쪽 벽(+z) 문은 -z 쪽을 봄
+    DOORS.push({
+      id: DOORS.length, kind: 'room', house: 0,
+      x: h.x + (dx * c + lz * s) * h.k, z: h.z + (-dx * s + lz * c) * h.k, y: VILLAGE.h + INN2.floorY,
+      nx: nlz * s, nz: nlz * c, reach: 2.8, room: -1, lx: dx, lz, face: nlz,
+    });
+    DOOR_OPEN[DOORS.length - 1] = false;
+  }
+}
+
+// ---------- 방(집 안 공간) ----------
+// 장식 건물/여관 객실 문 하나당 방 하나. 마을 땅 밑(ROOM_Y)에 격자로 늘어놓음. 방끼리는 45칸 간격.
+const TALL = new Set(['shelf', 'wardrobe', 'fireplace', 'backbar', 'stove']);
+function itemRect(it) {
+  const a = it.ry || 0, c = Math.cos(a), s = Math.sin(a), w = it.w || 0.5, d = it.d || 0.5;
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+  for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const x = it.x + u * (w / 2) * c + v * (d / 2) * s, z = it.z - u * (w / 2) * s + v * (d / 2) * c;
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+  }
+  return { x0, x1, z0, z1 };
+}
+// 창문 위치 자동 배치: 키 큰 가구/촛대와 겹치지 않는 곳에만. t = 벽을 따라간 방 좌표(b/f 벽은 x, l/r 벽은 z)
+function genWindows(type) {
+  const R = ROOM[type], items = INTERIOR[type], out = [];
+  const rects = items.filter(it => TALL.has(it.k)).map(it => ({ ...itemRect(it), near: 1.7 }))
+    .concat(items.filter(it => it.k === 'sconce').map(it => ({ ...itemRect({ ...it, w: 1.4, d: 0.3 }), near: 0.5 })));
+  const walls = [
+    { id: 'b', L: R.w, dist: r => r.z0 + R.d / 2, lo: r => r.x0, hi: r => r.x1 },
+    { id: 'f', L: R.w, dist: r => R.d / 2 - r.z1, lo: r => r.x0, hi: r => r.x1 },
+    { id: 'l', L: R.d, dist: r => r.x0 + R.w / 2, lo: r => r.z0, hi: r => r.z1 },
+    { id: 'r', L: R.d, dist: r => R.w / 2 - r.x1, lo: r => r.z0, hi: r => r.z1 },
+  ];
+  const h = Math.max(1.2, Math.min(2.2, R.h - 2.5));
+  for (const w of walls) {
+    const L = w.L, ts = L >= 9 ? [-0.3 * L, 0, 0.3 * L] : L >= 6 ? [-0.22 * L, 0.22 * L] : [0];
+    for (const t of ts) {
+      if (w.id === 'f' && Math.abs(t) < R.dw / 2 + 1.5) continue;
+      if (rects.some(r => w.dist(r) < r.near && w.lo(r) < t + 0.95 && w.hi(r) > t - 0.95)) continue;
+      out.push({ wall: w.id, t, v: 1.25, w: 1.3, h, kind: type === 'C' || type === 'INN' ? 's' : 'g' });
+    }
+  }
+  if (!out.length) {   // 책장으로 벽이 꽉 찬 방은 문 옆 앞벽에라도 창 하나
+    for (const sgn of [-1, 1]) {
+      const t = sgn * (R.dw / 2 + 1.1);
+      if (rects.some(r => R.d / 2 - r.z1 < Math.min(r.near, 0.7) && r.x0 < t + 0.95 && r.x1 > t - 0.95)) continue;
+      out.push({ wall: 'f', t, v: 1.25, w: 1.3, h, kind: type === 'C' || type === 'INN' ? 's' : 'g' });
+      break;
+    }
+  }
+  return out;
+}
+
+function buildRoomCols(m) {
+  const R = m.R, W = R.w, D = R.d, T = WALL_T * 2, list = [];
+  const add = (lx, lz, w, d, yaw = 0) => list.push({ cx: m.x + lx, cz: m.z + lz, hw: w / 2, hd: d / 2, c: Math.cos(yaw), s: Math.sin(yaw), lv: -1, door: -1 });
+  add(0, -D / 2, W + T, T); add(0, D / 2, W + T, T); add(-W / 2, 0, T, D + T); add(W / 2, 0, T, D + T);
+  for (const it of INTERIOR[m.type]) {
+    if (it.solid === false) continue;
+    const q = it.k === 'chair' || it.k === 'stool' ? 0.1 : 0;
+    add(it.x, it.z, it.w - q, it.d - q, it.ry || 0);
+  }
+  m.cols = list;
+}
+
+for (const d of DOORS) {
+  if (d.kind === 'inn') continue;
+  const type = d.kind === 'house' ? HOUSES[d.house].type : 'GUEST';
+  const r = ROOMS.length, col = r % 6, row = Math.floor(r / 6);
+  const m = { id: r, door: d.id, type, x: VX - 112 + col * 45, y: ROOM_Y, z: VZ - 70 + row * 45, R: ROOM[type], windows: genWindows(type), cols: [] };
+  buildRoomCols(m);
+  ROOMS.push(m);
+  d.room = r;
+}
+
 export const BUILDING_BOXES = OBBS;   // 테스트용
 
-// 월드 좌표 (x,z)에서 상자까지의 가장 가까운 점 (로컬 좌표) 계산
+// ---------- 문 ----------
+export function isDoorOpen(i) { return !!DOOR_OPEN[i]; }
+export function setDoorOpen(i, open) { if (Number.isInteger(i) && i >= 0 && i < DOORS.length) DOOR_OPEN[i] = !!open; }
+export function openDoorList() { const out = []; DOOR_OPEN.forEach((o, i) => { if (o) out.push(i); }); return out; }
+export function doorInfo(i) { return DOORS[i]; }
+
+// 플레이어(x,z,높이 y) 가까이에 있는 문 번호 (없으면 -1). 다른 층 문은 무시
+export function nearestDoor(x, z, y) {
+  let best = -1, bd = 1e9;
+  for (const d of DOORS) {
+    if (Math.abs(y - d.y) > 3.2) continue;
+    const dist = Math.hypot(x - d.x, z - d.z);
+    if (dist < d.reach && dist < bd) { bd = dist; best = d.id; }
+  }
+  return best;
+}
+
+// ---------- 방 안 (땅 밑 별도 공간) ----------
+export function roomEntry(r) { const m = ROOMS[r]; return { x: m.x, y: m.y + FLOOR_Y, z: m.z + m.R.d / 2 - 1.8, yaw: 0 }; }
+export function roomExit(r) { const m = ROOMS[r]; return { x: m.x, y: m.y + FLOOR_Y, z: m.z + m.R.d / 2 - 0.25, reach: 3.2 }; }
+export function roomReturn(r) {
+  const d = DOORS[ROOMS[r].door];
+  const out = d.kind === 'room' ? 1.35 : 2.2;      // 복도는 좁아서 맞은편 문과 헷갈리지 않게 가깝게
+  return { x: d.x + d.nx * out, y: d.y, z: d.z + d.nz * out, yaw: Math.atan2(-d.nx, -d.nz) };
+}
+export function roomFloorY(r) { return ROOMS[r].y + FLOOR_Y; }
+const _cr = { x: 0, y: 0, z: 0 };
+export function clampCameraRoom(r, x, y, z) {
+  const m = ROOMS[r], R = m.R, pad = 0.45;
+  _cr.x = Math.max(m.x - (R.w / 2 - 0.25 - pad), Math.min(m.x + (R.w / 2 - 0.25 - pad), x));
+  _cr.z = Math.max(m.z - (R.d / 2 - 0.25 - pad), Math.min(m.z + (R.d / 2 - 0.25 - pad), z));
+  _cr.y = Math.max(m.y + FLOOR_Y + 0.5, Math.min(y, m.y + R.h - 0.8));
+  return _cr;
+}
+export function roomLightPos(r) { const m = ROOMS[r]; return { x: m.x, y: m.y + m.R.h - 1.2, z: m.z }; }
+
+// ---------- 여관 (진짜 실내: 1층 + 계단 + 2층 복도) ----------
+function toLocal(i, x, z) {
+  const h = HOUSES[i], dx = x - h.x, dz = z - h.z, c = Math.cos(h.rot), s = Math.sin(h.rot);
+  return [(dx * c - dz * s) / h.k, (dx * s + dz * c) / h.k];
+}
+function fromLocal(i, lx, lz) {
+  const h = HOUSES[i], c = Math.cos(h.rot), s = Math.sin(h.rot);
+  return [h.x + (lx * c + lz * s) * h.k, h.z + (-lx * s + lz * c) * h.k];
+}
+// (x,z) 가 여관 안이면 집 번호(0), 아니면 -1
+export function houseAt(x, z) {
+  const b = HBOUND[0];
+  if ((x - b.x) ** 2 + (z - b.z) ** 2 > b.r * b.r) return -1;
+  const R = ROOM.INN, [lx, lz] = toLocal(0, x, z);
+  return Math.abs(lx) < R.w / 2 - 0.15 && Math.abs(lz) < R.d / 2 - 0.15 ? 0 : -1;
+}
+// 여관 안에서 서 있는 바닥 높이 (계단은 비탈, 복도는 2층). 여관 밖이면 null
+export function innFloor(x, z, y) {
+  if (houseAt(x, z) < 0) return null;
+  const [lx, lz] = toLocal(0, x, z), S = INN2.stairs, base = VILLAGE.h, rel = y - base;
+  if (lx > S.x0 && lz > S.zt && lz < S.zb) {
+    const t = Math.max(0, Math.min(1, (S.zb - lz) / (S.zb - S.zt)));
+    return base + FLOOR_Y + (INN2.floorY - FLOOR_Y) * t;
+  }
+  if (Math.abs(lz) < INN2.corr && rel > 3.0) return base + INN2.floorY;
+  return base + FLOOR_Y;
+}
+// 여관 안에서 카메라를 벽/천장 밖으로 못 나가게 가둔다 (2층이면 복도 안으로)
+const _cam = { x: 0, y: 0, z: 0 };
+export function clampCameraInRoom(i, x, y, z, groundY) {
+  const R = ROOM.INN, [lx, lz] = toLocal(i, x, z), pad = 0.45;
+  const up = groundY - VILLAGE.h > 3.0;
+  const mx = R.w / 2 - 0.25 - pad, mz = (up ? INN2.corr : R.d / 2) - 0.25 - pad;
+  const [wx, wz] = fromLocal(i, Math.max(-mx, Math.min(mx, lx)), Math.max(-mz, Math.min(mz, lz)));
+  _cam.x = wx; _cam.z = wz;
+  _cam.y = Math.max(groundY + 0.5, Math.min(y, groundY + (up ? INN2.h : R.h) - 0.8));
+  return _cam;
+}
+// 방 안 조명 위치 (여관: 층에 따라)
+export function roomLight(i, y = 0) {
+  const R = ROOM.INN, up = y - VILLAGE.h > 3.0;
+  return { x: HOUSES[i].x, z: HOUSES[i].z, y: up ? INN2.floorY + INN2.h - 1.2 : R.h - 1.2, big: true };
+}
+
+// ---------- 충돌 ----------
 function local(o, x, z) {
   const dx = x - o.cx, dz = z - o.cz;
   return [dx * o.c - dz * o.s, dx * o.s + dz * o.c];
 }
-
 // 건물에서 margin 안쪽이면 true (자연 오브젝트 배치에서 건물 자리를 비울 때 사용)
 export function nearBuilding(x, z, margin = 0) {
   if ((x - VX) ** 2 + (z - VZ) ** 2 > LAYOUT_RADIUS * LAYOUT_RADIUS) return false;
@@ -276,96 +479,50 @@ export function nearBuilding(x, z, margin = 0) {
   return false;
 }
 
-// ---------- 문 ----------
-export function isDoorOpen(i) { return !!DOOR_OPEN[i]; }
-export function setDoorOpen(i, open) { if (Number.isInteger(i) && i >= 0 && i < HOUSES.length) DOOR_OPEN[i] = !!open; }
-export function openDoorList() { const out = []; DOOR_OPEN.forEach((o, i) => { if (o) out.push(i); }); return out; }
-
-// 문 한가운데(벽 위) 월드 좌표 + 바깥쪽 방향
-export function doorInfo(i) {
-  const h = HOUSES[i], R = ROOM[h.type], sn = Math.sin(h.rot), cs = Math.cos(h.rot);
-  return { x: h.x + sn * (R.d / 2) * h.k, z: h.z + cs * (R.d / 2) * h.k, nx: sn, nz: cs, reach: h.type === 'INN' ? 4.8 : 3.3 };
-}
-// 플레이어 가까이에 있는 문 (없으면 -1)
-export function nearestDoor(x, z) {
-  let best = -1, bd = 1e9;
-  for (let i = 0; i < HOUSES.length; i++) {
-    const b = HBOUND[i];
-    if ((x - b.x) ** 2 + (z - b.z) ** 2 > (b.r + 6) ** 2) continue;
-    const d = doorInfo(i), dist = Math.hypot(x - d.x, z - d.z);
-    if (dist < d.reach && dist < bd) { bd = dist; best = i; }
-  }
-  return best;
-}
-
-// ---------- 방 안 판정 / 카메라 ----------
-function toLocal(i, x, z) {
-  const h = HOUSES[i], dx = x - h.x, dz = z - h.z, c = Math.cos(h.rot), s = Math.sin(h.rot);
-  return [(dx * c - dz * s) / h.k, (dx * s + dz * c) / h.k];
-}
-function fromLocal(i, lx, lz) {
-  const h = HOUSES[i], c = Math.cos(h.rot), s = Math.sin(h.rot);
-  return [h.x + (lx * c + lz * s) * h.k, h.z + (-lx * s + lz * c) * h.k];
-}
-// (x,z) 가 어느 집 방 안이면 그 집 번호, 아니면 -1
-export function houseAt(x, z) {
-  if ((x - VX) ** 2 + (z - VZ) ** 2 > LAYOUT_RADIUS * LAYOUT_RADIUS) return -1;
-  for (let i = 0; i < HOUSES.length; i++) {
-    const b = HBOUND[i];
-    if ((x - b.x) ** 2 + (z - b.z) ** 2 > b.r * b.r) continue;
-    const R = ROOM[HOUSES[i].type], [lx, lz] = toLocal(i, x, z);
-    if (Math.abs(lx) < R.w / 2 - 0.15 && Math.abs(lz) < R.d / 2 - 0.15) return i;
-  }
-  return -1;
-}
-// 방 안에 있을 때 카메라가 벽/천장 밖으로 나가지 않게 가둔다
-const _cam = { x: 0, y: 0, z: 0 };
-export function clampCameraInRoom(i, x, y, z, groundY) {
-  const h = HOUSES[i], R = ROOM[h.type], [lx, lz] = toLocal(i, x, z), pad = 0.45;
-  const mx = R.w / 2 - 0.25 - pad, mz = R.d / 2 - 0.25 - pad;
-  const [wx, wz] = fromLocal(i, Math.max(-mx, Math.min(mx, lx)), Math.max(-mz, Math.min(mz, lz)));
-  _cam.x = wx; _cam.z = wz;
-  _cam.y = Math.max(groundY + 0.5, Math.min(y, groundY + (R.h - 0.8) * h.k));
-  return _cam;
-}
-// 방 가운데 위쪽 (실내 조명 위치)
-export function roomLight(i) {
-  const h = HOUSES[i], R = ROOM[h.type];
-  return { x: h.x, z: h.z, y: (R.h - 1.2) * h.k, big: h.type === 'INN' };
-}
-
-// 반지름 pr 인 플레이어가 건물과 겹치면 밖으로 밀어낸다 (벽/가구를 따라 미끄러짐)
 const _out = { x: 0, z: 0 };
-export function collideBuildings(x, z, pr = 0.4) {
+// 상자 목록과 부딪히면 밖으로 밀어낸다 (벽/가구를 따라 미끄러짐)
+function pushOut(cols, pr, lvl) {
+  for (let pass = 0; pass < 3; pass++) {
+    let hit = false;
+    for (const o of cols) {
+      if (o.door >= 0 && DOOR_OPEN[o.door]) continue;
+      if (o.lv >= 0 && o.lv !== lvl) continue;
+      const [lx, lz] = local(o, _out.x, _out.z);
+      const qx = Math.max(-o.hw, Math.min(o.hw, lx)), qz = Math.max(-o.hd, Math.min(o.hd, lz));
+      const ex = lx - qx, ez = lz - qz, d2 = ex * ex + ez * ez;
+      if (d2 >= pr * pr) continue;
+      let nx, nz;
+      if (d2 > 1e-8) {
+        const d = Math.sqrt(d2);
+        nx = qx + (ex / d) * pr; nz = qz + (ez / d) * pr;
+      } else {                                   // 상자 안쪽 → 가까운 면으로 빼냄
+        const px = o.hw - Math.abs(lx), pz = o.hd - Math.abs(lz);
+        if (px < pz) { nx = Math.sign(lx || 1) * (o.hw + pr); nz = lz; }
+        else { nz = Math.sign(lz || 1) * (o.hd + pr); nx = lx; }
+      }
+      _out.x = o.cx + nx * o.c + nz * o.s;
+      _out.z = o.cz - nx * o.s + nz * o.c;
+      hit = true;
+    }
+    if (!hit) break;
+  }
+}
+
+// 땅 위: 반지름 pr 인 플레이어(높이 y)가 건물과 겹치면 밖으로 밀어낸다
+export function collideBuildings(x, z, pr = 0.4, y = VILLAGE.h) {
   _out.x = x; _out.z = z;
   if ((x - VX) ** 2 + (z - VZ) ** 2 > LAYOUT_RADIUS * LAYOUT_RADIUS) return _out;
+  const lvl = y - VILLAGE.h > 3.5 ? 1 : 0;
   for (let i = 0; i < HOUSES.length; i++) {
     const b = HBOUND[i];
     if ((x - b.x) ** 2 + (z - b.z) ** 2 > (b.r + pr + 1) ** 2) continue;
-    const cols = HCOLS[i];
-    for (let pass = 0; pass < 3; pass++) {
-      let hit = false;
-      for (const o of cols) {
-        if (o.door >= 0 && DOOR_OPEN[o.door]) continue;
-        const [lx, lz] = local(o, _out.x, _out.z);
-        const qx = Math.max(-o.hw, Math.min(o.hw, lx)), qz = Math.max(-o.hd, Math.min(o.hd, lz));
-        const ex = lx - qx, ez = lz - qz, d2 = ex * ex + ez * ez;
-        if (d2 >= pr * pr) continue;
-        let nx, nz;
-        if (d2 > 1e-8) {
-          const d = Math.sqrt(d2);
-          nx = qx + (ex / d) * pr; nz = qz + (ez / d) * pr;
-        } else {                                   // 상자 안쪽 → 가까운 면으로 빼냄
-          const px = o.hw - Math.abs(lx), pz = o.hd - Math.abs(lz);
-          if (px < pz) { nx = Math.sign(lx || 1) * (o.hw + pr); nz = lz; }
-          else { nz = Math.sign(lz || 1) * (o.hd + pr); nx = lx; }
-        }
-        _out.x = o.cx + nx * o.c + nz * o.s;
-        _out.z = o.cz - nx * o.s + nz * o.c;
-        hit = true;
-      }
-      if (!hit) break;
-    }
+    pushOut(HCOLS[i], pr, lvl);
   }
+  return _out;
+}
+// 방 안: 벽과 가구
+export function collideRoom(r, x, z, pr = 0.4) {
+  _out.x = x; _out.z = z;
+  pushOut(ROOMS[r].cols, pr, 0);
   return _out;
 }
