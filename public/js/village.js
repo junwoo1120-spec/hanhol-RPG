@@ -40,8 +40,6 @@ export function buildVillage(scene) {
          X + Math.cos(a2) * R, Z + Math.sin(a2) * R, 0.8);
   }
 
-  rect(X, Z, 36, 36, 0);                                   // 중앙 광장 (시작 지점)
-
   // 집터 표시 선은 이제 필요 없음: 실제 건물이 buildings.js / village-layout.js 에서 그 자리에 세워짐
 
   scene.add(group);
