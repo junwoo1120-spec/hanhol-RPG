@@ -51,7 +51,7 @@ io.on('connection', (socket) => {
   socket.on('tp', (d) => {
     const p = players.get(socket.id);
     if (!p || !d || ![d.x, d.y, d.z].every(Number.isFinite)) return;
-    if (Math.abs(d.x) > 5000 || Math.abs(d.z) > 5000 || d.y < -800 || d.y > 800) return;
+    if (Math.abs(d.x) > 5000 || Math.abs(d.z) > 5000 || d.y < -5000 || d.y > 800) return;
     Object.assign(p, { x: d.x, y: d.y, z: d.z, t: Date.now() });
   });
 
