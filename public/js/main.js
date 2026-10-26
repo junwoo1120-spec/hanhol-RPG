@@ -28,8 +28,8 @@ const FAST_MIN = 10;      // 속도 배율 최소
 const FAST_MAX = 100;     // 속도 배율 최대 (서버 한도도 100)
 const RES_HIGH = N;       // 평소 청크 해상도
 const RES_LOW = 8;        // 빠르게 이동할 때 청크 해상도
-const PITCH_LIMIT = Math.PI; // 위아래도 제한 없이 한 바퀴 (값은 -PI~PI로 감김)
-function wrapPitch(p) { return Math.atan2(Math.sin(p), Math.cos(p)); }
+const PITCH_LIMIT = 1.5; // 위아래 회전 한계 (이 이상 넘어가면 화면이 뒤집히므로 막음)
+function wrapPitch(p) { return Math.min(PITCH_LIMIT, Math.max(-PITCH_LIMIT, p)); }
 
 // 조작법 창에 표시할 내용 [키 목록, 설명]
 const HELP_KEYBOARD = [
@@ -1814,24 +1814,24 @@ function boot(socket, { id, seed }, nick, mode) {
 
     const ty = me.y + 1.5 * CHAR_SCALE;
     if (curRoom >= 0 || inHouse >= 0) {
-      // 방 안/여관 안: 벽에 위치만 눌러 붙이면 회전이 막힌 것처럼 보이므로,
-      // 캐릭터 쪽으로 카메라 거리를 줄여서 벽 안에 들어오게 함 (360도 회전 유지)
+      // 방 안/여관 안: 높이는 바닥/천장 안으로만 제한하고, 벽은 수평 거리만 줄여서 피함
+      // (거리를 통째로 줄이면 카메라가 머리 위로 박혀서 정수리만 보였음)
       const fit = (x, y, z) => curRoom >= 0 ? clampCameraRoom(curRoom, x, y, z) : clampCameraInRoom(inHouse, x, y, z, me.y);
+      const cy2 = fit(cx, cy, cz).y;
+      const ok = (x, z) => { const c = fit(x, cy2, z); return Math.abs(c.x - x) + Math.abs(c.z - z) < 1e-4; };
       let lo = 0, hi = 1;
-      const c1 = fit(cx, cy, cz);
-      if (Math.abs(c1.x - cx) + Math.abs(c1.y - cy) + Math.abs(c1.z - cz) < 1e-4) lo = 1;
+      if (ok(cx, cz)) lo = 1;
       else {
         for (let i = 0; i < 12; i++) {
           const m = (lo + hi) / 2;
-          const px = tx + (cx - tx) * m, py = ty + (cy - ty) * m, pz = tz + (cz - tz) * m;
-          const c = fit(px, py, pz);
-          if (Math.abs(c.x - px) + Math.abs(c.y - py) + Math.abs(c.z - pz) < 1e-4) lo = m; else hi = m;
+          if (ok(tx + (cx - tx) * m, tz + (cz - tz) * m)) lo = m; else hi = m;
         }
       }
-      camera.position.set(tx + (cx - tx) * lo, ty + (cy - ty) * lo, tz + (cz - tz) * lo);
+      lo = Math.max(lo, 0.3);   // 너무 가까워지면 최소 거리 유지 (남는 부분은 아래에서 벽 안으로 밀어 넣음)
+      const c = fit(tx + (cx - tx) * lo, cy2, tz + (cz - tz) * lo);
+      camera.position.set(c.x, c.y, c.z);
     } else camera.position.set(cx, cy, cz);
-    // 위아래로 한 바퀴 넘어가면 화면이 뒤집히지 않도록 up 벡터 반전
-    camera.up.set(0, Math.cos(me.pitch) >= 0 ? 1 : -1, 0);
+    camera.up.set(0, 1, 0);
     camera.lookAt(tx, ty, tz);
     updateDoorHint();   // 문 옆에 뜨는 반투명 안내 (카메라 위치가 정해진 뒤에 화면 좌표로 바꿈)
 
