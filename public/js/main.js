@@ -1084,7 +1084,7 @@ function boot(socket, { id, seed }, nick, mode) {
     e.preventDefault();
     toggleHelp();
   });
-  setHelp(!touchMode); // 키보드 모드는 처음에 열어둠
+  setHelp(false); // 조작법은 H를 눌러야 열림
 
   stack.append(panel, helpBtn, helpPanel);
   document.body.appendChild(stack);
@@ -1116,6 +1116,7 @@ function boot(socket, { id, seed }, nick, mode) {
 
   // ---------- 나침반 (위쪽 가운데) ----------
   const compass = document.createElement('div');
+  compass.className = 'rpg-compass';
   compass.style.cssText =
     'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:5;' +
     'width:min(' + (touchMode ? '420px,40vw' : '760px,56vw') + ');height:54px;overflow:hidden;border-radius:12px;' +
@@ -1639,35 +1640,44 @@ function boot(socket, { id, seed }, nick, mode) {
   ];
   const winStyle = document.createElement('style');
   winStyle.textContent = `
-.uiwin{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,#16141b 0%,#050407 80%);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#d8cdb4;user-select:none;-webkit-user-select:none}
-.uw-box{position:relative;box-sizing:border-box;width:min(940px,96vw);height:min(560px,92vh);display:flex;flex-direction:column;background:linear-gradient(#17151a,#0b0a0d);border:3px solid #5a4b3a;border-radius:6px;box-shadow:0 0 0 2px #050407,inset 0 0 0 1px #2e2820,0 10px 40px #000}
-.uw-head{flex:none;display:flex;align-items:center;height:64px;padding:0 54px 0 14px;border-bottom:2px solid #3d3428;background:linear-gradient(#1e1b20,#111014)}
-.uw-ico{width:44px;height:44px;margin-right:12px;object-fit:contain}
-.uw-title{flex:1;font-size:24px;letter-spacing:2px;color:#ece0c4;text-shadow:0 2px 0 #000}
-.uw-tabs{display:flex;gap:4px}
-.uw-tab{width:88px;height:52px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:#16141a;border:1px solid #2c2730;color:#a69b86;font-size:12px;cursor:pointer}
-.uw-tab img{width:26px;height:26px;object-fit:contain;pointer-events:none}
-.uw-tab.on{background:linear-gradient(#183049,#121821);border-color:#2f7fcf;color:#fff;box-shadow:0 0 10px rgba(58,150,255,.55),inset 0 -3px 0 #3aa0ff}
-.uw-x{position:absolute;right:8px;top:12px;width:36px;height:36px;font-size:22px;line-height:1;color:#cfc3a8;background:none;border:none;cursor:pointer}
-.uw-x:hover{color:#fff}
-.uw-main{flex:1;min-height:0;display:flex;gap:14px;padding:14px}
-.uw-left{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px}
-.uw-grid{flex:1;min-height:0;display:grid;gap:8px;padding:10px;background:#0d0c10;border:1px solid #2a2530;border-radius:4px}
-.uw-grid.g6{grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(4,1fr)}
-.uw-grid.g4{grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(3,1fr);background:none;border:none}
-.uw-slot{position:relative;box-sizing:border-box;background:#121116;border:2px solid #34302f;border-radius:3px;box-shadow:inset 0 0 8px #000;cursor:pointer;display:flex;align-items:center;justify-content:center}
-.uw-slot.sk::after{content:'\\2726';color:#2d2b33;font-size:26px}
-.uw-slot.sel{border-color:#3aa0ff;box-shadow:0 0 8px rgba(58,160,255,.6),inset 0 0 8px #000}
-.uw-foot{flex:none;height:34px;display:flex;align-items:center;padding:0 12px;background:#0d0c10;border:1px solid #2a2530;font-size:14px;color:#b7ad98}
-.uw-detail{flex:none;width:33%;min-width:140px;box-sizing:border-box;background:#0e0d11;border:2px solid #34302f;border-radius:4px;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;color:#8a8170;font-size:14px;line-height:1.7}
-.uw-eq{position:relative;flex:1;min-height:0;--s:min(13vh,64px)}
-.uw-eq .uw-slot{position:absolute;width:var(--s);height:var(--s);transform:translate(-50%,-50%);font-size:calc(var(--s) * .5);color:#5b5548}
-.uw-eq svg{position:absolute;inset:0;width:100%;height:100%;opacity:.55}
-.uw-tree{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
-.uw-tree svg{max-width:100%;max-height:100%}
-.uw-node{fill:#111015;stroke:#4a4034;stroke-width:3;cursor:pointer}
-.uw-node.sel{stroke:#3aa0ff}
-@media (max-height:420px){.uw-head{height:50px}.uw-tab{height:40px;width:70px;font-size:10px}.uw-tab img{width:18px;height:18px}.uw-ico{width:32px;height:32px}.uw-title{font-size:18px}.uw-main{padding:8px;gap:8px}}
+.uiwin{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.14);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#3a2814;user-select:none;-webkit-user-select:none}
+body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-open .tgroup,body.uw-open .rpg-status,body.uw-open .rpg-compass,body.uw-open #hud,body.uw-open .cross{display:none!important}
+.uw-wrap{position:relative;box-sizing:border-box;width:min(1000px,97vw);height:min(620px,92vh);padding-top:46px}
+.uw-tabs{position:absolute;left:26px;top:0;display:flex;gap:6px;z-index:3;align-items:flex-end}
+.uw-tab{box-sizing:border-box;display:flex;align-items:center;gap:8px;height:48px;padding:0 20px;border:2px solid #5a4126;border-bottom:none;border-radius:8px 8px 0 0;background:linear-gradient(#d2b98b,#b99a68);color:#3b2a16;font-size:16px;font-weight:700;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(255,235,190,.4),0 -2px 6px rgba(0,0,0,.35)}
+.uw-tab img{width:28px;height:28px;object-fit:contain;pointer-events:none;filter:sepia(.5) brightness(.85)}
+.uw-tab.on{height:58px;background:linear-gradient(#703829,#46221a);color:#f3e2ba;border-color:#2a140e}
+.uw-tab.on img{filter:none}
+.uw-book{position:relative;height:100%;box-sizing:border-box;display:flex;border:10px solid #3a2216;border-radius:10px;background:#2b1a10;box-shadow:0 0 0 2px #120a06,0 14px 40px rgba(0,0,0,.7),inset 0 0 0 2px #6b4a2a}
+.uw-cn{position:absolute;width:30px;height:30px;box-sizing:border-box;background:linear-gradient(135deg,#a89468,#5b4a30);border:2px solid #241608;border-radius:3px;z-index:4;pointer-events:none}
+.uw-cn.a{left:-14px;top:-14px}.uw-cn.b{right:-14px;top:-14px}.uw-cn.c{left:-14px;bottom:-14px}.uw-cn.d{right:-14px;bottom:-14px}
+.uw-page{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;padding:16px 24px 14px;background:radial-gradient(ellipse at 20% 12%,rgba(255,240,200,.38),transparent 55%),radial-gradient(ellipse at 85% 92%,rgba(120,80,30,.38),transparent 60%),linear-gradient(135deg,#dac28f,#c8a76e 55%,#b98f55);box-shadow:inset 0 0 40px rgba(90,55,20,.55)}
+.uw-page.l{border-radius:4px 0 0 4px}.uw-page.r{border-radius:0 4px 4px 0}
+.uw-page.l::after{content:'';position:absolute;right:0;top:0;bottom:0;width:28px;pointer-events:none;background:linear-gradient(90deg,transparent,rgba(50,28,10,.55))}
+.uw-page.r::before{content:'';position:absolute;left:0;top:0;bottom:0;width:28px;pointer-events:none;background:linear-gradient(270deg,transparent,rgba(50,28,10,.55))}
+.uw-ph{flex:none;display:flex;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid rgba(70,45,20,.5);font-size:22px;font-weight:700;color:#2e1d0e}
+.uw-dia{color:#6b4a2a;font-size:20px}
+.uw-grid{flex:1;min-height:0;display:grid;gap:8px;padding:10px;background:rgba(60,38,16,.16);border:2px solid rgba(70,45,20,.5);border-radius:4px}
+.uw-grid.g6{grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(5,1fr)}
+.uw-grid.g5{grid-template-columns:repeat(5,1fr);grid-template-rows:repeat(4,1fr)}
+.uw-slot{position:relative;box-sizing:border-box;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 40%,#3d2f21,#221810);border:3px solid #7a5d34;border-radius:5px;box-shadow:inset 0 0 10px #000,0 0 0 1px #1a1008;cursor:pointer;color:rgba(205,175,115,.2);font-size:26px}
+.uw-slot.sel{border-color:#ffd77a;box-shadow:0 0 10px rgba(255,200,90,.85),inset 0 0 10px #000}
+.uw-foot{flex:none;display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:6px;border-top:2px solid rgba(70,45,20,.45);font-size:16px;font-weight:700;color:#3a2814}
+.uw-foot img{width:22px;height:22px;object-fit:contain;filter:sepia(.6) brightness(.6)}
+.uw-detail{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:14px;margin-top:8px;border:2px solid rgba(70,45,20,.4);border-radius:4px;color:#5a4328;font-size:16px;line-height:1.8}
+.uw-orn{font-size:28px;color:rgba(90,60,28,.5)}
+.uw-eq{position:relative;flex:1;min-height:0;border:2px solid rgba(70,45,20,.45);border-radius:4px;--s:min(15vh,100px)}
+.uw-eq svg{position:absolute;inset:0;width:100%;height:100%}
+.uw-eq .uw-slot{position:absolute;width:var(--s);height:var(--s);transform:translate(-50%,-50%);font-size:calc(var(--s) * .5)}
+.uw-ic{font-style:normal;filter:grayscale(1) sepia(.7) brightness(1.1);opacity:.85}
+.uw-lb{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;white-space:nowrap;font-size:13px;font-weight:700;color:#3a2814}
+.uw-tree{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;border:2px solid rgba(70,45,20,.4);border-radius:4px}
+.uw-tree svg{height:100%;max-width:100%}
+.uw-node{fill:#2b1f14;stroke:#7a5d34;stroke-width:4;cursor:pointer}
+.uw-node.sel{stroke:#ffd77a}
+.uw-x{position:absolute;right:12px;top:8px;width:40px;height:40px;z-index:5;font-size:26px;line-height:1;color:#3a2814;background:none;border:none;cursor:pointer}
+.uw-x:hover{color:#000}
+@media (max-height:480px){.uw-wrap{padding-top:34px}.uw-tab{height:32px;padding:0 10px;font-size:12px;gap:4px}.uw-tab.on{height:40px}.uw-tab img{width:18px;height:18px}.uw-book{border-width:6px}.uw-page{padding:8px 14px}.uw-ph{font-size:15px;margin-bottom:6px}.uw-grid{gap:4px;padding:5px}.uw-slot{font-size:16px;border-width:2px}.uw-eq{--s:min(15vh,58px)}.uw-lb{font-size:10px}.uw-detail{font-size:12px}.uw-foot{font-size:12px;margin-top:4px}.uw-x{width:30px;height:30px;font-size:20px}}
 `;
   document.head.appendChild(winStyle);
   const winEl = document.createElement('div');
@@ -1675,45 +1685,44 @@ function boot(socket, { id, seed }, nick, mode) {
   document.body.appendChild(winEl);
   let winIdx = 0;
 
-  function winBody(i) {
-    const det = (txt) => '<div class="uw-detail"><div class="uw-dtxt">' + txt + '</div></div>';
-    if (i === 0) {
-      return '<div class="uw-left"><div class="uw-grid g6">' + '<div class="uw-slot"></div>'.repeat(24) +
-        '</div><div class="uw-foot">0 / 100</div></div>' + det('아이템을 선택하면<br>상세 정보가 표시됩니다.');
-    }
-    if (i === 1) {
-      const sl = (x, y, ch) => '<div class="uw-slot" style="left:' + x + '%;top:' + y + '%">' + ch + '</div>';
-      return '<div class="uw-eq">' +
-        '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><g fill="none" stroke="#2a2630" stroke-width="0.8"><circle cx="50" cy="16" r="6.5"/><path d="M38 28 Q50 24 62 28 L68 52 L64 60 L60 84 L54 84 L52 62 L50 62 L48 62 L46 84 L40 84 L36 60 L32 52 Z"/></g></svg>' +
-        sl(50, 11, '⛑') + sl(30, 29, '◖') + sl(70, 29, '◗') + sl(50, 45, '▣') +
-        sl(18, 47, '✋') + sl(82, 47, '✋') + sl(16, 77, '🗡') + sl(50, 85, '▟') +
-        sl(84, 71, '◯') + sl(84, 90, '◯') + '</div>' + det('장비를 선택하면<br>상세 정보가 표시됩니다.');
-    }
-    if (i === 2) {
-      return '<div class="uw-left"><div class="uw-grid g4">' + '<div class="uw-slot sk"></div>'.repeat(12) +
-        '</div></div>' + det('스킬을 선택하면<br>상세 정보가 표시됩니다.');
-    }
-    const N = [[170, 38], [92, 96], [248, 96], [60, 150], [282, 150], [74, 225], [266, 225], [130, 252], [210, 252], [170, 288]];
-    const L = [[0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7], [6, 8], [7, 9], [8, 9]];
-    const C = [170, 160];
-    let svg = '<svg viewBox="0 0 340 320" width="340" height="320"><g stroke="#3c352c" stroke-width="3" fill="none">';
-    for (const [a, b] of L) svg += '<line x1="' + N[a][0] + '" y1="' + N[a][1] + '" x2="' + N[b][0] + '" y2="' + N[b][1] + '"/>';
-    for (const k of [0, 1, 2, 7, 8]) svg += '<line x1="' + C[0] + '" y1="' + C[1] + '" x2="' + N[k][0] + '" y2="' + N[k][1] + '"/>';
+  const slotsHtml = (n) => '<div class="uw-slot">✦</div>'.repeat(n);
+  const pageHead = (t) => '<div class="uw-ph"><span class="uw-dia">◈</span>' + t + '</div>';
+  const detailPage = (txt) => '<div class="uw-page r"><div class="uw-detail"><div class="uw-orn">❖</div><div class="uw-dtxt">' + txt + '</div><div class="uw-orn">❖</div></div></div>';
+  const invPage = () => '<div class="uw-page l">' + pageHead('인벤토리') + '<div class="uw-grid g6">' + slotsHtml(30) +
+    '</div><div class="uw-foot"><img src="/ui/icon_bag.png" alt="">0 / 100</div></div>';
+  const eqPage = () => {
+    const sl = (x, y, ch, name) => '<div class="uw-slot" style="left:' + x + '%;top:' + y + '%"><i class="uw-ic">' + ch + '</i><span class="uw-lb">' + name + '</span></div>';
+    const sil = '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><circle cx="50" cy="50" r="40" fill="none" stroke="#6b4c2a" stroke-opacity=".45" stroke-width=".5" stroke-dasharray="1.2 1.6"/>' +
+      '<path d="M50 24 C44 24 41 29 41 34 C41 38 43 40 44 41 L34 46 C30 48 28 54 28 62 L28 70 L33 70 L34 60 L36 64 L36 80 L45 80 L46 66 L54 66 L55 80 L64 80 L64 64 L66 60 L67 70 L72 70 L72 62 C72 54 70 48 66 46 L56 41 C57 40 59 38 59 34 C59 29 56 24 50 24 Z" fill="#6b4c2a" fill-opacity=".5"/></svg>';
+    return '<div class="uw-page r">' + pageHead('장비') + '<div class="uw-eq">' + sil +
+      sl(50, 16, '⛑️', '투구') + sl(17, 50, '🛡️', '갑옷') + sl(83, 50, '🗡️', '무기') + sl(50, 80, '🥾', '신발') + '</div></div>';
+  };
+  const treePage = () => {
+    const N = [];
+    for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5; N.push([150 + 100 * Math.cos(a), 150 + 100 * Math.sin(a)]); }
+    let svg = '<svg viewBox="0 0 300 300"><g stroke="#6b4c2a" stroke-width="3" fill="none" stroke-opacity=".75"><circle cx="150" cy="150" r="100"/>';
+    for (const [x, y] of N) svg += '<line x1="150" y1="150" x2="' + x.toFixed(1) + '" y2="' + y.toFixed(1) + '"/>';
     svg += '</g>';
-    for (const [x, y] of N) svg += '<circle class="uw-node" cx="' + x + '" cy="' + y + '" r="18"/><path d="M' + (x - 6) + ' ' + y + 'h12M' + x + ' ' + (y - 6) + 'v12" stroke="#4a4034" stroke-width="2" pointer-events="none"/>';
-    svg += '<circle class="uw-node" cx="' + C[0] + '" cy="' + C[1] + '" r="32"/><image href="/ui/icon_trait.png" x="' + (C[0] - 20) + '" y="' + (C[1] - 20) + '" width="40" height="40" pointer-events="none"/></svg>';
-    return '<div class="uw-tree">' + svg + '</div>' + det('특성을 선택하면<br>상세 정보가 표시됩니다.');
+    for (const [x, y] of N) svg += '<circle class="uw-node" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="15"/>';
+    svg += '<circle class="uw-node" cx="150" cy="150" r="32"/><image href="/ui/icon_trait.png" x="128" y="128" width="44" height="44" pointer-events="none"/></svg>';
+    return '<div class="uw-page l">' + pageHead('특성') + '<div class="uw-tree">' + svg + '</div></div>';
+  };
+
+  function winBody(i) {
+    if (i === 0) return invPage() + detailPage('아이템을 선택하면<br>상세 정보가 표시됩니다.');
+    if (i === 1) return invPage() + eqPage();
+    if (i === 2) return '<div class="uw-page l">' + pageHead('스킬') + '<div class="uw-grid g5">' + slotsHtml(20) + '</div></div>' + detailPage('스킬을 선택하면<br>상세 정보가 표시됩니다.');
+    return treePage() + detailPage('특성을 선택하면<br>상세 정보가 표시됩니다.');
   }
 
   function renderWin() {
-    const [ic, nm] = WIN_TABS[winIdx];
     let tabs = '';
     WIN_TABS.forEach(([ti, tn], k) => {
       tabs += '<div class="uw-tab' + (k === winIdx ? ' on' : '') + '" data-tab="' + k + '"><img src="' + ti + '" alt="">' + tn + '</div>';
     });
-    winEl.innerHTML = '<div class="uw-box"><div class="uw-head"><img class="uw-ico" src="' + ic + '" alt="">' +
-      '<div class="uw-title">' + nm + '</div><div class="uw-tabs">' + tabs + '</div></div>' +
-      '<button class="uw-x" data-close="1">✕</button><div class="uw-main">' + winBody(winIdx) + '</div></div>';
+    winEl.innerHTML = '<div class="uw-wrap"><div class="uw-tabs">' + tabs + '</div><div class="uw-book">' +
+      '<i class="uw-cn a"></i><i class="uw-cn b"></i><i class="uw-cn c"></i><i class="uw-cn d"></i>' +
+      winBody(winIdx) + '<button class="uw-x" data-close="1">✕</button></div></div>';
   }
 
   winEl.addEventListener('click', (e) => {
@@ -1738,6 +1747,7 @@ function boot(socket, { id, seed }, nick, mode) {
     winEl.style.display = 'flex';
     if (!uiOpen) {
       uiOpen = true;
+      document.body.classList.add('uw-open');
       for (const k in keys) keys[k] = false;
       jumpHeld = false;
       try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
@@ -1745,6 +1755,7 @@ function boot(socket, { id, seed }, nick, mode) {
   }
   function closeWin() {
     uiOpen = false;
+    document.body.classList.remove('uw-open');
     winEl.style.display = 'none';
   }
   function toggleWin(i) {
@@ -2085,7 +2096,6 @@ function boot(socket, { id, seed }, nick, mode) {
       `자연 ${ns.instances}개  대기 ${ns.queued}\n` +
       `드로우콜 ${ri.calls}  삼각형 ${ri.triangles}`;
 
-    if (uiOpen) return;   // 창이 열려 있으면 3D 화면은 그리지 않음 (UI만 표시)
 
     if (curRoom >= 0) {
       renderPortal();                              // 창문에 보일 바깥 풍경을 먼저 그림
