@@ -1640,44 +1640,26 @@ function boot(socket, { id, seed }, nick, mode) {
   ];
   const winStyle = document.createElement('style');
   winStyle.textContent = `
-.uiwin{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.14);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#3a2814;user-select:none;-webkit-user-select:none}
+.uiwin{position:fixed;inset:0;z-index:60;display:none;background:rgba(0,0,0,.14);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#2a1a0c;user-select:none;-webkit-user-select:none;overflow:hidden}
 body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-open .tgroup,body.uw-open .rpg-status,body.uw-open .rpg-compass,body.uw-open #hud,body.uw-open .cross{display:none!important}
-.uw-wrap{position:relative;box-sizing:border-box;width:min(1000px,97vw);height:min(620px,92vh);padding-top:46px}
-.uw-tabs{position:absolute;left:26px;top:0;display:flex;gap:6px;z-index:3;align-items:flex-end}
-.uw-tab{box-sizing:border-box;display:flex;align-items:center;gap:8px;height:48px;padding:0 20px;border:2px solid #5a4126;border-bottom:none;border-radius:8px 8px 0 0;background:linear-gradient(#d2b98b,#b99a68);color:#3b2a16;font-size:16px;font-weight:700;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(255,235,190,.4),0 -2px 6px rgba(0,0,0,.35)}
-.uw-tab img{width:28px;height:28px;object-fit:contain;pointer-events:none;filter:sepia(.5) brightness(.85)}
-.uw-tab.on{height:58px;background:linear-gradient(#703829,#46221a);color:#f3e2ba;border-color:#2a140e}
-.uw-tab.on img{filter:none}
-.uw-book{position:relative;height:100%;box-sizing:border-box;display:flex;border:10px solid #3a2216;border-radius:10px;background:#2b1a10;box-shadow:0 0 0 2px #120a06,0 14px 40px rgba(0,0,0,.7),inset 0 0 0 2px #6b4a2a}
-.uw-cn{position:absolute;width:30px;height:30px;box-sizing:border-box;background:linear-gradient(135deg,#a89468,#5b4a30);border:2px solid #241608;border-radius:3px;z-index:4;pointer-events:none}
-.uw-cn.a{left:-14px;top:-14px}.uw-cn.b{right:-14px;top:-14px}.uw-cn.c{left:-14px;bottom:-14px}.uw-cn.d{right:-14px;bottom:-14px}
-.uw-page{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;padding:16px 24px 14px;background:radial-gradient(ellipse at 20% 12%,rgba(255,240,200,.38),transparent 55%),radial-gradient(ellipse at 85% 92%,rgba(120,80,30,.38),transparent 60%),linear-gradient(135deg,#dac28f,#c8a76e 55%,#b98f55);box-shadow:inset 0 0 40px rgba(90,55,20,.55)}
-.uw-page.l{border-radius:4px 0 0 4px}.uw-page.r{border-radius:0 4px 4px 0}
-.uw-page.l::after{content:'';position:absolute;right:0;top:0;bottom:0;width:28px;pointer-events:none;background:linear-gradient(90deg,transparent,rgba(50,28,10,.55))}
-.uw-page.r::before{content:'';position:absolute;left:0;top:0;bottom:0;width:28px;pointer-events:none;background:linear-gradient(270deg,transparent,rgba(50,28,10,.55))}
-.uw-ph{flex:none;display:flex;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid rgba(70,45,20,.5);font-size:22px;font-weight:700;color:#2e1d0e}
-.uw-dia{color:#6b4a2a;font-size:20px}
-.uw-grid{flex:1;min-height:0;display:grid;gap:8px;padding:10px;background:rgba(60,38,16,.16);border:2px solid rgba(70,45,20,.5);border-radius:4px}
-.uw-grid.g6{grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(5,1fr)}
-.uw-grid.g5{grid-template-columns:repeat(5,1fr);grid-template-rows:repeat(4,1fr)}
-.uw-slot{position:relative;box-sizing:border-box;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 40%,#3d2f21,#221810);border:3px solid #7a5d34;border-radius:5px;box-shadow:inset 0 0 10px #000,0 0 0 1px #1a1008;cursor:pointer;color:rgba(205,175,115,.2);font-size:26px}
-.uw-slot.sel{border-color:#ffd77a;box-shadow:0 0 10px rgba(255,200,90,.85),inset 0 0 10px #000}
-.uw-foot{flex:none;display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:6px;border-top:2px solid rgba(70,45,20,.45);font-size:16px;font-weight:700;color:#3a2814}
-.uw-foot img{width:22px;height:22px;object-fit:contain;filter:sepia(.6) brightness(.6)}
-.uw-detail{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:14px;margin-top:8px;border:2px solid rgba(70,45,20,.4);border-radius:4px;color:#5a4328;font-size:16px;line-height:1.8}
-.uw-orn{font-size:28px;color:rgba(90,60,28,.5)}
-.uw-eq{position:relative;flex:1;min-height:0;border:2px solid rgba(70,45,20,.45);border-radius:4px;--s:min(15vh,100px)}
-.uw-eq svg{position:absolute;inset:0;width:100%;height:100%}
-.uw-eq .uw-slot{position:absolute;width:var(--s);height:var(--s);transform:translate(-50%,-50%);font-size:calc(var(--s) * .5)}
-.uw-ic{font-style:normal;filter:grayscale(1) sepia(.7) brightness(1.1);opacity:.85}
-.uw-lb{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:4px;white-space:nowrap;font-size:13px;font-weight:700;color:#3a2814}
-.uw-tree{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;border:2px solid rgba(70,45,20,.4);border-radius:4px}
-.uw-tree svg{height:100%;max-width:100%}
-.uw-node{fill:#2b1f14;stroke:#7a5d34;stroke-width:4;cursor:pointer}
+.uwb-stage{position:absolute;left:50%;top:50%;width:1536px;height:1024px;margin:-512px 0 0 -768px;transform-origin:50% 50%;background:#3a2a1c url(/ui/book_bg.png) 0 0/100% 100% no-repeat;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+.uwb-tab{position:absolute;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:14px;cursor:pointer;font-size:32px;font-weight:700;color:#2e1d0e;text-shadow:0 1px 0 rgba(255,235,190,.35);padding-bottom:6px}
+.uwb-tab img{width:54px;height:54px;object-fit:contain;pointer-events:none;filter:sepia(.6) brightness(.55)}
+.uwb-tab.on{background:url(/ui/tab_on.png) 0 0/100% 100% no-repeat;color:#f1dfb6;text-shadow:0 2px 0 #000}
+.uwb-tab.on img{filter:none}
+.uwb-h{position:absolute;display:flex;align-items:center;gap:10px;height:48px;font-size:36px;font-weight:700;color:#2a1a0c;text-shadow:0 1px 0 rgba(255,235,190,.4)}
+.uwb-h i{font-style:normal;font-size:30px;color:#6b4a2a}
+.uw-slot{box-sizing:border-box;background:#2b1f14 url(/ui/slot_empty.png) 0 0/100% 100% no-repeat;cursor:pointer}
+.uw-slot.sel{filter:drop-shadow(0 0 6px #ffd77a) brightness(1.3)}
+.uwb-grid{position:absolute;display:grid;gap:4px}
+.uwb-eq{position:absolute}
+.uwb-lb{position:absolute;width:160px;margin-left:-80px;text-align:center;font-size:24px;font-weight:700;color:#2a1a0c}
+.uwb-detail{position:absolute;left:840px;top:330px;width:560px;height:420px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;text-align:center;font-size:30px;line-height:1.9;color:#5a4328}
+.uwb-orn{font-size:44px;color:rgba(90,60,28,.5);line-height:1}
+.uwb-x{position:absolute;left:1380px;top:146px;width:52px;height:48px;font-size:40px;line-height:48px;text-align:center;cursor:pointer;color:#3a2814}
+.uwb-x:hover{color:#000}
+.uw-node{fill:#2b1f14;stroke:#7a5d34;stroke-width:5;cursor:pointer}
 .uw-node.sel{stroke:#ffd77a}
-.uw-x{position:absolute;right:12px;top:8px;width:40px;height:40px;z-index:5;font-size:26px;line-height:1;color:#3a2814;background:none;border:none;cursor:pointer}
-.uw-x:hover{color:#000}
-@media (max-height:480px){.uw-wrap{padding-top:34px}.uw-tab{height:32px;padding:0 10px;font-size:12px;gap:4px}.uw-tab.on{height:40px}.uw-tab img{width:18px;height:18px}.uw-book{border-width:6px}.uw-page{padding:8px 14px}.uw-ph{font-size:15px;margin-bottom:6px}.uw-grid{gap:4px;padding:5px}.uw-slot{font-size:16px;border-width:2px}.uw-eq{--s:min(15vh,58px)}.uw-lb{font-size:10px}.uw-detail{font-size:12px}.uw-foot{font-size:12px;margin-top:4px}.uw-x{width:30px;height:30px;font-size:20px}}
 `;
   document.head.appendChild(winStyle);
   const winEl = document.createElement('div');
@@ -1685,44 +1667,63 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   document.body.appendChild(winEl);
   let winIdx = 0;
 
-  const slotsHtml = (n) => '<div class="uw-slot">✦</div>'.repeat(n);
-  const pageHead = (t) => '<div class="uw-ph"><span class="uw-dia">◈</span>' + t + '</div>';
-  const detailPage = (txt) => '<div class="uw-page r"><div class="uw-detail"><div class="uw-orn">❖</div><div class="uw-dtxt">' + txt + '</div><div class="uw-orn">❖</div></div></div>';
-  const invPage = () => '<div class="uw-page l">' + pageHead('인벤토리') + '<div class="uw-grid g6">' + slotsHtml(30) +
-    '</div><div class="uw-foot"><img src="/ui/icon_bag.png" alt="">0 / 100</div></div>';
-  const eqPage = () => {
-    const sl = (x, y, ch, name) => '<div class="uw-slot" style="left:' + x + '%;top:' + y + '%"><i class="uw-ic">' + ch + '</i><span class="uw-lb">' + name + '</span></div>';
-    const sil = '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><circle cx="50" cy="50" r="40" fill="none" stroke="#6b4c2a" stroke-opacity=".45" stroke-width=".5" stroke-dasharray="1.2 1.6"/>' +
-      '<path d="M50 24 C44 24 41 29 41 34 C41 38 43 40 44 41 L34 46 C30 48 28 54 28 62 L28 70 L33 70 L34 60 L36 64 L36 80 L45 80 L46 66 L54 66 L55 80 L64 80 L64 64 L66 60 L67 70 L72 70 L72 62 C72 54 70 48 66 46 L56 41 C57 40 59 38 59 34 C59 29 56 24 50 24 Z" fill="#6b4c2a" fill-opacity=".5"/></svg>';
-    return '<div class="uw-page r">' + pageHead('장비') + '<div class="uw-eq">' + sil +
-      sl(50, 16, '⛑️', '투구') + sl(17, 50, '🛡️', '갑옷') + sl(83, 50, '🗡️', '무기') + sl(50, 80, '🥾', '신발') + '</div></div>';
+  const at = (x, y, w, h) => 'left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px';
+  const wHead = (x, y, t) => '<div class="uwb-h" style="left:' + x + 'px;top:' + y + 'px"><i>◈</i>' + t + '</div>';
+  const wDetail = (txt) => '<div class="uwb-detail"><div class="uwb-orn">❖</div><div class="uw-dtxt">' + txt + '</div><div class="uwb-orn">❖</div></div>';
+  const wInv = () => wHead(138, 158, '인벤토리') +
+    '<div class="uwb-grid" style="' + at(147, 249, 581, 551) + ';grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(5,1fr)">' + '<div class="uw-slot"></div>'.repeat(30) + '</div>' +
+    '<img src="/ui/icon_bag.png" alt="" style="position:absolute;left:153px;top:831px;width:40px;height:40px;object-fit:contain;filter:sepia(.7) brightness(.45)">' +
+    '<div style="position:absolute;left:205px;top:832px;font-size:30px;font-weight:700">0 / 100</div>';
+  const wEquip = () => {
+    const sl = (img, x, y, w, h, lx, ly, name) =>
+      '<div class="uw-slot uwb-eq" style="' + at(x, y, w, h) + ';background-image:url(/ui/' + img + '.png)"></div>' +
+      '<div class="uwb-lb" style="left:' + lx + 'px;top:' + ly + 'px">' + name + '</div>';
+    return wHead(820, 152, '장비') +
+      '<img src="/ui/silhouette.png" alt="" style="position:absolute;left:991px;top:378px;width:211px;height:270px;pointer-events:none">' +
+      sl('slot_head', 1043, 252, 112, 107, 1099, 363, '투구') +
+      sl('slot_armor', 858, 426, 118, 118, 917, 548, '갑옷') +
+      sl('slot_weapon', 1225, 426, 119, 118, 1284, 548, '무기') +
+      sl('slot_boots', 1038, 626, 121, 121, 1099, 752, '신발');
   };
-  const treePage = () => {
+  const wTree = () => {
+    const cx = 290, cy = 275, R = 185;
+    let svg = '<svg viewBox="0 0 581 551" style="position:absolute;' + at(147, 249, 581, 551) + '"><g stroke="#6b4c2a" stroke-width="4" fill="none" stroke-opacity=".75"><circle cx="' + cx + '" cy="' + cy + '" r="' + R + '"/>';
     const N = [];
-    for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5; N.push([150 + 100 * Math.cos(a), 150 + 100 * Math.sin(a)]); }
-    let svg = '<svg viewBox="0 0 300 300"><g stroke="#6b4c2a" stroke-width="3" fill="none" stroke-opacity=".75"><circle cx="150" cy="150" r="100"/>';
-    for (const [x, y] of N) svg += '<line x1="150" y1="150" x2="' + x.toFixed(1) + '" y2="' + y.toFixed(1) + '"/>';
+    for (let k = 0; k < 10; k++) { const an = -Math.PI / 2 + k * Math.PI / 5; N.push([cx + R * Math.cos(an), cy + R * Math.sin(an)]); }
+    for (const [x, y] of N) svg += '<line x1="' + cx + '" y1="' + cy + '" x2="' + x.toFixed(1) + '" y2="' + y.toFixed(1) + '"/>';
     svg += '</g>';
-    for (const [x, y] of N) svg += '<circle class="uw-node" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="15"/>';
-    svg += '<circle class="uw-node" cx="150" cy="150" r="32"/><image href="/ui/icon_trait.png" x="128" y="128" width="44" height="44" pointer-events="none"/></svg>';
-    return '<div class="uw-page l">' + pageHead('특성') + '<div class="uw-tree">' + svg + '</div></div>';
+    for (const [x, y] of N) svg += '<circle class="uw-node" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="26"/>';
+    svg += '<circle class="uw-node" cx="' + cx + '" cy="' + cy + '" r="56"/><image href="/ui/icon_trait.png" x="' + (cx - 36) + '" y="' + (cy - 36) + '" width="72" height="72" pointer-events="none"/></svg>';
+    return wHead(138, 158, '특성') + svg;
   };
 
   function winBody(i) {
-    if (i === 0) return invPage() + detailPage('아이템을 선택하면<br>상세 정보가 표시됩니다.');
-    if (i === 1) return invPage() + eqPage();
-    if (i === 2) return '<div class="uw-page l">' + pageHead('스킬') + '<div class="uw-grid g5">' + slotsHtml(20) + '</div></div>' + detailPage('스킬을 선택하면<br>상세 정보가 표시됩니다.');
-    return treePage() + detailPage('특성을 선택하면<br>상세 정보가 표시됩니다.');
+    if (i === 0) return wInv() + wDetail('아이템을 선택하면<br>상세 정보가 표시됩니다.');
+    if (i === 1) return wInv() + wEquip();
+    if (i === 2) {
+      return wHead(138, 158, '스킬') +
+        '<div class="uwb-grid" style="' + at(153, 298, 568, 452) + ';grid-template-columns:repeat(5,104px);grid-template-rows:repeat(4,104px);gap:12px">' + '<div class="uw-slot"></div>'.repeat(20) + '</div>' +
+        wDetail('스킬을 선택하면<br>상세 정보가 표시됩니다.');
+    }
+    return wTree() + wDetail('특성을 선택하면<br>상세 정보가 표시됩니다.');
   }
 
+  const TAB_BOX = [[143, 37, 298, 88], [451, 37, 265, 88], [727, 37, 259, 89], [997, 37, 250, 87]];
+  function fitWin() {
+    const st = winEl.firstElementChild;
+    if (!st) return;
+    st.style.transform = 'scale(' + (Math.min(window.innerWidth / 1536, window.innerHeight / 1024) * 0.98) + ')';
+  }
+  window.addEventListener('resize', fitWin);
   function renderWin() {
-    let tabs = '';
+    let h = '<div class="uwb-stage">';
     WIN_TABS.forEach(([ti, tn], k) => {
-      tabs += '<div class="uw-tab' + (k === winIdx ? ' on' : '') + '" data-tab="' + k + '"><img src="' + ti + '" alt="">' + tn + '</div>';
+      const [x, y, w, hh] = TAB_BOX[k], on = k === winIdx;
+      h += '<div class="uwb-tab' + (on ? ' on' : '') + '" data-tab="' + k + '" style="' + at(x, on ? 35 : y, w, on ? 92 : hh) + '"><img src="' + ti + '" alt="">' + tn + '</div>';
     });
-    winEl.innerHTML = '<div class="uw-wrap"><div class="uw-tabs">' + tabs + '</div><div class="uw-book">' +
-      '<i class="uw-cn a"></i><i class="uw-cn b"></i><i class="uw-cn c"></i><i class="uw-cn d"></i>' +
-      winBody(winIdx) + '<button class="uw-x" data-close="1">✕</button></div></div>';
+    h += winBody(winIdx) + '<div class="uwb-x" data-close="1">✕</div></div>';
+    winEl.innerHTML = h;
+    fitWin();
   }
 
   winEl.addEventListener('click', (e) => {
