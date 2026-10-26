@@ -1814,21 +1814,25 @@ function boot(socket, { id, seed }, nick, mode) {
 
     const ty = me.y + 1.5 * CHAR_SCALE;
     if (curRoom >= 0 || inHouse >= 0) {
-      // 방 안/여관 안: 높이는 바닥/천장 안으로만 제한하고, 벽은 수평 거리만 줄여서 피함
-      // (거리를 통째로 줄이면 카메라가 머리 위로 박혀서 정수리만 보였음)
+      // 방 안/여관 안: 시선 방향(위/아래)은 입력 그대로 두고, 벽/천장/바닥에 닿으면
+      // 같은 방향 선상에서 캐릭터 쪽으로만 거리를 줄임 (방향이 바뀌지 않아 위아래가 뒤집히지 않음)
       const fit = (x, y, z) => curRoom >= 0 ? clampCameraRoom(curRoom, x, y, z) : clampCameraInRoom(inHouse, x, y, z, me.y);
-      const cy2 = fit(cx, cy, cz).y;
-      const ok = (x, z) => { const c = fit(x, cy2, z); return Math.abs(c.x - x) + Math.abs(c.z - z) < 1e-4; };
+      const ry0 = ty + Math.sin(me.pitch) * dist;   // 지형 보정 없는 원래 카메라 높이
+      const ok = (m) => {
+        const x = tx + (cx - tx) * m, y = ty + (ry0 - ty) * m, z = tz + (cz - tz) * m;
+        const c = fit(x, y, z);
+        return Math.abs(c.x - x) + Math.abs(c.y - y) + Math.abs(c.z - z) < 1e-4;
+      };
       let lo = 0, hi = 1;
-      if (ok(cx, cz)) lo = 1;
+      if (ok(1)) lo = 1;
       else {
         for (let i = 0; i < 12; i++) {
           const m = (lo + hi) / 2;
-          if (ok(tx + (cx - tx) * m, tz + (cz - tz) * m)) lo = m; else hi = m;
+          if (ok(m)) lo = m; else hi = m;
         }
       }
-      lo = Math.max(lo, 0.3);   // 너무 가까워지면 최소 거리 유지 (남는 부분은 아래에서 벽 안으로 밀어 넣음)
-      const c = fit(tx + (cx - tx) * lo, cy2, tz + (cz - tz) * lo);
+      lo = Math.max(lo, 0.25);   // 머리 속으로 파고들지 않게 최소 거리 유지
+      const c = fit(tx + (cx - tx) * lo, ty + (ry0 - ty) * lo, tz + (cz - tz) * lo);
       camera.position.set(c.x, c.y, c.z);
     } else camera.position.set(cx, cy, cz);
     camera.up.set(0, 1, 0);
