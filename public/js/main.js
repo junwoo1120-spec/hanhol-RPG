@@ -960,6 +960,10 @@ function boot(socket, { id, seed }, nick, mode) {
   let shiftLock = false;   // 시프트락 (로블록스식)
   let runOn = false;       // 달리기 켜짐
   let idleTime = 0;
+  let uiOpen = false;      // 인벤토리/장비/스킬/특성 창이 열려 있는지
+  let pinching = false;    // 두 손가락 확대/축소 중인지
+  let zoomRaw = 1;         // 카메라 거리 배율 (작을수록 확대)
+  const ZOOM_MIN = 0.1, ZOOM_FP = 0.12, ZOOM_MAX = 2.2;   // ZOOM_FP 이하로 끝까지 확대하면 1인칭
   let slk = 0;             // 시프트락 카메라 이동 보간값
 
   const myAvatar = makeAvatar('', 0xffffff);
@@ -1263,11 +1267,38 @@ function boot(socket, { id, seed }, nick, mode) {
   doorHint.addEventListener('touchstart', (e) => { e.preventDefault(); doDoorAction(); }, { passive: false });
 
   const keys = {};
+  // ---------- 확대/축소 (마우스 휠, 두 손가락 핀치). 끝까지 확대하면 1인칭 ----------
+  function zoomBy(f) {
+    if (uiOpen) return;
+    if (zoomRaw <= ZOOM_FP) {                 // 1인칭에서 축소하면 3인칭으로 복귀
+      if (f > 1.01) zoomRaw = 0.4;
+      return;
+    }
+    zoomRaw = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomRaw * f));
+  }
+  window.addEventListener('wheel', (e) => {
+    if (uiOpen) return;
+    if (e.target !== renderer.domElement && document.pointerLockElement !== renderer.domElement) return;
+    e.preventDefault();
+    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    zoomBy(Math.exp(Math.max(-300, Math.min(300, dy)) * 0.0018));
+  }, { passive: false });
+
   const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
   const GAME_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyH', 'Space'];
 
   window.addEventListener('keydown', (e) => {
     if (touchMode) return;
+
+    if (uiOpen) {   // 창이 열려 있으면 게임 조작은 막고 창 조작만 받음
+      if (e.code === 'Escape') closeWin();
+      else {
+        const mm = /^Digit([1-4])$/.exec(e.code);
+        if (mm && !e.repeat) menuPress(Number(mm[1]) - 1);
+      }
+      e.preventDefault();
+      return;
+    }
 
     if (ARROWS.includes(e.code) || e.code === 'Space') e.preventDefault();
     if (e.ctrlKey && GAME_KEYS.includes(e.code)) e.preventDefault();
@@ -1347,6 +1378,7 @@ function boot(socket, { id, seed }, nick, mode) {
     });
     canvas.addEventListener('pointermove', (e) => {
       if (e.pointerId !== lookId) return;
+      if (pinching) { lx = e.clientX; ly = e.clientY; return; }
       me.yaw -= (e.clientX - lx) * 0.005;
       me.pitch = wrapPitch(me.pitch + (e.clientY - ly) * 0.005);
       lx = e.clientX;
@@ -1357,6 +1389,23 @@ function boot(socket, { id, seed }, nick, mode) {
     };
     canvas.addEventListener('pointerup', lookEnd);
     canvas.addEventListener('pointercancel', lookEnd);
+
+    // 두 손가락 벌리면 확대, 모으면 축소 (끝까지 확대하면 1인칭)
+    let pd = 0;
+    const tdist = (e) => Math.hypot(e.targetTouches[0].clientX - e.targetTouches[1].clientX, e.targetTouches[0].clientY - e.targetTouches[1].clientY);
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.targetTouches.length === 2) { pd = tdist(e); pinching = true; }
+    }, { passive: true });
+    canvas.addEventListener('touchmove', (e) => {
+      if (e.targetTouches.length === 2 && pd > 0) {
+        const d = tdist(e);
+        if (d > 0) { zoomBy(pd / d); pd = d; }
+        e.preventDefault();
+      }
+    }, { passive: false });
+    const pinchEnd = (e) => { if (e.targetTouches.length < 2) { pd = 0; pinching = false; } };
+    canvas.addEventListener('touchend', pinchEnd);
+    canvas.addEventListener('touchcancel', pinchEnd);
   }
 
   window.addEventListener('resize', () => {
@@ -1496,7 +1545,7 @@ function boot(socket, { id, seed }, nick, mode) {
       () => { jumpHeld = true; jumpBuffer = 0.15; },
       () => { jumpHeld = false; });
     makeBtn('atk', '⚔️', '공격', () => toast('공격은 아직 준비 중이에요'));
-    makeBtn('skill', '✨', '스킬', () => toast('스킬은 아직 준비 중이에요'));
+    makeBtn('skill', '✨', '스킬', () => toggleWin(2));
     runBtn = makeBtn('run', '🏃', '달리기', () => setRun(!runOn));
     lockBtn = makeBtn('lock', '🔒', '', () => toggleShiftLock());
 
@@ -1578,7 +1627,129 @@ function boot(socket, { id, seed }, nick, mode) {
     if (!b) return;
     b.classList.add('flash');
     setTimeout(() => b.classList.remove('flash'), 150);
-    toast(MENUS[i][1] + ' 기능은 아직 준비 중이에요');
+    toggleWin(i);
+  }
+
+  // ---------- 전체 화면 창: 인벤토리 · 장비 · 스킬 · 특성 (열면 UI만 보임) ----------
+  const WIN_TABS = [
+    ['/ui/icon_bag.png', '인벤토리'],
+    ['/ui/icon_gear.png', '장비'],
+    ['/ui/icon_skill.png', '스킬'],
+    ['/ui/icon_trait.png', '특성'],
+  ];
+  const winStyle = document.createElement('style');
+  winStyle.textContent = `
+.uiwin{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,#16141b 0%,#050407 80%);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#d8cdb4;user-select:none;-webkit-user-select:none}
+.uw-box{position:relative;box-sizing:border-box;width:min(940px,96vw);height:min(560px,92vh);display:flex;flex-direction:column;background:linear-gradient(#17151a,#0b0a0d);border:3px solid #5a4b3a;border-radius:6px;box-shadow:0 0 0 2px #050407,inset 0 0 0 1px #2e2820,0 10px 40px #000}
+.uw-head{flex:none;display:flex;align-items:center;height:64px;padding:0 54px 0 14px;border-bottom:2px solid #3d3428;background:linear-gradient(#1e1b20,#111014)}
+.uw-ico{width:44px;height:44px;margin-right:12px;object-fit:contain}
+.uw-title{flex:1;font-size:24px;letter-spacing:2px;color:#ece0c4;text-shadow:0 2px 0 #000}
+.uw-tabs{display:flex;gap:4px}
+.uw-tab{width:88px;height:52px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:#16141a;border:1px solid #2c2730;color:#a69b86;font-size:12px;cursor:pointer}
+.uw-tab img{width:26px;height:26px;object-fit:contain;pointer-events:none}
+.uw-tab.on{background:linear-gradient(#183049,#121821);border-color:#2f7fcf;color:#fff;box-shadow:0 0 10px rgba(58,150,255,.55),inset 0 -3px 0 #3aa0ff}
+.uw-x{position:absolute;right:8px;top:12px;width:36px;height:36px;font-size:22px;line-height:1;color:#cfc3a8;background:none;border:none;cursor:pointer}
+.uw-x:hover{color:#fff}
+.uw-main{flex:1;min-height:0;display:flex;gap:14px;padding:14px}
+.uw-left{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px}
+.uw-grid{flex:1;min-height:0;display:grid;gap:8px;padding:10px;background:#0d0c10;border:1px solid #2a2530;border-radius:4px}
+.uw-grid.g6{grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(4,1fr)}
+.uw-grid.g4{grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(3,1fr);background:none;border:none}
+.uw-slot{position:relative;box-sizing:border-box;background:#121116;border:2px solid #34302f;border-radius:3px;box-shadow:inset 0 0 8px #000;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.uw-slot.sk::after{content:'\\2726';color:#2d2b33;font-size:26px}
+.uw-slot.sel{border-color:#3aa0ff;box-shadow:0 0 8px rgba(58,160,255,.6),inset 0 0 8px #000}
+.uw-foot{flex:none;height:34px;display:flex;align-items:center;padding:0 12px;background:#0d0c10;border:1px solid #2a2530;font-size:14px;color:#b7ad98}
+.uw-detail{flex:none;width:33%;min-width:140px;box-sizing:border-box;background:#0e0d11;border:2px solid #34302f;border-radius:4px;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;color:#8a8170;font-size:14px;line-height:1.7}
+.uw-eq{position:relative;flex:1;min-height:0;--s:min(13vh,64px)}
+.uw-eq .uw-slot{position:absolute;width:var(--s);height:var(--s);transform:translate(-50%,-50%);font-size:calc(var(--s) * .5);color:#5b5548}
+.uw-eq svg{position:absolute;inset:0;width:100%;height:100%;opacity:.55}
+.uw-tree{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
+.uw-tree svg{max-width:100%;max-height:100%}
+.uw-node{fill:#111015;stroke:#4a4034;stroke-width:3;cursor:pointer}
+.uw-node.sel{stroke:#3aa0ff}
+@media (max-height:420px){.uw-head{height:50px}.uw-tab{height:40px;width:70px;font-size:10px}.uw-tab img{width:18px;height:18px}.uw-ico{width:32px;height:32px}.uw-title{font-size:18px}.uw-main{padding:8px;gap:8px}}
+`;
+  document.head.appendChild(winStyle);
+  const winEl = document.createElement('div');
+  winEl.className = 'uiwin';
+  document.body.appendChild(winEl);
+  let winIdx = 0;
+
+  function winBody(i) {
+    const det = (txt) => '<div class="uw-detail"><div class="uw-dtxt">' + txt + '</div></div>';
+    if (i === 0) {
+      return '<div class="uw-left"><div class="uw-grid g6">' + '<div class="uw-slot"></div>'.repeat(24) +
+        '</div><div class="uw-foot">0 / 100</div></div>' + det('아이템을 선택하면<br>상세 정보가 표시됩니다.');
+    }
+    if (i === 1) {
+      const sl = (x, y, ch) => '<div class="uw-slot" style="left:' + x + '%;top:' + y + '%">' + ch + '</div>';
+      return '<div class="uw-eq">' +
+        '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><g fill="none" stroke="#2a2630" stroke-width="0.8"><circle cx="50" cy="16" r="6.5"/><path d="M38 28 Q50 24 62 28 L68 52 L64 60 L60 84 L54 84 L52 62 L50 62 L48 62 L46 84 L40 84 L36 60 L32 52 Z"/></g></svg>' +
+        sl(50, 11, '⛑') + sl(30, 29, '◖') + sl(70, 29, '◗') + sl(50, 45, '▣') +
+        sl(18, 47, '✋') + sl(82, 47, '✋') + sl(16, 77, '🗡') + sl(50, 85, '▟') +
+        sl(84, 71, '◯') + sl(84, 90, '◯') + '</div>' + det('장비를 선택하면<br>상세 정보가 표시됩니다.');
+    }
+    if (i === 2) {
+      return '<div class="uw-left"><div class="uw-grid g4">' + '<div class="uw-slot sk"></div>'.repeat(12) +
+        '</div></div>' + det('스킬을 선택하면<br>상세 정보가 표시됩니다.');
+    }
+    const N = [[170, 38], [92, 96], [248, 96], [60, 150], [282, 150], [74, 225], [266, 225], [130, 252], [210, 252], [170, 288]];
+    const L = [[0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7], [6, 8], [7, 9], [8, 9]];
+    const C = [170, 160];
+    let svg = '<svg viewBox="0 0 340 320" width="340" height="320"><g stroke="#3c352c" stroke-width="3" fill="none">';
+    for (const [a, b] of L) svg += '<line x1="' + N[a][0] + '" y1="' + N[a][1] + '" x2="' + N[b][0] + '" y2="' + N[b][1] + '"/>';
+    for (const k of [0, 1, 2, 7, 8]) svg += '<line x1="' + C[0] + '" y1="' + C[1] + '" x2="' + N[k][0] + '" y2="' + N[k][1] + '"/>';
+    svg += '</g>';
+    for (const [x, y] of N) svg += '<circle class="uw-node" cx="' + x + '" cy="' + y + '" r="18"/><path d="M' + (x - 6) + ' ' + y + 'h12M' + x + ' ' + (y - 6) + 'v12" stroke="#4a4034" stroke-width="2" pointer-events="none"/>';
+    svg += '<circle class="uw-node" cx="' + C[0] + '" cy="' + C[1] + '" r="32"/><image href="/ui/icon_trait.png" x="' + (C[0] - 20) + '" y="' + (C[1] - 20) + '" width="40" height="40" pointer-events="none"/></svg>';
+    return '<div class="uw-tree">' + svg + '</div>' + det('특성을 선택하면<br>상세 정보가 표시됩니다.');
+  }
+
+  function renderWin() {
+    const [ic, nm] = WIN_TABS[winIdx];
+    let tabs = '';
+    WIN_TABS.forEach(([ti, tn], k) => {
+      tabs += '<div class="uw-tab' + (k === winIdx ? ' on' : '') + '" data-tab="' + k + '"><img src="' + ti + '" alt="">' + tn + '</div>';
+    });
+    winEl.innerHTML = '<div class="uw-box"><div class="uw-head"><img class="uw-ico" src="' + ic + '" alt="">' +
+      '<div class="uw-title">' + nm + '</div><div class="uw-tabs">' + tabs + '</div></div>' +
+      '<button class="uw-x" data-close="1">✕</button><div class="uw-main">' + winBody(winIdx) + '</div></div>';
+  }
+
+  winEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (t.closest('[data-close]')) { closeWin(); return; }
+    const tab = t.closest('[data-tab]');
+    if (tab) { winIdx = Number(tab.getAttribute('data-tab')); renderWin(); return; }
+    if (t === winEl) { closeWin(); return; }
+    const sl = t.closest('.uw-slot, .uw-node');
+    if (sl) {
+      winEl.querySelectorAll('.sel').forEach((n) => n.classList.remove('sel'));
+      sl.classList.add('sel');
+      const d = winEl.querySelector('.uw-dtxt');
+      if (d) d.textContent = '비어 있는 칸이에요';
+    }
+  });
+
+  function openWin(i) {
+    winIdx = i;
+    renderWin();
+    winEl.style.display = 'flex';
+    if (!uiOpen) {
+      uiOpen = true;
+      for (const k in keys) keys[k] = false;
+      jumpHeld = false;
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
+    }
+  }
+  function closeWin() {
+    uiOpen = false;
+    winEl.style.display = 'none';
+  }
+  function toggleWin(i) {
+    if (uiOpen && winIdx === i) closeWin();
+    else openWin(i);
   }
 
   // ---------- 화면 크기에 맞춰 터치 UI 크기 조절 ----------
@@ -1697,6 +1868,7 @@ function boot(socket, { id, seed }, nick, mode) {
       inR = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
     }
 
+    if (uiOpen) { inF = 0; inR = 0; }
     const mag = Math.min(1, Math.hypot(inF, inR));
 
     const fx = -Math.sin(me.yaw);
@@ -1799,7 +1971,8 @@ function boot(socket, { id, seed }, nick, mode) {
     // 3인칭 카메라 (360도 궤도 회전, 시프트락이면 어깨 너머 시점)
     slk += ((shiftLock ? 1 : 0) - slk) * (1 - Math.exp(-10 * dt));
     const side = 1.3 * slk * CAM_SCALE;
-    const dist = (9 - 1.5 * slk) * CAM_SCALE;
+    const dist = (9 - 1.5 * slk) * CAM_SCALE * Math.max(zoomRaw, ZOOM_FP);
+    const fp = zoomRaw <= ZOOM_FP;   // 끝까지 확대 = 1인칭
 
     const tx = me.x + rx * side;
     const tz = me.z + rz * side;
@@ -1836,7 +2009,12 @@ function boot(socket, { id, seed }, nick, mode) {
       camera.position.set(c.x, c.y, c.z);
     } else camera.position.set(cx, cy, cz);
     camera.up.set(0, 1, 0);
-    camera.lookAt(tx, ty, tz);
+    myAvatar.visible = !fp;
+    if (fp) {   // 1인칭: 캐릭터 눈 위치에서 바라보는 방향으로 봄
+      const hy = me.y + 1.6 * CHAR_SCALE, cp = Math.cos(me.pitch);
+      camera.position.set(me.x, hy, me.z);
+      camera.lookAt(me.x - Math.sin(me.yaw) * cp, hy - Math.sin(me.pitch), me.z - Math.cos(me.yaw) * cp);
+    } else camera.lookAt(tx, ty, tz);
     updateDoorHint();   // 문 옆에 뜨는 반투명 안내 (카메라 위치가 정해진 뒤에 화면 좌표로 바꿈)
 
     // 물: 격자에 맞춰 움직여서 파도가 떨리지 않게 하고, 시간을 흘려보냄 (용암도 같은 시간 사용)
@@ -1906,6 +2084,8 @@ function boot(socket, { id, seed }, nick, mode) {
       `청크 ${chunks.size}  접속 ${remotes.size + 1}명\n` +
       `자연 ${ns.instances}개  대기 ${ns.queued}\n` +
       `드로우콜 ${ri.calls}  삼각형 ${ri.triangles}`;
+
+    if (uiOpen) return;   // 창이 열려 있으면 3D 화면은 그리지 않음 (UI만 표시)
 
     if (curRoom >= 0) {
       renderPortal();                              // 창문에 보일 바깥 풍경을 먼저 그림
