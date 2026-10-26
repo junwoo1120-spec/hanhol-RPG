@@ -19,7 +19,7 @@ export const SKIP_HANG = new Set(['vine_hanging', 'vine_thick', 'vine_climbing',
 // ---------- 지역별 개수 배율 (1 = 그대로, 0.5 = 절반) ----------
 // tree: 나무(선인장 제외), rock: 일반 바위(거대 바위 지형·얼음 결정·바닥 눈더미 제외)
 export const DENSITY = {
-  volcano: { tree: 1 / 2, rock: 1 / 3 },
+  volcano: { tree: 1 / 4, rock: 1 / 3 },   // 나무 절반으로 더 줄임 (1/2 -> 1/4)
   snow:    { tree: 1 / 2, rock: 1 / 4 },
   desert:  { tree: 1,     rock: 1 / 2 },   // 사막은 선인장 외 나무를 아예 만들지 않음 (decide 참고)
   plains:  { tree: 3 / 5, rock: 1 },
