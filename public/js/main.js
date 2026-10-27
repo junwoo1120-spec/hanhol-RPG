@@ -1803,38 +1803,53 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   // ---------- 상태창: 두루마리가 위아래로 펼쳐지며 내 정보가 나옴 (기능 없이 모양만) ----------
   const scrStyle = document.createElement('style');
   scrStyle.textContent = `
-.scr{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0);transition:background .4s;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif}
+.scr{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0);transition:background .4s;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;user-select:none;-webkit-user-select:none}
 .scr.show{display:flex}
 .scr.open{background:rgba(0,0,0,.6)}
-.scr-wrap{display:flex;flex-direction:column;align-items:center;width:min(92vw,470px);filter:drop-shadow(0 10px 24px rgba(0,0,0,.7))}
-.scr-roll{position:relative;z-index:2;flex:none;width:100%;height:28px;border-radius:14px;background:linear-gradient(#4a2d14,#9a6a34 30%,#c18d4a 48%,#7a4d22 70%,#3d2410);box-shadow:inset 0 -2px 3px rgba(0,0,0,.5)}
-.scr-roll::before,.scr-roll::after{content:'';position:absolute;top:-3px;bottom:-3px;width:16px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#f6e3a1,#b8913f 60%,#6b4c1a);box-shadow:0 1px 3px rgba(0,0,0,.6)}
-.scr-roll::before{left:-6px}.scr-roll::after{right:-6px}
-.scr-paper{position:relative;width:93%;height:0;overflow:hidden;transition:height .6s cubic-bezier(.22,.8,.25,1);background:linear-gradient(90deg,rgba(90,55,15,.35),rgba(0,0,0,0) 9%,rgba(0,0,0,0) 91%,rgba(90,55,15,.35)),linear-gradient(#ead9ac,#dcc490 50%,#e6d3a2)}
+.scr-wrap{position:relative;display:flex;flex-direction:column;align-items:center;width:min(92vw,470px);filter:drop-shadow(0 10px 24px rgba(0,0,0,.75))}
+.scr-roll{position:relative;z-index:2;flex:none;width:100%;height:30px;border-radius:15px;box-shadow:inset 0 -2px 3px rgba(0,0,0,.55),0 2px 4px rgba(0,0,0,.5);
+  background:linear-gradient(90deg,transparent 4.5%,#3b2a0e 4.5% 5%,#c9a24e 5% 6.5%,#3b2a0e 6.5% 7%,transparent 7% 93%,#3b2a0e 93% 93.5%,#c9a24e 93.5% 95%,#3b2a0e 95% 95.5%,transparent 95.5%),linear-gradient(#3d2410,#7d5126 22%,#b98547 45%,#8a5c2c 62%,#4a2d14 85%,#2e1a0a)}
+.scr-roll::before,.scr-roll::after{content:'';position:absolute;top:50%;width:30px;height:38px;margin-top:-19px;background:url(/ui/orn_diamond.png) center/contain no-repeat;filter:drop-shadow(0 1px 2px rgba(0,0,0,.7))}
+.scr-roll::before{left:-15px}.scr-roll::after{right:-15px}
+.scr-paper{position:relative;width:93%;height:0;overflow:hidden;transition:height .6s cubic-bezier(.22,.8,.25,1);background:#b99a66 url(/ui/parchment.jpg) center/cover no-repeat;box-shadow:inset 0 0 34px rgba(70,38,10,.7),inset 0 0 5px rgba(35,18,4,.85)}
+.scr-paper::before,.scr-paper::after{content:'';position:absolute;left:0;right:0;height:16px;z-index:2;pointer-events:none}
+.scr-paper::before{top:0;background:linear-gradient(rgba(30,15,3,.55),rgba(30,15,3,0))}
+.scr-paper::after{bottom:0;background:linear-gradient(rgba(30,15,3,0),rgba(30,15,3,.55))}
 .scr.open .scr-paper{height:min(68vh,540px)}
-.scr-in{position:absolute;inset:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;padding:12px 16px 14px;box-sizing:border-box;color:#3a2814;opacity:0;transition:opacity .35s .3s}
+.scr-stud{position:absolute;top:50%;z-index:3;width:24px;height:30px;margin-top:-15px;background:url(/ui/orn_diamond.png) center/contain no-repeat;filter:drop-shadow(0 1px 2px rgba(0,0,0,.7));opacity:0;transition:opacity .4s .35s}
+.scr-stud.l{left:calc(3.5% - 12px)}.scr-stud.r{right:calc(3.5% - 12px)}
+.scr.open .scr-stud{opacity:1}
+.scr-in{position:absolute;inset:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;padding:14px 22px 16px;box-sizing:border-box;color:#33200d;text-shadow:0 1px 0 rgba(255,235,190,.35);opacity:0;transition:opacity .35s .3s}
 .scr.open .scr-in{opacity:1}
-.scr-x{position:absolute;top:6px;right:10px;font-size:22px;line-height:1;cursor:pointer;color:#5a3d1a;z-index:3;padding:4px}
-.scr-tabs{display:flex;gap:6px;margin:0 28px 10px 0}
-.scr-tab{flex:1;text-align:center;padding:6px 0;border:2px solid #8a6a3a;border-radius:4px;cursor:pointer;font-size:14px;font-weight:700;color:#6b4c2a;background:rgba(120,85,40,.12)}
-.scr-tab.on{background:#7a5427;color:#fff1c8;border-color:#4a2f12}
-.scr-prof{display:flex;align-items:center;gap:12px;padding:8px 6px 12px;border-bottom:2px dashed rgba(90,60,28,.45)}
-.scr-prof img{width:84px;height:auto;flex:none;filter:drop-shadow(0 2px 3px rgba(0,0,0,.45))}
-.scr-nick{font-size:22px;font-weight:700;word-break:break-all}
-.scr-lv{margin-top:4px;font-size:15px;color:#7a5427;font-weight:700}
-.scr-sec{margin-top:12px}
-.scr-sec h4{margin:0 0 6px;font-size:15px;color:#5a3d1a}
-.scr-sec h4 i{font-style:normal;margin-right:4px;color:#9a7a3a}
-.scr-slots{display:flex;gap:8px;flex-wrap:wrap}
-.scr-slots i{width:44px;height:44px;box-sizing:border-box;border:2px dashed rgba(90,60,28,.55);border-radius:4px;background:rgba(90,60,28,.08)}
-.scr-note{margin-top:6px;font-size:12px;color:#7d6a48}
-.scr-pts{display:flex;justify-content:space-between;align-items:center;padding:4px 4px 10px;font-size:16px;font-weight:700;border-bottom:2px dashed rgba(90,60,28,.45)}
-.scr-pts b{color:#8a2f1a}
-.scr-st{display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid rgba(90,60,28,.25)}
-.scr-st .nm{flex:1;font-size:16px;font-weight:700}
-.scr-st .nm small{margin-left:6px;font-size:13px;font-weight:400;color:#6b5636}
-.scr-st .vl{width:44px;text-align:center;font-size:18px;font-weight:700}
-.scr-st button{width:32px;height:32px;border:2px solid #8a6a3a;border-radius:4px;background:rgba(120,85,40,.18);color:#8a6a3a;font:700 20px/1 sans-serif;opacity:.55}
+.scr-x{position:absolute;top:8px;right:14px;font-size:22px;line-height:1;cursor:pointer;color:#4a2f12;z-index:4;padding:4px}
+.scr-title{display:flex;align-items:center;justify-content:center;gap:10px;font-size:24px;font-weight:700;color:#2a1a0c;margin:0 0 2px}
+.scr-title i{font-style:normal;font-size:18px;color:#7a5427}
+.scr-div{display:flex;align-items:center;gap:8px;margin:2px 0 10px}
+.scr-div::before,.scr-div::after{content:'';flex:1;height:2px;background:linear-gradient(90deg,rgba(70,42,18,0),rgba(70,42,18,.65),rgba(70,42,18,0))}
+.scr-div img{width:26px;height:auto;opacity:.9}
+.scr-tabs{display:flex;justify-content:center;gap:6px;margin:0 0 10px}
+.scr-tab{width:120px;height:40px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px;font-weight:700;color:#2e1d0e;background:url(/ui/tab_off.png) 0 0/100% 100% no-repeat;padding-bottom:3px;box-sizing:border-box}
+.scr-tab.on{background-image:url(/ui/tab_on.png);color:#f1dfb6;text-shadow:0 2px 0 #000}
+.scr-prof{display:flex;align-items:center;gap:14px;padding:6px 6px 12px}
+.scr-prof img{width:88px;height:auto;flex:none;filter:drop-shadow(0 3px 4px rgba(0,0,0,.5))}
+.scr-nick{font-size:23px;font-weight:700;word-break:break-all}
+.scr-lv{margin-top:5px;font-size:15px;color:#6b4620;font-weight:700}
+.scr-sec{margin-top:8px}
+.scr-sec h4{display:flex;align-items:center;gap:7px;margin:0 0 7px;font-size:16px;color:#4a2f12}
+.scr-sec h4 img{width:26px;height:26px;object-fit:contain}
+.scr-sec h4 img.sp{filter:sepia(.7) brightness(.5)}
+.scr-slots{display:flex;gap:7px;flex-wrap:wrap}
+.scr-slots i{width:44px;height:50px;box-sizing:border-box;background:#2b1f14 url(/ui/slot_empty.png) 0 0/100% 100% no-repeat}
+.scr-note{margin-top:6px;font-size:12px;color:#6b5636}
+.scr-pts{display:flex;align-items:center;gap:8px;padding:2px 4px 8px;font-size:16px;font-weight:700}
+.scr-pts img{width:34px;height:34px;object-fit:contain}
+.scr-pts span{flex:1}
+.scr-pts b{font-size:22px;color:#7a2a14}
+.scr-st{display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(70,42,18,.35)}
+.scr-st .nm{flex:1;font-size:17px;font-weight:700}
+.scr-st .nm small{margin-left:6px;font-size:13px;font-weight:400;color:#5e4828}
+.scr-st .vl{width:44px;text-align:center;font-size:19px;font-weight:700}
+.scr-st button{width:34px;height:34px;border:2px solid #3d2810;border-radius:3px;background:linear-gradient(#8a6230,#5e3f1c);color:#ecd49a;font:700 20px/1 sans-serif;opacity:.6;box-shadow:inset 0 1px 0 rgba(255,235,190,.35)}
 `;
   document.head.appendChild(scrStyle);
   const scrEl = document.createElement('div');
@@ -1850,18 +1865,19 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (scrTab === 0) {
       body =
         '<div class="scr-prof"><img src="/ui/status_frame.png" alt="" draggable="false"><div><div class="scr-nick"></div><div class="scr-lv">Lv.' + PLAYER.level + '</div></div></div>' +
-        '<div class="scr-sec"><h4><i>◈</i>가진 스킬</h4>' + scrSlots(5) + '<div class="scr-note">아직 배운 스킬이 없어요</div></div>' +
-        '<div class="scr-sec"><h4><i>◈</i>특성</h4>' + scrSlots(5) + '<div class="scr-note">아직 얻은 특성이 없어요</div></div>';
+        '<div class="scr-div"><img src="/ui/orn_star.png" alt=""></div>' +
+        '<div class="scr-sec"><h4><img src="/ui/skill_btn.png" alt="">가진 스킬</h4>' + scrSlots(5) + '<div class="scr-note">아직 배운 스킬이 없어요</div></div>' +
+        '<div class="scr-sec"><h4><img class="sp" src="/ui/icon_trait.png" alt="">특성</h4>' + scrSlots(5) + '<div class="scr-note">아직 얻은 특성이 없어요</div></div>';
     } else {
       body =
-        '<div class="scr-pts"><span>남은 스탯 포인트</span><b>0</b></div>' +
+        '<div class="scr-pts"><img src="/ui/attack_btn.png" alt=""><span>남은 스탯 포인트</span><b>0</b></div><div class="scr-div"><img src="/ui/orn_star.png" alt=""></div>' +
         STATS.map(([k, n]) => '<div class="scr-st"><span class="nm">' + k + '<small>(' + n + ')</small></span><span class="vl">0</span><button disabled>+</button></div>').join('') +
         '<div class="scr-note">스탯 찍기는 아직 준비 중이에요</div>';
     }
     scrEl.innerHTML =
       '<div class="scr-wrap"><div class="scr-roll"></div><div class="scr-paper"><div class="scr-x" data-sclose="1">✕</div><div class="scr-in">' +
-      '<div class="scr-tabs">' + tabs + '</div>' + body +
-      '</div></div><div class="scr-roll"></div></div>';
+      '<div class="scr-title"><i>❖</i>상태창<i>❖</i></div><div class="scr-tabs">' + tabs + '</div>' + body +
+      '</div></div><div class="scr-roll"></div><div class="scr-stud l"></div><div class="scr-stud r"></div></div>';
     const nk = scrEl.querySelector('.scr-nick');
     if (nk) nk.textContent = nick;
   }
