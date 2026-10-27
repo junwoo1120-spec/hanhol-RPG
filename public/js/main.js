@@ -45,8 +45,8 @@ const HELP_KEYBOARD = [
   [['F'], '속도 배율 켜기/끄기'],
   [['[', ']'], '속도 배율 -10 / +10'],
   [['1', '2', '3', '4'], '인벤토리·장비·스킬·특성'],
-  [['Q'], '나무검 장착/해제 (테스트)'],
-  [['마우스 왼쪽', 'J'], '검 공격 (장착 후, 화면 클릭으로 마우스 잠금 상태)'],
+  [['Q'], '나무검 장착 (테스트)'],
+  [['마우스 왼쪽', 'E'], '검 공격 (E는 문 근처가 아닐 때)'],
   [['H'], '조작법 열기/닫기'],
   [['Esc'], '마우스 잠금 해제'],
 ];
@@ -56,7 +56,7 @@ const HELP_TOUCH = [
   [['⤒'], '점프'],
   [['🏃'], '달리기 켜기/끄기'],
   [['🔒'], '시점 고정 켜기/끄기'],
-  [['⚔️'], '나무검 장착 → 다시 누르면 공격 (장착 해제는 키보드 Q)'],
+  [['⚔️'], '나무검 장착 → 다시 누르면 공격'],
   [['✨'], '스킬 (준비 중)'],
   [['속도 패널'], '속도 배율 ×10~100'],
   [['하단 메뉴'], '인벤토리·장비·스킬·특성'],
@@ -982,8 +982,8 @@ function boot(socket, { id, seed }, nick, mode) {
     onStart: () => socket.emit('atk'),   // 공격 모션이 시작될 때 한 번만 알림 (서버가 쿨다운을 다시 검사)
     onHit: null                          // 시각상 타격 프레임. 피해는 나중에 서버 판정(server.js resolveAttack)으로 확정
   });
-  function toggleWeapon() {
-    if (uiOpen) return;
+  function toggleWeapon() {   // 장착만 가능 (해제 기능 없음)
+    if (uiOpen || isWeaponEquipped(myRig)) return;
     const eq = requestToggleWeapon(myRig);   // 모션 중이면 null (중복 입력 무시)
     if (eq === null) return;
     socket.emit('weapon', { eq });
@@ -1333,9 +1333,11 @@ function boot(socket, { id, seed }, nick, mode) {
 
     if (e.code === 'Space') jumpBuffer = 0.15;
     if (e.code === 'KeyF') setFast(!fast);
-    if (e.code === 'KeyE') doDoorAction();
+    if (e.code === 'KeyE') {   // 문/집 상호작용이 가능하면 그걸 하고, 아니면 공격
+      if (hintAct || currentAction()) doDoorAction();
+      else doAttack();
+    }
     if (e.code === 'KeyQ') toggleWeapon();
-    if (e.code === 'KeyJ') doAttack();
     if (e.code === 'KeyH') toggleHelp();
     if (e.code === 'BracketLeft') setMult(fastMult - 10);
     if (e.code === 'BracketRight') setMult(fastMult + 10);
