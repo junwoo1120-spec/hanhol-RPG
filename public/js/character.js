@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import { updateWeapon } from './weapon.js';
 
 // ============================================================
 // 사람 모양 캐릭터 (레퍼런스 시트 기반 무채색 마네킹)
@@ -175,7 +176,7 @@ function makeProceduralHumanoid(color = 0xffffff) {
     mesh(g.sphere, ankle, 0, -0.04, 0.035, 0.045, 0.04, 0.105);                   // 발
     mesh(g.sphere, ankle, 0, -0.058, 0.115, 0.038, 0.02, 0.04);                   // 발끝
 
-    rig[side > 0 ? 'L' : 'R'] = { shoulder, elbow, hip, knee, ankle };
+    rig[side > 0 ? 'L' : 'R'] = { shoulder, elbow, wrist, hip, knee, ankle };
   }
 
   root.userData.rig = rig;
@@ -415,6 +416,13 @@ function makeGlbHumanoid(color) {
   }
 
   const rig = { kind: 'glb', mixer, actions, cur: null, state: '', stateTime: 0, wasGrounded: true };
+  // 무기 장착/팔 포즈에 쓰는 뼈 (weapon.js)
+  rig.bones = {
+    upper: root.getObjectByName('upper_arm_R'),
+    fore: root.getObjectByName('forearm_R'),
+    hand: root.getObjectByName('hand_R'),
+    spine: root.getObjectByName('spine_02')
+  };
   root.userData.rig = rig;
   enterState(rig, 'idle', 0);
   return root;
@@ -510,4 +518,24 @@ export function animateHumanoid(avatar, dt, speed, grounded = true, vy = 0) {
   if (!rig) return;
   if (rig.kind === 'glb') animateGlb(avatar, dt, speed, grounded, vy);
   else animateProcedural(avatar, dt, speed, grounded, vy);
+
+  // 무기를 한 번이라도 만진 캐릭터만 (기존 애니메이션 직후에 팔 포즈를 덮어씀)
+  if (rig.wp) updateWeapon(rig, dt, weaponLoco(rig));
+}
+
+// 무기 팔 포즈가 걷기/달리기 박자에 맞도록 현재 이동 상태를 알려 줌 (객체 재사용)
+function weaponLoco(rig) {
+  const l = rig.wpLoco || (rig.wpLoco = { run: 0, move: 0, phase: -1 });
+  if (rig.kind === 'glb') {
+    const st = rig.state;
+    l.run = st === 'run' ? 1 : 0;
+    l.move = st === 'walk' || st === 'run' ? 1 : 0;
+    const dur = CLIP_DUR[st];
+    l.phase = dur && rig.cur ? (rig.cur.time % dur) / dur : -1;
+  } else {
+    l.run = rig.run;
+    l.move = rig.move > 0.5 ? 1 : 0;
+    l.phase = rig.move > 0.05 ? (((rig.phase / (Math.PI * 2)) % 1) + 1) % 1 : -1;
+  }
+  return l;
 }
