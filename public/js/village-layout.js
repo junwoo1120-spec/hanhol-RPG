@@ -533,6 +533,14 @@ for (const d of DOORS.slice()) {
 // 여관 2층 복도 방 + 방문마다 객실 방
 const innH = HOUSES[0], innAlpha = polar(innH);
 export const CORR_ROOM = addRoom('CORR', innAlpha, -1);
+// 여관 2층(복도 + 객실)의 창밖 풍경은 "여관 2층 높이"에서 본 모습이어야 함.
+// 유령 위치를 마을 바깥 둘레가 아니라 여관 건물 위(2층 높이)로 두고, 복도(59칸)는 여관 폭(30.6칸)에 맞게 가로를 절반(s=0.5)으로 줄여서 매핑.
+const INN_C = Math.cos(innH.rot), INN_S = Math.sin(innH.rot), INN_Y2 = VILLAGE.h + INN2.floorY - FLOOR_Y;
+const innWorld = (lx, lz) => ({ x: innH.x + (lx * INN_C + lz * INN_S) * innH.k, z: innH.z + (-lx * INN_S + lz * INN_C) * innH.k });
+{
+  const c0 = innWorld(0, 0);
+  CORR_ROOM.ghost = { x: c0.x, y: INN_Y2, z: c0.z, rot: innH.rot, s: 0.5 };
+}
 {
   const S = INN2.stairs, lx = (S.x0 + S.x1) / 2, lz = S.zb + 0.9, c = Math.cos(innH.rot), s = Math.sin(innH.rot);
   CORR_ROOM.ret = {   // 복도 → 계단 내려가기: 여관 1층 계단 앞
@@ -549,6 +557,10 @@ for (const side of [-1, 1]) for (const dx of INN2.doorX) {
   DOOR_OPEN[d.id] = false;
   const g = addRoom('GUEST', innAlpha, d.id);
   d.room = g.id;
+  {   // 객실: 복도 문 쪽이 방 앞(+z). 창은 반대편 벽 → 앞쪽 객실(side +1)은 광장 쪽, 뒤쪽 객실(side -1)은 여관 뒤쪽 풍경
+    const gp = innWorld(dx * 0.5, side * (2 + g.R.d * 0.25));
+    g.ghost = { x: gp.x, y: INN_Y2, z: gp.z, rot: innH.rot + (side > 0 ? Math.PI : 0), s: 0.5 };
+  }
   g.ret = { to: 'room', room: CORR_ROOM.id, x: d.x, y: d.y, z: d.z + d.nz * 3.4, yaw: Math.atan2(-d.nx, -d.nz) };   // 복도 방문 앞으로 돌아옴
 }
 
