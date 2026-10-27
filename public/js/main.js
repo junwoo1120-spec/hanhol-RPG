@@ -41,7 +41,7 @@ const HELP_KEYBOARD = [
   [['Shift'], '시점 고정 켜기/끄기'],
   [['←', '→', '↑', '↓'], '화면 회전'],
   [['마우스'], '화면 회전 (화면 클릭 후)'],
-  [['터치'], '화면 드래그로 회전'],
+  [['터치'], '화면 드래그로 회전, 짧게 톡 터치하면 검 공격'],
   [['F'], '속도 배율 켜기/끄기'],
   [['[', ']'], '속도 배율 -10 / +10'],
   [['1'], '나무검 장착/해제 (테스트)'],
@@ -55,10 +55,10 @@ const HELP_TOUCH = [
   [['⤒'], '점프'],
   [['🏃'], '달리기 켜기/끄기'],
   [['🔒'], '시점 고정 켜기/끄기'],
-  [['⚔️'], '나무검 장착 → 다시 누르면 공격'],
-  [['✨'], '스킬 (준비 중)'],
+  [['화면 톡 터치'], '검 공격 (나무검 장착 후)'],
+  [['공격 버튼'], '처음 누르면 나무검 장착, 이후 공격'],
   [['속도 패널'], '속도 배율 ×10~100'],
-  [['하단 메뉴'], '인벤토리·장비·스킬·특성'],
+  [['하단 메뉴 버튼'], '인벤토리·장비·스킬·특성 (단축키 없음)'],
 ];
 
 // ============ RPG 스타일 UI ============
@@ -77,7 +77,11 @@ const GAME_CSS = `
 .rpg-btn:hover{filter:brightness(1.25)}
 body.touch,body.touch *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 
-.rpg-status{position:fixed;top:8px;left:8px;z-index:5;max-width:200px;padding:6px 16px;border-radius:12px;background:linear-gradient(90deg,rgba(20,14,38,.88),rgba(20,14,38,.55));border:1px solid rgba(217,178,92,.75);box-shadow:0 2px 10px rgba(0,0,0,.45);color:#f6e3a1;font:600 13px sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+.rpg-status{position:fixed;top:8px;left:8px;z-index:5;display:flex;align-items:center;gap:6px;pointer-events:none;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-weight:700;color:#fff;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
+.rpg-status img{width:68px;height:auto;flex:none;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7))}
+.rpg-status .st-txt{display:flex;flex-direction:column;gap:1px;max-width:130px;padding:4px 12px 4px 10px;background:linear-gradient(90deg,rgba(10,10,12,.78),rgba(10,10,12,.35));border-left:3px solid #7a5a2e;border-radius:2px}
+.rpg-status .st-nick{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rpg-status .st-lv{font-size:12px;color:#d9c38a}
 
 .rt-stack{position:fixed;top:8px;right:8px;z-index:5;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
 .speedpanel{width:190px;padding:8px;display:flex;flex-direction:column;gap:6px;border-radius:12px;background:rgba(20,14,38,.75);border:1px solid rgba(217,178,92,.75);color:#f6e3a1;font:600 13px sans-serif}
@@ -113,8 +117,9 @@ body.touch .hk{width:76px}
 .tbtn.on{background:radial-gradient(circle at 35% 30%,#f6e3a1,#b8913f);color:#2a1a00}
 .tbtn.jump{right:28px;bottom:28px;width:92px;height:92px}
 .tbtn.jump span{font-size:30px}
-.tbtn.atk{right:36px;bottom:132px;width:64px;height:64px}
-.tbtn.skill{right:112px;bottom:112px;width:56px;height:56px}
+.tbtn.atk{right:30px;bottom:130px;width:82px;height:82px;border:0;border-radius:0;box-shadow:none;background:url(/ui/attack_btn.png) center/contain no-repeat;filter:drop-shadow(0 3px 6px rgba(0,0,0,.6))}
+.tbtn.atk span{display:none}
+.tbtn.atk.press{filter:brightness(1.4) drop-shadow(0 3px 6px rgba(0,0,0,.6))}
 .tbtn.run{right:132px;bottom:34px;width:58px;height:58px}
 .tbtn.lock{right:38px;bottom:206px;width:52px;height:52px}
 
@@ -995,7 +1000,9 @@ function boot(socket, { id, seed }, nick, mode) {
   // ---------- 공통 UI: 닉네임 표시, 안내 메시지, 조준점 ----------
   const status = document.createElement('div');
   status.className = 'rpg-status';
-  status.textContent = nick;
+  // 상태창: 디자인 이미지는 파일(/ui/status_frame.png)로 불러옴. 지금은 모양만 (기능 없음)
+  status.innerHTML = '<img src="/ui/status_frame.png" alt="" draggable="false"><div class="st-txt"><span class="st-nick"></span><span class="st-lv">Lv.1</span></div>';
+  status.querySelector('.st-nick').textContent = nick;
   document.body.appendChild(status);
 
   const toastEl = document.createElement('div');
@@ -1395,16 +1402,19 @@ function boot(socket, { id, seed }, nick, mode) {
     let ly = 0;
     const canvas = renderer.domElement;
 
+    let tapX = 0, tapY = 0, tapT = 0, tapMoved = false;
     canvas.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'mouse' || lookId !== null) return;
       lookId = e.pointerId;
       lx = e.clientX;
       ly = e.clientY;
+      tapX = lx; tapY = ly; tapT = performance.now(); tapMoved = false;
       canvas.setPointerCapture(e.pointerId);
     });
     canvas.addEventListener('pointermove', (e) => {
       if (e.pointerId !== lookId) return;
-      if (pinching) { lx = e.clientX; ly = e.clientY; return; }
+      if (pinching) { lx = e.clientX; ly = e.clientY; tapMoved = true; return; }
+      if (Math.hypot(e.clientX - tapX, e.clientY - tapY) > 12) tapMoved = true;
       me.yaw -= (e.clientX - lx) * 0.005;
       me.pitch = wrapPitch(me.pitch + (e.clientY - ly) * 0.005);
       lx = e.clientX;
@@ -1413,6 +1423,10 @@ function boot(socket, { id, seed }, nick, mode) {
     const lookEnd = (e) => {
       if (e.pointerId === lookId) lookId = null;
     };
+    // 화면을 짧게 톡 터치(드래그/핀치 아님)하면 평타
+    canvas.addEventListener('pointerup', (e) => {
+      if (e.pointerId === lookId && !tapMoved && !pinching && performance.now() - tapT < 300) doAttack();
+    });
     canvas.addEventListener('pointerup', lookEnd);
     canvas.addEventListener('pointercancel', lookEnd);
 
@@ -1570,8 +1584,7 @@ function boot(socket, { id, seed }, nick, mode) {
     makeBtn('jump', '⤒', '점프',
       () => { jumpHeld = true; jumpBuffer = 0.15; },
       () => { jumpHeld = false; });
-    makeBtn('atk', '⚔️', '공격', () => { if (isWeaponEquipped(myRig)) doAttack(); else toggleWeapon(); });
-    makeBtn('skill', '✨', '스킬', () => toggleWin(2));
+    makeBtn('atk', '', '', () => { if (isWeaponEquipped(myRig)) doAttack(); else toggleWeapon(); });
     runBtn = makeBtn('run', '🏃', '달리기', () => setRun(!runOn));
     lockBtn = makeBtn('lock', '🔒', '', () => toggleShiftLock());
 
