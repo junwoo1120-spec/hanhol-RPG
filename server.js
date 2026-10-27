@@ -84,13 +84,13 @@ io.on('connection', (socket) => {
   });
 
   // 평타 시작 알림: 장착 중이고 쿨다운이 지났을 때만 다른 사람에게 전달 (피해는 resolveAttack 에서 서버가 결정)
-  socket.on('atk', () => {
+  socket.on('atk', (d) => {
     const p = players.get(socket.id);
     if (!p || !p.eq) return;
     const now = Date.now();
     if (now - p.atkT < ATTACK_MIN_MS) return;
     p.atkT = now;
-    socket.broadcast.emit('atk', { id: socket.id });
+    socket.broadcast.emit('atk', { id: socket.id, s: d && d.s === 1 ? 1 : 0 });
     resolveAttack(p, now);
   });
 
