@@ -14,6 +14,12 @@ const FAST_MULT = 100;     // 클라이언트 FAST_MULT와 같은 값
 const players = new Map();
 const openDoors = new Set();   // 열려 있는 문 (집 번호). 접속자끼리 같은 상태를 보도록 서버가 기억
 const MAX_DOORS = 64;
+const ATTACK_MIN_MS = 550;   // 평타 최소 간격 (클라이언트 쿨다운 0.7초보다 조금 느슨하게 → 네트워크 지터 허용)
+const EQUIP_MIN_MS = 300;    // 장착/해제 토글 최소 간격
+
+// 평타 판정 자리. 지금은 몬스터/피해 시스템이 없어서 비워 둠.
+// 나중에 여기서 공격자 위치·방향·사거리를 서버 기준으로 검사해서 피해를 확정할 것 (클라이언트 애니메이션만 믿지 않음)
+function resolveAttack(attacker, now) { /* TODO: 서버 검증 판정 */ }
 
 io.on('connection', (socket) => {
   socket.on('join', ({ nick } = {}) => {
@@ -26,7 +32,8 @@ io.on('connection', (socket) => {
     players.set(socket.id, {
       id: socket.id, nick,
       x: 0, y: 0, z: 0, ry: 0, t: 0,
-      spawned: false, fast: false
+      spawned: false, fast: false,
+      eq: false, eqT: 0, atkT: 0
     });
     socket.emit('init', { id: socket.id, seed: SEED });
   });
@@ -65,6 +72,28 @@ io.on('connection', (socket) => {
     socket.broadcast.emit('door', { i: d.i, open: !!d.open });
   });
 
+  // 나무검 장착/해제 (상태는 서버가 기억해서 나중에 들어온 사람도 같은 모습을 보게 함)
+  socket.on('weapon', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !d) return;
+    const now = Date.now();
+    if (now - p.eqT < EQUIP_MIN_MS) return;
+    p.eqT = now;
+    p.eq = !!d.eq;
+    if (!p.eq) p.atkT = 0;
+  });
+
+  // 평타 시작 알림: 장착 중이고 쿨다운이 지났을 때만 다른 사람에게 전달 (피해는 resolveAttack 에서 서버가 결정)
+  socket.on('atk', () => {
+    const p = players.get(socket.id);
+    if (!p || !p.eq) return;
+    const now = Date.now();
+    if (now - p.atkT < ATTACK_MIN_MS) return;
+    p.atkT = now;
+    socket.broadcast.emit('atk', { id: socket.id });
+    resolveAttack(p, now);
+  });
+
   socket.on('fast', (v) => {
     const p = players.get(socket.id);
     if (p) p.fast = !!v;
@@ -77,7 +106,7 @@ io.on('connection', (socket) => {
 setInterval(() => {
   const list = [];
   for (const p of players.values()) {
-    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry]);
+    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0]);
   }
   io.emit('state', list);
 }, 1000 / 15);
