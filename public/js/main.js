@@ -1453,7 +1453,8 @@ function boot(socket, { id, seed }, nick, mode) {
   const _pq = new THREE.Quaternion(), _pv = new THREE.Vector3(), _pUp = new THREE.Vector3(0, 1, 0), _pdb = new THREE.Vector2();
   function updatePortalCamera() {
     const g = roomGhost(curRoom);
-    _pv.set(camera.position.x - g.room.x, camera.position.y - g.room.y, camera.position.z - g.room.z);
+    const gs = g.s || 1;   // 여관 2층 방은 가로를 줄여서 매핑 (복도 59칸 → 여관 폭)
+    _pv.set((camera.position.x - g.room.x) * gs, camera.position.y - g.room.y, (camera.position.z - g.room.z) * gs);
     _pq.setFromAxisAngle(_pUp, g.rot);
     _pv.applyQuaternion(_pq);
     vcam.copy(camera, false);
@@ -1823,6 +1824,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .scr.open .scr-in{opacity:1}
 .scr-col{flex:1 1 0;min-width:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;padding-right:2px}
 .scr-x{position:absolute;top:4px;right:12px;font-size:20px;line-height:1;cursor:pointer;color:#4a2f12;z-index:4;padding:3px}
+.scr-col,.scr-in{scrollbar-width:none;-ms-overflow-style:none}
+.scr-col::-webkit-scrollbar,.scr-in::-webkit-scrollbar{display:none;width:0;height:0}
 .scr-card{border:1.5px solid rgba(70,42,18,.55);border-radius:3px;background:rgba(80,50,20,.1);box-shadow:inset 0 0 0 1px rgba(255,235,190,.25);padding:10px 12px;margin-bottom:10px}
 .scr-h{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:16px;font-weight:700;color:#3a2410}
 .scr-h img{width:18px;height:auto}
@@ -1874,14 +1877,14 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   scrEl.className = 'scr';
   document.body.appendChild(scrEl);
   let scrHideT = 0;
-  // 스탯 (기능 없이 모양만): [약어, 이름, 설명, 아이콘]
+  // 스탯 (기능 없이 모양만): [약어, 이름, 설명]
   const STATS = [
-    ['STR', '힘', '공격력 증가, 무기 공격력 상승', '👊'],
-    ['DEX', '민첩', '치명타 확률 증가, 명중률 상승', '🪶'],
-    ['CON', '체력', '최대 HP 증가, 방어력 상승', '/ui/icon_heart.png'],
-    ['INT', '지능', '최대 MP 증가, 마법 공격력 상승', '🔮'],
-    ['LUK', '운', '아이템 획득 확률 증가, 치명타 피해 상승', '🍀'],
-    ['AGI', '공속/회피', '공격 속도 증가, 회피율 상승', '💨']
+    ['STR', '힘', '공격력 증가, 무기 공격력 상승'],
+    ['DEX', '민첩', '치명타 확률 증가, 명중률 상승'],
+    ['CON', '체력', '최대 HP 증가, 방어력 상승'],
+    ['INT', '지능', '최대 MP 증가, 마법 공격력 상승'],
+    ['LUK', '운', '아이템 획득 확률 증가, 치명타 피해 상승'],
+    ['AGI', '공속/회피', '공격 속도 증가, 회피율 상승']
   ];
   const scrSlots = (n) => '<div class="scr-slots">' + '<i></i>'.repeat(n) + '</div>';
   const scrBar = (cls, label, a, b) =>
@@ -1905,8 +1908,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const right =
       '<div class="scr-card"><div class="scr-h"><img src="/ui/orn_diamond.png" alt="">스탯 포인트</div>' +
       '<div class="scr-pts"><span>사용 가능한 포인트</span><b>0</b><button class="scr-btn" disabled>초기화</button></div></div>' +
-      STATS.map(([k, n, d, ic]) =>
-        '<div class="scr-st"><div class="scr-ic">' + (ic.startsWith('/') ? '<img src="' + ic + '" alt="">' : ic) + '</div>' +
+      STATS.map(([k, n, d]) =>
+        '<div class="scr-st">' +
         '<div class="scr-sn"><b>' + k + '</b><small>(' + n + ')</small><div>' + d + '</div></div>' +
         '<span class="scr-vl">0</span><span class="scr-pm"><button disabled>−</button><button disabled>+</button></span></div>').join('') +
       '<div class="scr-note">스탯 찍기는 아직 준비 중이에요</div>';
