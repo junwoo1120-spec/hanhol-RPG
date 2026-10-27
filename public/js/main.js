@@ -979,7 +979,7 @@ function boot(socket, { id, seed }, nick, mode) {
   // ---------- 나무검 (테스트): Q 장착/해제, 마우스 왼쪽 또는 J 공격 ----------
   const myRig = myAvatar.userData.rig;
   setWeaponHandlers(myRig, {
-    onStart: () => socket.emit('atk'),   // 공격 모션이 시작될 때 한 번만 알림 (서버가 쿨다운을 다시 검사)
+    onStart: (side) => socket.emit('atk', { s: side }),   // 공격 모션이 시작될 때 한 번만 알림 (s = 베는 방향 0/1, 서버가 쿨다운을 다시 검사)
     onHit: null                          // 시각상 타격 프레임. 피해는 나중에 서버 판정(server.js resolveAttack)으로 확정
   });
   function toggleWeapon() {   // 장착만 가능 (해제 기능 없음)
@@ -1882,7 +1882,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   // 다른 플레이어의 평타 모션 (서버가 장착·쿨다운을 검사한 뒤 전달)
   socket.on('atk', (d) => {
     const remote = d && remotes.get(d.id);
-    if (remote) startWeaponAttack(remote.g.userData.rig, true);
+    if (remote) startWeaponAttack(remote.g.userData.rig, true, d.s);
   });
 
   socket.on('correct', (p) => {
