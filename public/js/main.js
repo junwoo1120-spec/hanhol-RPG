@@ -77,11 +77,6 @@ const GAME_CSS = `
 .rpg-btn:hover{filter:brightness(1.25)}
 body.touch,body.touch *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 
-.rpg-status{position:fixed;top:8px;left:8px;z-index:5;display:flex;align-items:center;gap:6px;pointer-events:none;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-weight:700;color:#fff;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
-.rpg-status img{width:68px;height:auto;flex:none;filter:drop-shadow(0 2px 4px rgba(0,0,0,.7))}
-.rpg-status .st-txt{display:flex;flex-direction:column;gap:1px;max-width:130px;padding:4px 12px 4px 10px;background:linear-gradient(90deg,rgba(10,10,12,.78),rgba(10,10,12,.35));border-left:3px solid #7a5a2e;border-radius:2px}
-.rpg-status .st-nick{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rpg-status .st-lv{font-size:12px;color:#d9c38a}
 
 .rt-stack{position:fixed;top:8px;right:8px;z-index:5;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
 .speedpanel{width:190px;padding:8px;display:flex;flex-direction:column;gap:6px;border-radius:12px;background:rgba(20,14,38,.75);border:1px solid rgba(217,178,92,.75);color:#f6e3a1;font:600 13px sans-serif}
@@ -134,7 +129,6 @@ body.touch .joy-base{transform:scale(var(--ui,1));transform-origin:left bottom}
 body.touch .tgroup{display:block;position:fixed;right:0;bottom:0;width:230px;height:290px;z-index:6;pointer-events:none;transform:scale(var(--ui,1));transform-origin:right bottom}
 body.touch .tgroup .tbtn{position:absolute;pointer-events:auto}
 body.touch .bottom-wrap{transform:translateX(-50%) scale(var(--ui,1));transform-origin:center bottom}
-body.touch .rpg-status{transform:scale(var(--ui,1));transform-origin:left top}
 body.touch .rt-stack{transform:scale(var(--ui,1));transform-origin:right top}
 .cross{position:fixed;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;border:2px solid rgba(255,255,255,.9);box-shadow:0 0 4px #000;z-index:5;pointer-events:none;display:none}
 
@@ -1002,13 +996,6 @@ function boot(socket, { id, seed }, nick, mode) {
   }
 
   // ---------- 공통 UI: 닉네임 표시, 안내 메시지, 조준점 ----------
-  const status = document.createElement('div');
-  status.className = 'rpg-status';
-  // 상태창: 디자인 이미지는 파일(/ui/status_frame.png)로 불러옴. 지금은 모양만 (기능 없음)
-  status.innerHTML = '<img src="/ui/status_frame.png" alt="" draggable="false"><div class="st-txt"><span class="st-nick"></span><span class="st-lv">Lv.1</span></div>';
-  status.querySelector('.st-nick').textContent = nick;
-  document.body.appendChild(status);
-
   const toastEl = document.createElement('div');
   toastEl.className = 'toast';
   document.body.appendChild(toastEl);
@@ -1673,7 +1660,7 @@ function boot(socket, { id, seed }, nick, mode) {
     if (!b) return;
     b.classList.add('flash');
     setTimeout(() => b.classList.remove('flash'), 150);
-    if (i >= WIN_TABS.length) { toast('상태창은 아직 준비 중이에요'); return; }   // 5번째(상태창)는 모양만
+    if (i >= WIN_TABS.length) { toggleStatus(); return; }   // 5번째 = 상태창(두루마리)
     toggleWin(i);
   }
 
@@ -1687,7 +1674,7 @@ function boot(socket, { id, seed }, nick, mode) {
   const winStyle = document.createElement('style');
   winStyle.textContent = `
 .uiwin{position:fixed;inset:0;z-index:60;display:none;background:rgba(0,0,0,.14);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#2a1a0c;user-select:none;-webkit-user-select:none;overflow:hidden}
-body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-open .tgroup,body.uw-open .rpg-status,body.uw-open .rpg-compass,body.uw-open #hud,body.uw-open .cross{display:none!important}
+body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-open .tgroup,body.uw-open .rpg-compass,body.uw-open #hud,body.uw-open .cross{display:none!important}
 .uwb-stage{position:absolute;left:50%;top:50%;width:1536px;height:1024px;margin:-512px 0 0 -768px;transform-origin:50% 50%;background:#3a2a1c url(/ui/book_bg.png) 0 0/100% 100% no-repeat;box-shadow:0 10px 40px rgba(0,0,0,.6)}
 .uwb-tab{position:absolute;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:14px;cursor:pointer;font-size:32px;font-weight:700;color:#2e1d0e;text-shadow:0 1px 0 rgba(255,235,190,.35);padding-bottom:6px}
 .uwb-tab img{width:54px;height:54px;object-fit:contain;pointer-events:none;filter:sepia(.6) brightness(.55)}
@@ -1789,6 +1776,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   function openWin(i) {
+    scrEl.classList.remove('open', 'show');   // 상태창 두루마리가 열려 있으면 바로 닫음
     winIdx = i;
     renderWin();
     winEl.style.display = 'flex';
@@ -1801,6 +1789,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     }
   }
   function closeWin() {
+    closeStatus();
     uiOpen = false;
     document.body.classList.remove('uw-open');
     winEl.style.display = 'none';
@@ -1808,6 +1797,107 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   function toggleWin(i) {
     if (uiOpen && winIdx === i) closeWin();
     else openWin(i);
+  }
+
+
+  // ---------- 상태창: 두루마리가 위아래로 펼쳐지며 내 정보가 나옴 (기능 없이 모양만) ----------
+  const scrStyle = document.createElement('style');
+  scrStyle.textContent = `
+.scr{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0);transition:background .4s;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif}
+.scr.show{display:flex}
+.scr.open{background:rgba(0,0,0,.6)}
+.scr-wrap{display:flex;flex-direction:column;align-items:center;width:min(92vw,470px);filter:drop-shadow(0 10px 24px rgba(0,0,0,.7))}
+.scr-roll{position:relative;z-index:2;flex:none;width:100%;height:28px;border-radius:14px;background:linear-gradient(#4a2d14,#9a6a34 30%,#c18d4a 48%,#7a4d22 70%,#3d2410);box-shadow:inset 0 -2px 3px rgba(0,0,0,.5)}
+.scr-roll::before,.scr-roll::after{content:'';position:absolute;top:-3px;bottom:-3px;width:16px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#f6e3a1,#b8913f 60%,#6b4c1a);box-shadow:0 1px 3px rgba(0,0,0,.6)}
+.scr-roll::before{left:-6px}.scr-roll::after{right:-6px}
+.scr-paper{position:relative;width:93%;height:0;overflow:hidden;transition:height .6s cubic-bezier(.22,.8,.25,1);background:linear-gradient(90deg,rgba(90,55,15,.35),rgba(0,0,0,0) 9%,rgba(0,0,0,0) 91%,rgba(90,55,15,.35)),linear-gradient(#ead9ac,#dcc490 50%,#e6d3a2)}
+.scr.open .scr-paper{height:min(68vh,540px)}
+.scr-in{position:absolute;inset:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;padding:12px 16px 14px;box-sizing:border-box;color:#3a2814;opacity:0;transition:opacity .35s .3s}
+.scr.open .scr-in{opacity:1}
+.scr-x{position:absolute;top:6px;right:10px;font-size:22px;line-height:1;cursor:pointer;color:#5a3d1a;z-index:3;padding:4px}
+.scr-tabs{display:flex;gap:6px;margin:0 28px 10px 0}
+.scr-tab{flex:1;text-align:center;padding:6px 0;border:2px solid #8a6a3a;border-radius:4px;cursor:pointer;font-size:14px;font-weight:700;color:#6b4c2a;background:rgba(120,85,40,.12)}
+.scr-tab.on{background:#7a5427;color:#fff1c8;border-color:#4a2f12}
+.scr-prof{display:flex;align-items:center;gap:12px;padding:8px 6px 12px;border-bottom:2px dashed rgba(90,60,28,.45)}
+.scr-prof img{width:84px;height:auto;flex:none;filter:drop-shadow(0 2px 3px rgba(0,0,0,.45))}
+.scr-nick{font-size:22px;font-weight:700;word-break:break-all}
+.scr-lv{margin-top:4px;font-size:15px;color:#7a5427;font-weight:700}
+.scr-sec{margin-top:12px}
+.scr-sec h4{margin:0 0 6px;font-size:15px;color:#5a3d1a}
+.scr-sec h4 i{font-style:normal;margin-right:4px;color:#9a7a3a}
+.scr-slots{display:flex;gap:8px;flex-wrap:wrap}
+.scr-slots i{width:44px;height:44px;box-sizing:border-box;border:2px dashed rgba(90,60,28,.55);border-radius:4px;background:rgba(90,60,28,.08)}
+.scr-note{margin-top:6px;font-size:12px;color:#7d6a48}
+.scr-pts{display:flex;justify-content:space-between;align-items:center;padding:4px 4px 10px;font-size:16px;font-weight:700;border-bottom:2px dashed rgba(90,60,28,.45)}
+.scr-pts b{color:#8a2f1a}
+.scr-st{display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid rgba(90,60,28,.25)}
+.scr-st .nm{flex:1;font-size:16px;font-weight:700}
+.scr-st .nm small{margin-left:6px;font-size:13px;font-weight:400;color:#6b5636}
+.scr-st .vl{width:44px;text-align:center;font-size:18px;font-weight:700}
+.scr-st button{width:32px;height:32px;border:2px solid #8a6a3a;border-radius:4px;background:rgba(120,85,40,.18);color:#8a6a3a;font:700 20px/1 sans-serif;opacity:.55}
+`;
+  document.head.appendChild(scrStyle);
+  const scrEl = document.createElement('div');
+  scrEl.className = 'scr';
+  document.body.appendChild(scrEl);
+  let scrTab = 0, scrHideT = 0;
+  const STATS = [['STR', '힘'], ['DEX', '민첩'], ['CON', '체력'], ['INT', '지능'], ['LUK', '운'], ['AGI', '공속/회피']];
+  const scrSlots = (n) => '<div class="scr-slots">' + '<i></i>'.repeat(n) + '</div>';
+
+  function renderScr() {
+    const tabs = ['내 정보', '스탯'].map((t, k) => '<div class="scr-tab' + (k === scrTab ? ' on' : '') + '" data-stab="' + k + '">' + t + '</div>').join('');
+    let body;
+    if (scrTab === 0) {
+      body =
+        '<div class="scr-prof"><img src="/ui/status_frame.png" alt="" draggable="false"><div><div class="scr-nick"></div><div class="scr-lv">Lv.' + PLAYER.level + '</div></div></div>' +
+        '<div class="scr-sec"><h4><i>◈</i>가진 스킬</h4>' + scrSlots(5) + '<div class="scr-note">아직 배운 스킬이 없어요</div></div>' +
+        '<div class="scr-sec"><h4><i>◈</i>특성</h4>' + scrSlots(5) + '<div class="scr-note">아직 얻은 특성이 없어요</div></div>';
+    } else {
+      body =
+        '<div class="scr-pts"><span>남은 스탯 포인트</span><b>0</b></div>' +
+        STATS.map(([k, n]) => '<div class="scr-st"><span class="nm">' + k + '<small>(' + n + ')</small></span><span class="vl">0</span><button disabled>+</button></div>').join('') +
+        '<div class="scr-note">스탯 찍기는 아직 준비 중이에요</div>';
+    }
+    scrEl.innerHTML =
+      '<div class="scr-wrap"><div class="scr-roll"></div><div class="scr-paper"><div class="scr-x" data-sclose="1">✕</div><div class="scr-in">' +
+      '<div class="scr-tabs">' + tabs + '</div>' + body +
+      '</div></div><div class="scr-roll"></div></div>';
+    const nk = scrEl.querySelector('.scr-nick');
+    if (nk) nk.textContent = nick;
+  }
+
+  scrEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (t === scrEl || t.closest('[data-sclose]')) { closeWin(); return; }
+    const tab = t.closest('[data-stab]');
+    if (tab) { scrTab = Number(tab.getAttribute('data-stab')); renderScr(); }
+  });
+
+  function openStatus() {
+    winEl.style.display = 'none';
+    renderScr();
+    clearTimeout(scrHideT);
+    scrEl.classList.add('show');
+    void scrEl.offsetWidth;            // 펼쳐지는 애니메이션이 처음부터 재생되도록
+    scrEl.classList.add('open');
+    if (!uiOpen) {
+      uiOpen = true;
+      document.body.classList.add('uw-open');
+      for (const k in keys) keys[k] = false;
+      jumpHeld = false;
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
+    }
+  }
+  function closeStatus() {
+    if (!scrEl.classList.contains('open')) return;
+    scrEl.classList.remove('open');
+    clearTimeout(scrHideT);
+    scrHideT = setTimeout(() => scrEl.classList.remove('show'), 650);
+  }
+  function toggleStatus() {
+    if (uiOpen && scrEl.classList.contains('open')) closeWin();
+    else openStatus();
   }
 
   // ---------- 화면 크기에 맞춰 터치 UI 크기 조절 ----------
