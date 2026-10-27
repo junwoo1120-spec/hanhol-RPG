@@ -7,6 +7,7 @@ import {
   roomFloorY, roomGhost, clampCameraRoom, clampCameraInRoom, innFloor, stairsInfo,
 } from './village-layout.js';
 import { makeHumanoid, animateHumanoid, humanReady } from './character.js';
+import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, setWeaponHandlers, isWeaponEquipped } from './weapon.js';
 import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
 
@@ -44,6 +45,8 @@ const HELP_KEYBOARD = [
   [['F'], '속도 배율 켜기/끄기'],
   [['[', ']'], '속도 배율 -10 / +10'],
   [['1', '2', '3', '4'], '인벤토리·장비·스킬·특성'],
+  [['Q'], '나무검 장착/해제 (테스트)'],
+  [['마우스 왼쪽', 'J'], '검 공격 (장착 후, 화면 클릭으로 마우스 잠금 상태)'],
   [['H'], '조작법 열기/닫기'],
   [['Esc'], '마우스 잠금 해제'],
 ];
@@ -53,7 +56,8 @@ const HELP_TOUCH = [
   [['⤒'], '점프'],
   [['🏃'], '달리기 켜기/끄기'],
   [['🔒'], '시점 고정 켜기/끄기'],
-  [['⚔️', '✨'], '공격·스킬 (준비 중)'],
+  [['⚔️'], '나무검 장착 → 다시 누르면 공격 (장착 해제는 키보드 Q)'],
+  [['✨'], '스킬 (준비 중)'],
   [['속도 패널'], '속도 배율 ×10~100'],
   [['하단 메뉴'], '인벤토리·장비·스킬·특성'],
 ];
@@ -263,7 +267,8 @@ function parsePlayer(p) {
       x: p[2],
       y: p[3],
       z: p[4],
-      ry: p[5]
+      ry: p[5],
+      eq: p[6] === 1
     };
   }
 
@@ -274,7 +279,8 @@ function parsePlayer(p) {
       x: p.x,
       y: p.y ?? 0,
       z: p.z,
-      ry: p.ry ?? 0
+      ry: p.ry ?? 0,
+      eq: !!p.eq
     };
   }
 
@@ -970,6 +976,23 @@ function boot(socket, { id, seed }, nick, mode) {
   myAvatar.children[1].visible = false;
   scene.add(myAvatar);
 
+  // ---------- 나무검 (테스트): Q 장착/해제, 마우스 왼쪽 또는 J 공격 ----------
+  const myRig = myAvatar.userData.rig;
+  setWeaponHandlers(myRig, {
+    onStart: () => socket.emit('atk'),   // 공격 모션이 시작될 때 한 번만 알림 (서버가 쿨다운을 다시 검사)
+    onHit: null                          // 시각상 타격 프레임. 피해는 나중에 서버 판정(server.js resolveAttack)으로 확정
+  });
+  function toggleWeapon() {
+    if (uiOpen) return;
+    const eq = requestToggleWeapon(myRig);   // 모션 중이면 null (중복 입력 무시)
+    if (eq === null) return;
+    socket.emit('weapon', { eq });
+  }
+  function doAttack() {
+    if (uiOpen || !isWeaponEquipped(myRig)) return;
+    startWeaponAttack(myRig);
+  }
+
   // ---------- 공통 UI: 닉네임 표시, 안내 메시지, 조준점 ----------
   const status = document.createElement('div');
   status.className = 'rpg-status';
@@ -1311,6 +1334,8 @@ function boot(socket, { id, seed }, nick, mode) {
     if (e.code === 'Space') jumpBuffer = 0.15;
     if (e.code === 'KeyF') setFast(!fast);
     if (e.code === 'KeyE') doDoorAction();
+    if (e.code === 'KeyQ') toggleWeapon();
+    if (e.code === 'KeyJ') doAttack();
     if (e.code === 'KeyH') toggleHelp();
     if (e.code === 'BracketLeft') setMult(fastMult - 10);
     if (e.code === 'BracketRight') setMult(fastMult + 10);
@@ -1339,6 +1364,12 @@ function boot(socket, { id, seed }, nick, mode) {
     renderer.domElement.addEventListener('click', (e) => {
       if (e.pointerType === 'touch') return; // 터치로 누른 건 마우스 잠금을 하지 않음
       renderer.domElement.requestPointerLock();
+    });
+
+    // 마우스 왼쪽 = 공격 (마우스 잠금 중일 때만. 처음 클릭은 잠금용이라 공격되지 않음)
+    window.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || document.pointerLockElement !== renderer.domElement) return;
+      doAttack();
     });
 
     window.addEventListener('mousemove', (e) => {
@@ -1545,7 +1576,7 @@ function boot(socket, { id, seed }, nick, mode) {
     makeBtn('jump', '⤒', '점프',
       () => { jumpHeld = true; jumpBuffer = 0.15; },
       () => { jumpHeld = false; });
-    makeBtn('atk', '⚔️', '공격', () => toast('공격은 아직 준비 중이에요'));
+    makeBtn('atk', '⚔️', '공격', () => { if (isWeaponEquipped(myRig)) doAttack(); else toggleWeapon(); });
     makeBtn('skill', '✨', '스킬', () => toggleWin(2));
     runBtn = makeBtn('run', '🏃', '달리기', () => setRun(!runOn));
     lockBtn = makeBtn('lock', '🔒', '', () => toggleShiftLock());
@@ -1829,8 +1860,12 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
         remote.g.position.set(x, y, z);
         scene.add(remote.g);
         remotes.set(pid, remote);
+        setRemoteWeapon(remote.g.userData.rig, p.eq, true);   // 처음 보이는 순간에 이미 들고 있으면 모션 없이 든 상태로
+      } else if (!!p.eq !== !!remote.eq) {
+        setRemoteWeapon(remote.g.userData.rig, p.eq);          // 장착/해제 모션 재생
       }
 
+      remote.eq = !!p.eq;
       remote.t = { x, y, z, ry };
     }
 
@@ -1840,6 +1875,12 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
         remotes.delete(pid);
       }
     }
+  });
+
+  // 다른 플레이어의 평타 모션 (서버가 장착·쿨다운을 검사한 뒤 전달)
+  socket.on('atk', (d) => {
+    const remote = d && remotes.get(d.id);
+    if (remote) startWeaponAttack(remote.g.userData.rig, true);
   });
 
   socket.on('correct', (p) => {
