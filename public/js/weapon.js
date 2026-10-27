@@ -25,8 +25,9 @@ export const WEAPON_CFG = {
     recover: 0.20,     // 원래 자세로 복귀
     buffer: 0.15       // 쿨다운이 끝나기 이 시간 전부터 들어온 입력은 1회만 예약
   },
-  pump: { walk: 0.07, run: 0.20 },   // 걷기/달리기 중 검 든 팔의 흔들림 크기(라디안)
-  keepBladeSteady: 0.85              // 팔이 흔들려도 검 각도는 유지하는 정도 (0~1)
+  pump: { walk: 0.12, run: 0.35 },   // 걷기/달리기 중 검 든 팔의 앞뒤 흔들림 크기(라디안)
+  sway: { walk: 0.10, run: 0.28 },   // 검 자체가 손목에서 위아래/좌우로 흔들리는 크기(라디안)
+  keepBladeSteady: 0              // 0 = 검도 같이 흔들림, 1 = 팔이 흔들려도 검 각도 고정
 };
 
 // 손잡이(검 원점 = 손잡이 한가운데)가 손바닥 중앙에 오도록 하는 위치/각도.
@@ -171,12 +172,23 @@ const DEFAULT_WEAPON = 'wooden_sword';
 const POSE = {
   ready:  [-0.45, 0, 0.55,  -1.15, 0, 0.35,   0.45, 0, 0.15,   0, 0, 0],      // 검을 몸 앞에 세워 든 자세
   run:    [-0.45, 0, 0.60,  -1.45, 0, 0.45,   0.70, 0, 0.00,   0.02, 0, 0],   // 달릴 때: 팔을 더 접고 검을 앞으로 눕힘
-  low:    [ 0.10, 0, 0.40,  -0.10, 0, 0.10,   1.00, 0, 0.00,   0, 0, 0],      // 장착 시작/해제 끝: 팔을 내리고 검끝이 아래
-  windup: [-2.10, 0.2, 0.70, -0.30, 0, 0.15,  0.10, 0, 0.00,  -0.05, -0.5, 0], // 평타 준비: 검을 오른쪽 어깨 위로
-  mid:    [-1.30, 0.1, 0.90, -0.35, 0, 0.10,  0.50, 0, 0.00,   0.10, 0.1, 0],  // 휘두르는 중간
-  end:    [-0.55, -0.1, 1.20, -0.35, 0, 0.10,  1.00, 0, 0.00,   0.15, 0.65, 0], // 휘두르기 끝: 몸 왼쪽으로 가로질러
-  follow: [-0.40, 0, 1.00,  -0.50, 0, 0.10,   0.90, 0, 0.00,   0.12, 0.5, 0]   // 후속 동작
+  low:    [ 0.10, 0, 0.40,  -0.10, 0, 0.10,   1.00, 0, 0.00,   0, 0, 0]       // 장착 시작/해제 끝: 팔을 내리고 검끝이 아래
 };
+// 평타 2종 (번갈아 나감). 키프레임: windup(준비) → mid(휘두르는 중간) → end(끝) → follow(후속)
+const SLASH = [
+  { // 0) 오른쪽 위 → 왼쪽 아래
+    windup: [-2.10, 0.2, 0.70,  -0.30, 0, 0.15,   0.10, 0.0, 0,  -0.05, -0.50, 0],
+    mid:    [-1.20, 0.1, 0.90,  -0.35, 0, 0.10,   0.70, -0.3, 0,   0.10,  0.10, 0],
+    end:    [-0.55, -0.1, 1.00, -0.10, 0, 0.10,   1.10, -0.6, 0,   0.20,  0.35, 0],
+    follow: [-0.50, -0.1, 1.00, -0.15, 0, 0.10,   1.10, -0.6, 0,   0.20,  0.30, 0]
+  },
+  { // 1) 왼쪽 위 → 오른쪽 아래
+    windup: [-1.90, -0.3, 1.50, -0.40, 0, 0.20,   0.20, 0.0, 0,  -0.05,  0.55, 0],
+    mid:    [-1.20, -0.1, 0.70, -0.35, 0, 0.10,   0.70, 0.3, 0,   0.10, -0.10, 0],
+    end:    [-0.55,  0.1, 0.30, -0.10, 0, 0.00,   1.10, -0.6, 0,   0.20, -0.40, 0],
+    follow: [-0.50,  0.1, 0.30, -0.15, 0, 0.00,   1.10, -0.6, 0,   0.20, -0.35, 0]
+  }
+];
 const PROC_UPPER_Z = 0.61;   // 코드 캐릭터(fallback)는 팔이 곧게 내려가 있어서 GLB(A자 팔)보다 이만큼 덜 모음
 
 export const WS = { NONE: 0, EQUIPPING: 1, READY: 2, ATTACKING: 3, UNEQUIPPING: 4 };
@@ -191,7 +203,7 @@ function getWp(rig) {
   if (!rig.wp) {
     rig.wp = {
       kind: DEFAULT_WEAPON,
-      mode: WS.NONE, t: 0, cd: 0, queued: false, want: false, hitDone: false,
+      mode: WS.NONE, t: 0, cd: 0, queued: false, want: false, hitDone: false, side: 0, nextSide: 0,
       armW: 0, runAmt: 0, moveAmt: 0, phase: 0, time: 0, scale: 1,
       mount: null,
       base: new Float32Array(12), pose: new Float32Array(12),
@@ -261,11 +273,11 @@ export function setRemoteWeapon(rig, eq, instant = false) {
 }
 
 // 평타 시작. 성공하면 true. remote=true 면 서버가 허용한 공격이므로 쿨다운을 다시 검사하지 않음
-export function startWeaponAttack(rig, remote = false) {
+export function startWeaponAttack(rig, remote = false, side = -1) {
   const wp = rig && rig.wp;
   if (!wp || !wp.want) return false;
   if (wp.mode === WS.READY && (remote || wp.cd <= 0)) {
-    beginAttack(wp);
+    beginAttack(wp, remote && (side === 0 || side === 1) ? side : wp.nextSide);   // 다른 플레이어는 서버가 알려 준 방향으로
     return true;
   }
   // 쿨다운 끝나기 직전 입력은 1회만 예약 (불리언이라 여러 번 눌러도 쌓이지 않음)
@@ -300,13 +312,15 @@ export function resetWeapon(rig) {
   if (wp.mount) wp.mount.visible = false;
 }
 
-function beginAttack(wp) {
+function beginAttack(wp, side) {
+  wp.side = side;
+  wp.nextSide = 1 - side;   // 다음 평타는 반대 방향
   wp.mode = WS.ATTACKING;
   wp.t = 0;
   wp.cd = WEAPON_CFG.attack.cooldown;
   wp.queued = false;
   wp.hitDone = false;
-  if (wp.onStart) wp.onStart();
+  if (wp.onStart) wp.onStart(side);
 }
 
 // ============================================================
@@ -339,7 +353,7 @@ export function updateWeapon(rig, dt, loco) {
       break;
     case WS.READY:
       if (!wp.want) { wp.mode = WS.UNEQUIPPING; wp.t = 0; wp.queued = false; }
-      else if (wp.queued && wp.cd <= 0) beginAttack(wp);
+      else if (wp.queued && wp.cd <= 0) beginAttack(wp, wp.nextSide);
       break;
     case WS.ATTACKING: {
       wp.t += dt;
@@ -370,6 +384,11 @@ export function updateWeapon(rig, dt, loco) {
   base[0] += dux;
   base[6] -= dux * WEAPON_CFG.keepBladeSteady;            // 손목이 보정해서 검 각도는 거의 그대로
   base[3] -= amp * 0.4 * (0.5 + 0.5 * Math.cos(wp.phase * TAU));
+  // 검 흔들림: 걸음마다 위아래로 출렁(2배 박자) + 좌우로 흔들 → 달릴수록 크게
+  const sw = lerp(WEAPON_CFG.sway.walk, WEAPON_CFG.sway.run, r) * m;
+  base[6] += sw * Math.cos(wp.phase * TAU * 2);
+  base[7] += sw * 0.8 * Math.sin(wp.phase * TAU + 1.0);
+  base[3] += sw * 0.6 * Math.cos(wp.phase * TAU * 2 + 0.5);
   const breath = Math.sin(wp.time * 1.8) * (1 - m);       // 정지 중 아주 작은 호흡
   base[0] += 0.012 * breath;
   base[9] += 0.01 * breath;
@@ -394,12 +413,13 @@ export function updateWeapon(rig, dt, loco) {
     case WS.ATTACKING: {
       const t = wp.t;
       const t1 = A.windup, t2 = t1 + A.swing * 0.5, t3 = t1 + A.swing, t4 = t3 + A.follow, t5 = t4 + A.recover;
+      const S = SLASH[wp.side];
       let a, b, k;
-      if (t < t1)      { a = base;        b = POSE.windup; k = smooth(0, 1, t / t1); }
-      else if (t < t2) { a = POSE.windup; b = POSE.mid;    k = (t - t1) / (t2 - t1); }
-      else if (t < t3) { a = POSE.mid;    b = POSE.end;    k = (t - t2) / (t3 - t2); }
-      else if (t < t4) { a = POSE.end;    b = POSE.follow; k = smooth(0, 1, (t - t3) / (t4 - t3)); }
-      else             { a = POSE.follow; b = base;        k = smooth(0, 1, (t - t4) / (t5 - t4)); }
+      if (t < t1)      { a = base;     b = S.windup; k = smooth(0, 1, t / t1); }
+      else if (t < t2) { a = S.windup; b = S.mid;    k = (t - t1) / (t2 - t1); }
+      else if (t < t3) { a = S.mid;    b = S.end;    k = (t - t2) / (t3 - t2); }
+      else if (t < t4) { a = S.end;    b = S.follow; k = smooth(0, 1, (t - t3) / (t4 - t3)); }
+      else             { a = S.follow; b = base;     k = smooth(0, 1, (t - t4) / (t5 - t4)); }
       for (let i = 0; i < 12; i++) pose[i] = lerp(a[i], b[i], k);
       break;
     }
