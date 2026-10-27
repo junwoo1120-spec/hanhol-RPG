@@ -44,8 +44,7 @@ const HELP_KEYBOARD = [
   [['터치'], '화면 드래그로 회전'],
   [['F'], '속도 배율 켜기/끄기'],
   [['[', ']'], '속도 배율 -10 / +10'],
-  [['1', '2', '3', '4'], '인벤토리·장비·스킬·특성'],
-  [['Q'], '나무검 장착 (테스트)'],
+  [['1'], '나무검 장착/해제 (테스트)'],
   [['마우스 왼쪽', 'E'], '검 공격 (E는 문 근처가 아닐 때)'],
   [['H'], '조작법 열기/닫기'],
   [['Esc'], '마우스 잠금 해제'],
@@ -164,9 +163,9 @@ body.touch .hpmp-ic{width:24px;height:24px;border-width:2px}
 body.touch .hpmp-ic img{width:14px;height:14px}
 body.touch .hpmp-bar{height:18px;padding:2px 2px 2px 14px;margin-left:-10px}
 body.touch .hpmp-in span{font-size:10px;line-height:14px}
-body.touch .bui-menu{width:100%;gap:6px;margin-top:6px}
-body.touch .mbtn{padding:4px 2px 3px}
-body.touch .mbtn b{font-size:9px}
+body.touch .bui-menu{width:60%;gap:4px;margin-top:6px}
+body.touch .mbtn{padding:3px 1px 2px;border-width:2px}
+body.touch .mbtn b{font-size:6px}
 `;
 
 (function injectStyles() {
@@ -982,8 +981,8 @@ function boot(socket, { id, seed }, nick, mode) {
     onStart: (side) => socket.emit('atk', { s: side }),   // 공격 모션이 시작될 때 한 번만 알림 (s = 베는 방향 0/1, 서버가 쿨다운을 다시 검사)
     onHit: null                          // 시각상 타격 프레임. 피해는 나중에 서버 판정(server.js resolveAttack)으로 확정
   });
-  function toggleWeapon() {   // 장착만 가능 (해제 기능 없음)
-    if (uiOpen || isWeaponEquipped(myRig)) return;
+  function toggleWeapon() {   // 1번 키: 장착 ↔ 해제
+    if (uiOpen) return;
     const eq = requestToggleWeapon(myRig);   // 모션 중이면 null (중복 입력 무시)
     if (eq === null) return;
     socket.emit('weapon', { eq });
@@ -1316,10 +1315,6 @@ function boot(socket, { id, seed }, nick, mode) {
 
     if (uiOpen) {   // 창이 열려 있으면 게임 조작은 막고 창 조작만 받음
       if (e.code === 'Escape') closeWin();
-      else {
-        const mm = /^Digit([1-4])$/.exec(e.code);
-        if (mm && !e.repeat) menuPress(Number(mm[1]) - 1);
-      }
       e.preventDefault();
       return;
     }
@@ -1337,7 +1332,7 @@ function boot(socket, { id, seed }, nick, mode) {
       if (hintAct || currentAction()) doDoorAction();
       else doAttack();
     }
-    if (e.code === 'KeyQ') toggleWeapon();
+    if (e.code === 'Digit1') toggleWeapon();
     if (e.code === 'KeyH') toggleHelp();
     if (e.code === 'BracketLeft') setMult(fastMult - 10);
     if (e.code === 'BracketRight') setMult(fastMult + 10);
@@ -1348,9 +1343,6 @@ function boot(socket, { id, seed }, nick, mode) {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
       toggleShiftLock();
     }
-
-    const m = /^Digit([1-4])$/.exec(e.code);
-    if (m) menuPress(Number(m[1]) - 1);
   });
 
   window.addEventListener('keyup', (e) => {
