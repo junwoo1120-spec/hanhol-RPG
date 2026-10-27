@@ -58,7 +58,7 @@ const HELP_TOUCH = [
   [['화면 톡 터치'], '검 공격 (나무검 장착 후)'],
   [['공격 버튼'], '처음 누르면 나무검 장착, 이후 공격'],
   [['속도 패널'], '속도 배율 ×10~100'],
-  [['하단 메뉴 버튼'], '인벤토리·장비·스킬·특성 (단축키 없음)'],
+  [['하단 메뉴 버튼'], '인벤토리·장비·스킬·특성·상태창 (단축키 없음)'],
 ];
 
 // ============ RPG 스타일 UI ============
@@ -117,11 +117,15 @@ body.touch .hk{width:76px}
 .tbtn.on{background:radial-gradient(circle at 35% 30%,#f6e3a1,#b8913f);color:#2a1a00}
 .tbtn.jump{right:28px;bottom:28px;width:92px;height:92px}
 .tbtn.jump span{font-size:30px}
-.tbtn.atk{right:30px;bottom:130px;width:82px;height:82px;border:0;border-radius:0;box-shadow:none;background:url(/ui/attack_btn.png) center/contain no-repeat;filter:drop-shadow(0 3px 6px rgba(0,0,0,.6))}
-.tbtn.atk span{display:none}
-.tbtn.atk.press{filter:brightness(1.4) drop-shadow(0 3px 6px rgba(0,0,0,.6))}
+.tbtn.atk,.tbtn.lock{border:0;border-radius:0;box-shadow:none;background-color:transparent;background-repeat:no-repeat;background-position:center;background-size:contain;filter:drop-shadow(0 3px 6px rgba(0,0,0,.6))}
+.tbtn.atk{right:37px;bottom:130px;width:70px;height:70px;background-image:url(/ui/attack_btn.png)}
+.tbtn.atk span,.tbtn.lock span{display:none}
+.tbtn.atk.press,.tbtn.lock.press{filter:brightness(1.4) drop-shadow(0 3px 6px rgba(0,0,0,.6))}
+.tbtn.lock.on{background:url(/ui/lock_btn.png) center/contain no-repeat;filter:brightness(1.3) drop-shadow(0 0 8px #f6d36b)}
+.tbtn .lbl{position:absolute;left:50%;bottom:-4px;transform:translateX(-50%);font:700 13px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-style:normal;color:#fff;white-space:nowrap;pointer-events:none;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000,0 2px 3px #000}
+.tbtn.lock .lbl{font-size:11px}
 .tbtn.run{right:132px;bottom:34px;width:58px;height:58px}
-.tbtn.lock{right:38px;bottom:206px;width:52px;height:52px}
+.tbtn.lock{right:38px;bottom:218px;width:60px;height:60px;background-image:url(/ui/lock_btn.png)}
 
 .toast{position:fixed;left:50%;top:70px;transform:translateX(-50%);padding:6px 14px;border-radius:14px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font:600 13px sans-serif;z-index:9;pointer-events:none;opacity:0;transition:opacity .25s}
 .toast.show{opacity:1}
@@ -151,7 +155,7 @@ body.touch .rt-stack{transform:scale(var(--ui,1));transform-origin:right top}
 .mp .hpmp-in i{background:linear-gradient(#46a8ff,#1a74e6 55%,#0b56b8)}
 .hpmp-in span{position:relative;display:block;text-align:center;font-size:13px;line-height:20px}
 
-.bui-menu{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;width:74%;margin-top:10px}
+.bui-menu{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;width:92%;margin-top:10px}
 .mbtn{pointer-events:auto;cursor:pointer;position:relative;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:8px 4px 6px;box-sizing:border-box;background:radial-gradient(circle at 50% 40%,#1c1c22,#0a0a0c);border:3px solid #3e3e46;border-radius:3px;box-shadow:inset 0 0 0 1px #000,0 2px 6px rgba(0,0,0,.6);transition:transform .1s,filter .1s}
 .mbtn::before{content:'';position:absolute;inset:-3px;pointer-events:none;background:linear-gradient(#7a7a84,#7a7a84) 0 0/7px 7px no-repeat,linear-gradient(#7a7a84,#7a7a84) 100% 0/7px 7px no-repeat,linear-gradient(#7a7a84,#7a7a84) 0 100%/7px 7px no-repeat,linear-gradient(#7a7a84,#7a7a84) 100% 100%/7px 7px no-repeat}
 .mbtn img{width:56%;height:auto;max-height:58%;object-fit:contain;margin-top:2px;filter:drop-shadow(0 2px 2px rgba(0,0,0,.7))}
@@ -168,7 +172,7 @@ body.touch .hpmp-ic{width:24px;height:24px;border-width:2px}
 body.touch .hpmp-ic img{width:14px;height:14px}
 body.touch .hpmp-bar{height:18px;padding:2px 2px 2px 14px;margin-left:-10px}
 body.touch .hpmp-in span{font-size:10px;line-height:14px}
-body.touch .bui-menu{width:60%;gap:4px;margin-top:6px}
+body.touch .bui-menu{width:75%;gap:4px;margin-top:6px}
 body.touch .mbtn{padding:3px 1px 2px;border-width:2px}
 body.touch .mbtn b{font-size:6px}
 `;
@@ -1584,9 +1588,11 @@ function boot(socket, { id, seed }, nick, mode) {
     makeBtn('jump', '⤒', '점프',
       () => { jumpHeld = true; jumpBuffer = 0.15; },
       () => { jumpHeld = false; });
-    makeBtn('atk', '', '', () => { if (isWeaponEquipped(myRig)) doAttack(); else toggleWeapon(); });
+    const atkBtn = makeBtn('atk', '', '', () => { if (isWeaponEquipped(myRig)) doAttack(); else toggleWeapon(); });
+    atkBtn.insertAdjacentHTML('beforeend', '<i class="lbl">공격</i>');
     runBtn = makeBtn('run', '🏃', '달리기', () => setRun(!runOn));
-    lockBtn = makeBtn('lock', '🔒', '', () => toggleShiftLock());
+    lockBtn = makeBtn('lock', '', '', () => toggleShiftLock());
+    lockBtn.insertAdjacentHTML('beforeend', '<i class="lbl">쉬프트락</i>');
 
     toast('왼쪽 조이스틱으로 이동, 화면을 드래그하면 시점이 돌아가요');
   }
@@ -1634,8 +1640,9 @@ function boot(socket, { id, seed }, nick, mode) {
   const MENUS = [
     ['/ui/icon_bag.png', '인벤토리'],
     ['/ui/icon_gear.png', '장비'],
-    ['/ui/icon_skill.png', '스킬'],
+    ['/ui/skill_btn.png', '스킬'],
     ['/ui/icon_trait.png', '특성'],
+    ['/ui/status_frame.png', '상태창'],
   ];
   const menuSlots = [];
   const menuEl = bui.querySelector('.bui-menu');
@@ -1666,6 +1673,7 @@ function boot(socket, { id, seed }, nick, mode) {
     if (!b) return;
     b.classList.add('flash');
     setTimeout(() => b.classList.remove('flash'), 150);
+    if (i >= WIN_TABS.length) { toast('상태창은 아직 준비 중이에요'); return; }   // 5번째(상태창)는 모양만
     toggleWin(i);
   }
 
@@ -1673,7 +1681,7 @@ function boot(socket, { id, seed }, nick, mode) {
   const WIN_TABS = [
     ['/ui/icon_bag.png', '인벤토리'],
     ['/ui/icon_gear.png', '장비'],
-    ['/ui/icon_skill.png', '스킬'],
+    ['/ui/skill_btn.png', '스킬'],
     ['/ui/icon_trait.png', '특성'],
   ];
   const winStyle = document.createElement('style');
