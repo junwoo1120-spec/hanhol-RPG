@@ -1809,20 +1809,21 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .scr{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0);transition:background .4s;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;user-select:none;-webkit-user-select:none}
 .scr.show{display:flex}
 .scr.open{background:rgba(0,0,0,.6)}
-.scr-wrap{position:relative;display:flex;flex-direction:column;align-items:center;width:min(96vw,960px);filter:drop-shadow(0 10px 24px rgba(0,0,0,.75))}
-.scr-roll{position:relative;z-index:2;flex:none;width:100%;height:30px;border-radius:15px;box-shadow:inset 0 -2px 3px rgba(0,0,0,.55),0 2px 4px rgba(0,0,0,.5);
-  background:linear-gradient(90deg,transparent 4.5%,#3b2a0e 4.5% 5%,#c9a24e 5% 6.5%,#3b2a0e 6.5% 7%,transparent 7% 93%,#3b2a0e 93% 93.5%,#c9a24e 93.5% 95%,#3b2a0e 95% 95.5%,transparent 95.5%),linear-gradient(#3d2410,#7d5126 22%,#b98547 45%,#8a5c2c 62%,#4a2d14 85%,#2e1a0a)}
-.scr-roll::before,.scr-roll::after{content:'';position:absolute;top:50%;width:30px;height:38px;margin-top:-19px;background:url(/ui/orn_diamond.png) center/contain no-repeat;filter:drop-shadow(0 1px 2px rgba(0,0,0,.7))}
-.scr-roll::before{left:-15px}.scr-roll::after{right:-15px}
-.scr-paper{position:relative;width:96%;height:0;overflow:hidden;transition:height .6s cubic-bezier(.22,.8,.25,1);background:#b99a66 url(/ui/parchment.jpg) center/cover no-repeat;box-shadow:inset 0 0 34px rgba(70,38,10,.7),inset 0 0 5px rgba(35,18,4,.85)}
-.scr-paper::before,.scr-paper::after{content:'';position:absolute;left:0;right:0;height:14px;z-index:2;pointer-events:none}
-.scr-paper::before{top:0;background:linear-gradient(rgba(30,15,3,.5),rgba(30,15,3,0))}
-.scr-paper::after{bottom:0;background:linear-gradient(rgba(30,15,3,0),rgba(30,15,3,.5))}
-.scr.open .scr-paper{height:min(76vh,560px)}
-.scr-stud{position:absolute;top:50%;z-index:3;width:24px;height:30px;margin-top:-15px;background:url(/ui/orn_diamond.png) center/contain no-repeat;filter:drop-shadow(0 1px 2px rgba(0,0,0,.7));opacity:0;transition:opacity .4s .35s}
-.scr-stud.l{left:calc(2% - 12px)}.scr-stud.r{right:calc(2% - 12px)}
-.scr.open .scr-stud{opacity:1}
-.scr-in{position:absolute;inset:0;display:flex;gap:14px;padding:22px 20px 16px;box-sizing:border-box;color:#33200d;text-shadow:0 1px 0 rgba(255,235,190,.35);opacity:0;transition:opacity .35s .3s}
+.scr-wrap{--rh:clamp(40px,8vh,64px);position:relative;display:flex;flex-direction:column;align-items:center;width:min(98vw,1040px);filter:drop-shadow(0 10px 24px rgba(0,0,0,.75))}
+.scr-r{position:relative;z-index:2;flex:none;display:flex;width:100%;height:var(--rh)}
+.scr-r i{display:block;height:100%;background-repeat:no-repeat;background-size:100% 100%}
+.scr-r .bd{flex:1 1 0;min-width:0}
+.scr-r.top .cl{flex:none;width:calc(var(--rh)*.893);background-image:url(/ui/scr_cap_l.png)}
+.scr-r.top .cr{flex:none;width:calc(var(--rh)*.917);background-image:url(/ui/scr_cap_r.png)}
+.scr-r.top .bl{background-image:url(/ui/scr_top_bl.png)}
+.scr-r.top .br{background-image:url(/ui/scr_top_br.png)}
+.scr-r.top .st{flex:none;width:calc(var(--rh)*.69);background-image:url(/ui/scr_top_strap.png)}
+.scr-r.bot .cl{flex:none;width:calc(var(--rh)*.893);background-image:url(/ui/scr_cap_l_b.png)}
+.scr-r.bot .cr{flex:none;width:calc(var(--rh)*.917);background-image:url(/ui/scr_cap_r_b.png)}
+.scr-r.bot .bd{background-image:url(/ui/scr_bot_body.png)}
+.scr-paper{position:relative;z-index:1;flex:none;width:calc(100% - var(--rh)*1.75);margin:calc(var(--rh)*-.1) 0;height:0;overflow:hidden;transition:height .6s cubic-bezier(.22,.8,.25,1);background:url(/ui/scr_paper.png) 0 0/100% 100% no-repeat}
+.scr.open .scr-paper{height:min(70vh,520px)}
+.scr-in{position:absolute;inset:0;display:flex;gap:14px;padding:20px 24px 16px;box-sizing:border-box;color:#33200d;text-shadow:0 1px 0 rgba(255,235,190,.35);opacity:0;transition:opacity .35s .3s}
 .scr.open .scr-in{opacity:1}
 .scr-col{flex:1 1 0;min-width:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;padding-right:2px}
 .scr-x{position:absolute;top:4px;right:12px;font-size:20px;line-height:1;cursor:pointer;color:#4a2f12;z-index:4;padding:3px}
@@ -1868,10 +1869,10 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .scr-vl{width:34px;text-align:center;font-size:18px;font-weight:700}
 .scr-pm{display:flex;gap:5px}
 .scr-pm button{width:30px;height:30px;border:2px solid #3d2810;border-radius:3px;background:linear-gradient(#8a6230,#5e3f1c);color:#ecd49a;font:700 18px/1 sans-serif;opacity:.6;box-shadow:inset 0 1px 0 rgba(255,235,190,.35)}
-@media (max-width:640px){
+@media (max-width:620px){
 .scr-in{flex-direction:column;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain}
 .scr-col{flex:none;overflow:visible}
-.scr.open .scr-paper{height:min(80vh,640px)}
+.scr.open .scr-paper{height:min(74vh,620px)}
 }
 `;
   document.head.appendChild(scrStyle);
@@ -1916,9 +1917,10 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
         '<span class="scr-vl">0</span><span class="scr-pm"><button disabled>−</button><button disabled>+</button></span></div>').join('') +
       '<div class="scr-note">스탯 찍기는 아직 준비 중이에요</div>';
     scrEl.innerHTML =
-      '<div class="scr-wrap"><div class="scr-roll"></div><div class="scr-paper"><div class="scr-x" data-sclose="1">✕</div>' +
-      '<div class="scr-in"><div class="scr-col">' + left + '</div><div class="scr-col">' + right + '</div></div>' +
-      '</div><div class="scr-roll"></div><div class="scr-stud l"></div><div class="scr-stud r"></div></div>';
+      '<div class="scr-wrap"><div class="scr-r top"><i class="cl"></i><i class="bd bl"></i><i class="st"></i><i class="bd br"></i><i class="cr"></i></div>' +
+      '<div class="scr-paper"><div class="scr-x" data-sclose="1">✕</div>' +
+      '<div class="scr-in"><div class="scr-col">' + left + '</div><div class="scr-col">' + right + '</div></div></div>' +
+      '<div class="scr-r bot"><i class="cl"></i><i class="bd"></i><i class="cr"></i></div></div>';
     const nk = scrEl.querySelector('.scr-nick');
     if (nk) nk.textContent = nick;
   }
