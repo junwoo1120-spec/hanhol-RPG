@@ -1469,9 +1469,11 @@ function boot(socket, { id, seed }, nick, mode) {
     setPortalTexture(portalRT.texture, _pdb.x, _pdb.y);
     setRoomsHidden(true, curRoom);                 // 방 자체는 가짜 시점에 안 나오게 숨김
     const prev = renderer.getRenderTarget();
+    renderer.localClippingEnabled = !!roomGhost(curRoom).clip;   // 여관 방: 여관 본체(2층 이상)를 잘라서 벽에 안 가려지게
     renderer.setRenderTarget(portalRT);
     renderer.render(scene, vcam);
     renderer.setRenderTarget(prev);
+    renderer.localClippingEnabled = false;
     setRoomsHidden(false, curRoom);
   }
 
@@ -1876,7 +1878,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   const scrEl = document.createElement('div');
   scrEl.className = 'scr';
   document.body.appendChild(scrEl);
-  let scrHideT = 0;
+  let scrHideT = 0, scrOpenT = 0;
   // 스탯 (기능 없이 모양만): [약어, 이름, 설명]
   const STATS = [
     ['STR', '힘', '공격력 증가, 무기 공격력 상승'],
@@ -1924,6 +1926,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   scrEl.addEventListener('click', (e) => {
     const t = e.target;
     if (!(t instanceof Element)) return;
+    if (performance.now() - scrOpenT < 500) return;   // 상태창을 연 그 터치의 click 이 어두운 배경에 떨어져 바로 닫히는 것 방지
     if (t === scrEl || t.closest('[data-sclose]')) { closeWin(); return; }
   });
 
@@ -1931,6 +1934,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     winEl.style.display = 'none';
     renderScr();
     clearTimeout(scrHideT);
+    scrOpenT = performance.now();
     scrEl.classList.add('show');
     void scrEl.offsetWidth;            // 펼쳐지는 애니메이션이 처음부터 재생되도록
     scrEl.classList.add('open');
