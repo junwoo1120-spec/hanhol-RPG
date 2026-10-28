@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { VILLAGE } from './terrain.js';
-import { HOUSES, ROOM, INT, INTERIOR, FLOOR_Y, INN2, DOORS, ROOMS, isDoorOpen, houseAt, roomLight, roomLightPos } from './village-layout.js';
+import { HOUSES, ROOM, INT, INTERIOR, FLOOR_Y, INN2, DOORS, ROOMS, INN_PORTAL_CLIP, isDoorOpen, houseAt, roomLight, roomLightPos } from './village-layout.js';
 
 // 시작마을 건물: 반목조(튜더식) 집 / 휘어진 지붕의 탑 / 4층 연립 건물 / 작은 오두막 / 여관
 // 전부 코드로 만든 도형을 재질별로 합쳐서 그린다 (마을 전체가 드로우콜 십여 개).
@@ -1051,6 +1051,19 @@ export function buildHouses(scene) {
   const group = b.finish();
   group.name = 'village-houses';
   attachDoors(group, b);
+  // 여관 본체 잘라내기 평면(상자 안쪽만 잘림). main.js 가 창밖 풍경을 그릴 때만 renderer.localClippingEnabled 를 켜서 적용됨
+  {
+    const K = INN_PORTAL_CLIP, ax = new THREE.Vector3(K.c, 0, -K.s), az = new THREE.Vector3(K.s, 0, K.c), ctr = new THREE.Vector3(K.cx, 0, K.cz);
+    const mk = (n, p) => new THREE.Plane().setFromNormalAndCoplanarPoint(n, p);
+    const planes = [
+      mk(ax.clone(), ctr.clone().addScaledVector(ax, K.hw)), mk(ax.clone().negate(), ctr.clone().addScaledVector(ax, -K.hw)),
+      mk(az.clone(), ctr.clone().addScaledVector(az, K.hd)), mk(az.clone().negate(), ctr.clone().addScaledVector(az, -K.hd)),
+      mk(new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, K.y0, 0)), mk(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, K.y1, 0)),
+    ];
+    group.traverse((o) => {
+      if (o.isMesh && o.material && !o.material.isShaderMaterial) { o.material.clippingPlanes = planes; o.material.clipIntersection = true; }
+    });
+  }
   scene.add(group);
   // 실내 조명: 지금 들어가 있는 방에만 따뜻한 빛을 하나 켠다 (광원이 많으면 느려져서 하나를 옮겨 씀)
   RT.light = new THREE.PointLight(0xffd9a0, 0, 20, 1.4);
