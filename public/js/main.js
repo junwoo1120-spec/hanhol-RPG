@@ -58,7 +58,7 @@ const HELP_TOUCH = [
   [['화면 톡 터치'], '검 공격 (나무검 장착 후)'],
   [['공격 버튼'], '처음 누르면 나무검 장착, 이후 공격'],
   [['속도 패널'], '속도 배율 ×10~100'],
-  [['하단 메뉴 버튼'], '인벤토리·장비·스킬·특성·상태창 (단축키 없음)'],
+  [['하단 메뉴 버튼'], '인벤토리·장비·스킬·특성·상태창·퀘스트·거래 (단축키 없음)'],
 ];
 
 // ============ RPG 스타일 UI ============
@@ -149,7 +149,7 @@ body.touch .rt-stack{transform:scale(var(--ui,1));transform-origin:right top}
 .mp .hpmp-in i{background:linear-gradient(#46a8ff,#1a74e6 55%,#0b56b8)}
 .hpmp-in span{position:relative;display:block;text-align:center;font-size:13px;line-height:20px}
 
-.bui-menu{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;width:92%;margin-top:10px}
+.bui-menu{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;width:100%;margin-top:10px}
 .mbtn{pointer-events:auto;cursor:pointer;position:relative;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:8px 4px 6px;box-sizing:border-box;background:radial-gradient(circle at 50% 40%,#1c1c22,#0a0a0c);border:3px solid #3e3e46;border-radius:3px;box-shadow:inset 0 0 0 1px #000,0 2px 6px rgba(0,0,0,.6);transition:transform .1s,filter .1s}
 .mbtn::before{content:'';position:absolute;inset:-3px;pointer-events:none;background:linear-gradient(#7a7a84,#7a7a84) 0 0/7px 7px no-repeat,linear-gradient(#7a7a84,#7a7a84) 100% 0/7px 7px no-repeat,linear-gradient(#7a7a84,#7a7a84) 0 100%/7px 7px no-repeat,linear-gradient(#7a7a84,#7a7a84) 100% 100%/7px 7px no-repeat}
 .mbtn img{width:56%;height:auto;max-height:58%;object-fit:contain;margin-top:2px;filter:drop-shadow(0 2px 2px rgba(0,0,0,.7))}
@@ -166,7 +166,7 @@ body.touch .hpmp-ic{width:24px;height:24px;border-width:2px}
 body.touch .hpmp-ic img{width:14px;height:14px}
 body.touch .hpmp-bar{height:18px;padding:2px 2px 2px 14px;margin-left:-10px}
 body.touch .hpmp-in span{font-size:10px;line-height:14px}
-body.touch .bui-menu{width:75%;gap:4px;margin-top:6px}
+body.touch .bui-menu{width:100%;gap:3px;margin-top:6px}
 body.touch .mbtn{padding:3px 1px 2px;border-width:2px}
 body.touch .mbtn b{font-size:6px}
 `;
@@ -1633,7 +1633,10 @@ function boot(socket, { id, seed }, nick, mode) {
     ['/ui/skill_btn.png', '스킬'],
     ['/ui/icon_trait.png', '특성'],
     ['/ui/status_frame.png', '상태창'],
+    ['/ui/icon_quest.png', '퀘스트'],
+    ['/ui/icon_trade.png', '거래'],
   ];
+  const MENU_SOON = ['퀘스트는 아직 준비 중이에요', '거래는 아직 준비 중이에요'];
   const menuSlots = [];
   const menuEl = bui.querySelector('.bui-menu');
 
@@ -1663,7 +1666,8 @@ function boot(socket, { id, seed }, nick, mode) {
     if (!b) return;
     b.classList.add('flash');
     setTimeout(() => b.classList.remove('flash'), 150);
-    if (i >= WIN_TABS.length) { toggleStatus(); return; }   // 5번째 = 상태창(두루마리)
+    if (i === WIN_TABS.length) { toggleStatus(); return; }   // 5번째 = 상태창(두루마리)
+    if (i > WIN_TABS.length) { toast(MENU_SOON[i - WIN_TABS.length - 1]); return; }   // 퀘스트·거래: 아직 모양만
     toggleWin(i);
   }
 
