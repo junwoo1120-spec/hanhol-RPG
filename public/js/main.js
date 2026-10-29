@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS, VILLAGE } from './terrain.js';
+import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS } from './terrain.js';
 import { buildVillage } from './village.js';
 import { buildHouses, updateHouses, setRoomsHidden, setPortalTexture } from './buildings.js';
 import {
@@ -391,7 +391,7 @@ async function connect(nick, mode) {
   });
 }
 
-function boot(socket, { id, seed, now: serverNow }, nick, mode) {
+function boot(socket, { id, seed }, nick, mode) {
   const touchMode = mode === 'touch';
   let uiScale = touchMode ? computeUiScale() : 1;
   document.body.classList.add(touchMode ? 'touch' : 'kbd');
@@ -2325,12 +2325,42 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   // ---------- 게임 루프 ----------
-  // 고블린 (평원 몬스터). goblin.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
+  // ---------- 고블린 (서버가 위치·전투를 정하고, 여기서는 받아서 그림) ----------
+  // goblin.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
   let goblins = null;
-  const clockOffset = (Number(serverNow) || Date.now()) - Date.now();   // 서버 시계와 내 시계 차이 (모든 플레이어가 같은 자리에서 보게)
+  let lastGob = [];
   import('./goblin.mjs')
-    .then((m) => { goblins = m.createGoblinWorld({ scene, T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS, now: () => Date.now() + clockOffset }); })
+    .then((m) => {
+      goblins = m.createGoblinWorld({ scene, camera, T, WATER_LEVEL });
+      goblins.onSnapshot(lastGob);
+    })
     .catch((err) => console.error('고블린 로드 실패:', err));
+  socket.on('gob', (list) => {
+    lastGob = Array.isArray(list) ? list : [];
+    if (goblins) goblins.onSnapshot(lastGob);
+  });
+
+  // 내 체력 (서버가 정함)
+  const hurtEl = document.createElement('div');
+  hurtEl.style.cssText = 'position:fixed;inset:0;z-index:8;pointer-events:none;opacity:0;background:radial-gradient(ellipse at center,rgba(200,0,0,0) 45%,rgba(200,10,10,.55) 100%)';
+  document.body.appendChild(hurtEl);
+  function flashHurt() {
+    hurtEl.style.transition = 'none';
+    hurtEl.style.opacity = '1';
+    requestAnimationFrame(() => requestAnimationFrame(() => { hurtEl.style.transition = 'opacity .35s'; hurtEl.style.opacity = '0'; }));
+  }
+  socket.on('hp', (d) => {
+    if (!d || !Number.isFinite(d.hp) || !Number.isFinite(d.max)) return;
+    const before = PLAYER.hp;
+    PLAYER.hp = d.hp;
+    PLAYER.hpMax = d.max;
+    const bar = bui.querySelector('.hp .hpmp-in i'), txt = bui.querySelector('.hp .hpmp-in span');
+    if (bar) bar.style.width = pct(d.hp, d.max) + '%';
+    if (txt) txt.textContent = fmt(Math.ceil(d.hp)) + ' / ' + fmt(d.max);
+    if (d.hp < before) flashHurt();
+  });
+  socket.on('kill', () => toast('고블린을 처치했습니다!'));
+  socket.on('notice', (t) => { if (typeof t === 'string') toast(t); });
 
   let sendTimer = 0;
   let compassTimer = 0;
@@ -2554,7 +2584,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     }
 
     if (goblins) {
-      try { goblins.update(dt, me.x, me.z); } catch (err) { console.error('고블린 오류 (고블린만 끕니다):', err); goblins = null; }
+      try { goblins.update(dt); } catch (err) { console.error('고블린 오류 (고블린만 끕니다):', err); goblins = null; }
     }
 
     // 서버로 이동 정보 전송
