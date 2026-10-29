@@ -40,6 +40,20 @@ let sim = null;
 })();
 
 const PLAYER_HP_MAX = 100;
+const HP_REGEN_SEC = 2;      // 자연 회복: 이 시간(초)마다
+const HP_REGEN_AMOUNT = 1;   // 이만큼 회복
+
+// 플레이어 체력 자연 회복
+function regenPlayers(dt) {
+  for (const p of players.values()) {
+    if (!p.spawned || p.hp >= p.hpMax) { p.regenT = 0; continue; }
+    p.regenT = (p.regenT || 0) + dt;
+    if (p.regenT < HP_REGEN_SEC) continue;
+    p.regenT -= HP_REGEN_SEC;
+    p.hp = Math.min(p.hpMax, p.hp + HP_REGEN_AMOUNT);
+    io.to(p.id).emit('hp', { hp: p.hp, max: p.hpMax });
+  }
+}
 
 // 플레이어가 고블린에게 맞음. 체력이 0이 되면 임시로 시작 마을에서 체력을 가득 채워 다시 시작시켜요 (사망 시스템이 생기면 교체)
 function hurtPlayer(pid, dmg) {
@@ -146,10 +160,11 @@ io.on('connection', (socket) => {
 // 20Hz 고블린 시뮬레이션 + 주변 고블린 목록 전송
 let lastTick = Date.now();
 setInterval(() => {
-  if (!sim) return;
   const now = Date.now();
   const dt = (now - lastTick) / 1000;
   lastTick = now;
+  regenPlayers(dt);
+  if (!sim) return;
   try {
     sim.update(dt, now, players, {
       hurt: hurtPlayer,
