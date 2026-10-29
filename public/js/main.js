@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS } from './terrain.js';
+import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS, VILLAGE } from './terrain.js';
 import { buildVillage } from './village.js';
 import { buildHouses, updateHouses, setRoomsHidden, setPortalTexture } from './buildings.js';
 import {
@@ -391,7 +391,7 @@ async function connect(nick, mode) {
   });
 }
 
-function boot(socket, { id, seed }, nick, mode) {
+function boot(socket, { id, seed, now: serverNow }, nick, mode) {
   const touchMode = mode === 'touch';
   let uiScale = touchMode ? computeUiScale() : 1;
   document.body.classList.add(touchMode ? 'touch' : 'kbd');
@@ -2325,6 +2325,13 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   // ---------- 게임 루프 ----------
+  // 고블린 (평원 몬스터). goblin.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
+  let goblins = null;
+  const clockOffset = (Number(serverNow) || Date.now()) - Date.now();   // 서버 시계와 내 시계 차이 (모든 플레이어가 같은 자리에서 보게)
+  import('./goblin.mjs')
+    .then((m) => { goblins = m.createGoblinWorld({ scene, T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS, now: () => Date.now() + clockOffset }); })
+    .catch((err) => console.error('고블린 로드 실패:', err));
+
   let sendTimer = 0;
   let compassTimer = 0;
   const clock = new THREE.Clock();
@@ -2544,6 +2551,10 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       const rGround = Math.max(T.height(remote.g.position.x, remote.g.position.z), WATER_LEVEL - 0.8);
       const rAir = remote.g.position.y - rGround > 0.5;
       animateHumanoid(remote.g, dt, remote.sp, !rAir, remote.vy);
+    }
+
+    if (goblins) {
+      try { goblins.update(dt, me.x, me.z); } catch (err) { console.error('고블린 오류 (고블린만 끕니다):', err); goblins = null; }
     }
 
     // 서버로 이동 정보 전송
