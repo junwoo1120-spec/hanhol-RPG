@@ -9,6 +9,10 @@ const io = new Server(server);
 try { if (express.static.mime) express.static.mime.define({ 'application/javascript': ['mjs'] }); } catch (e) { /* 무시 */ }
 app.use(express.static('public'));
 
+const fs = require('fs');
+const path = require('path');
+const { pathToFileURL } = require('url');
+
 const SEED = Number(process.env.WORLD_SEED) || 12345;
 const MAX_PLAYERS = 20;
 const MAX_SPEED = 30;      // units/sec (달리기 14 + 여유)
@@ -19,9 +23,41 @@ const MAX_DOORS = 64;
 const ATTACK_MIN_MS = 550;   // 평타 최소 간격 (클라이언트 쿨다운 0.7초보다 조금 느슨하게 → 네트워크 지터 허용)
 const EQUIP_MIN_MS = 300;    // 장착/해제 토글 최소 간격
 
-// 평타 판정 자리. 지금은 몬스터/피해 시스템이 없어서 비워 둠.
-// 나중에 여기서 공격자 위치·방향·사거리를 서버 기준으로 검사해서 피해를 확정할 것 (클라이언트 애니메이션만 믿지 않음)
-function resolveAttack(attacker, now) { /* TODO: 서버 검증 판정 */ }
+// ---------- 고블린 (평원 몬스터) ----------
+// 위치·추적·공격·체력은 전부 서버가 정해요. 계산 코드는 public/js/goblin-ai.mjs (브라우저도 같은 설정값을 읽음).
+// terrain.js 는 브라우저용 ESM 이라 파일 내용을 읽어서 불러와요 (파일을 따로 복사해 둘 필요 없음).
+let sim = null;
+(async () => {
+  try {
+    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
+    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
+    const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/goblin-ai.mjs')).href);
+    sim = ai.createGoblinSim({ T: terr.makeTerrain(SEED), seed: SEED, WATER_LEVEL: terr.WATER_LEVEL, VILLAGE: terr.VILLAGE, PLAY_RADIUS: terr.PLAY_RADIUS });
+    console.log('고블린 ' + sim.goblins.length + '마리 배치 완료');
+  } catch (e) {
+    console.error('고블린 시스템 로드 실패 (고블린 없이 계속 진행):', e);
+  }
+})();
+
+const PLAYER_HP_MAX = 100;
+
+// 플레이어가 고블린에게 맞음. 체력이 0이 되면 임시로 시작 마을에서 체력을 가득 채워 다시 시작시켜요 (사망 시스템이 생기면 교체)
+function hurtPlayer(pid, dmg) {
+  const p = players.get(pid);
+  if (!p || p.hp <= 0) return;
+  p.hp = Math.max(0, p.hp - dmg);
+  if (p.hp <= 0) {
+    p.hp = p.hpMax;
+    Object.assign(p, { x: 0, z: 0, t: Date.now() });
+    if (sim) sim.dropTarget(pid);
+    io.to(pid).emit('correct', { x: 0, y: p.y, z: 0 });
+    io.to(pid).emit('notice', '쓰러져서 시작 마을에서 다시 시작해요');
+  }
+  io.to(pid).emit('hp', { hp: p.hp, max: p.hpMax });
+}
+
+// 평타 판정: 장착·쿨다운 검사를 통과한 공격만 여기로 와요. 실제 피해는 sim 이 위치·방향·사거리를 서버 기준으로 검사해서 확정
+function resolveAttack(attacker, now) { if (sim) sim.playerAttack(attacker, now); }
 
 io.on('connection', (socket) => {
   socket.on('join', ({ nick } = {}) => {
@@ -36,9 +72,11 @@ io.on('connection', (socket) => {
       x: 0, y: 0, z: 0, ry: 0, t: 0,
       spawned: false, fast: false,
       eq: false, eqT: 0, atkT: 0,
+      hp: PLAYER_HP_MAX, hpMax: PLAYER_HP_MAX,
       level: 1   // 레벨 (아직 성장 시스템이 없어서 1 고정. 나중에 여기 값만 바꾸면 거래 목록에도 반영됨)
     });
-    socket.emit('init', { id: socket.id, seed: SEED, now: Date.now() });
+    socket.emit('init', { id: socket.id, seed: SEED });
+    socket.emit('hp', { hp: PLAYER_HP_MAX, max: PLAYER_HP_MAX });
   });
 
   socket.on('move', (m) => {
@@ -104,6 +142,26 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => players.delete(socket.id));
 });
+
+// 20Hz 고블린 시뮬레이션 + 주변 고블린 목록 전송
+let lastTick = Date.now();
+setInterval(() => {
+  if (!sim) return;
+  const now = Date.now();
+  const dt = (now - lastTick) / 1000;
+  lastTick = now;
+  try {
+    sim.update(dt, now, players, {
+      hurt: hurtPlayer,
+      kill: (pid) => io.to(pid).emit('kill', { name: '고블린' })
+    });
+    for (const p of players.values()) {
+      if (p.spawned) io.to(p.id).emit('gob', sim.snapshot(p.x, p.z));
+    }
+  } catch (e) {
+    console.error('고블린 업데이트 오류:', e);
+  }
+}, 50);
 
 // 15Hz 상태 전송 (나중에 주변 플레이어만 보내도록 변경 예정)
 setInterval(() => {
