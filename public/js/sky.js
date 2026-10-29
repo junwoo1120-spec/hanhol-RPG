@@ -15,18 +15,8 @@
  *   또는 Sky.weather.cloudCover = 0.8 처럼 직접 바꿔도 돼요.
  * 별똥별: 밤에 맑을 때 초당 확률 shootingStarChance(기본 0.01 = 100초에 한 번꼴). Sky.setShootingStarChance(0.05), Sky.shootStar() 로 바로 한 번 쏠 수도 있어요.
  *
- * 폭풍/번개/바람 연동 (v7):
- *   - 폭풍(storm)이 0.5 를 넘으면 태양 직사광이 거의 0 이 되고, 환경광은 어두운 쿨톤으로 바뀌어요.
- *   - 폭풍이 강할 때 가끔 번개가 쳐요 (화면이 짧게 번쩍 + 구름/땅/안개가 푸른 흰빛). Sky.strike() 로 바로 한 번, Sky.setLightning({ enabled, rate }) 로 조절.
- *   - 소리 연동: window.addEventListener('sky:lightning', e => ...) 또는 Sky.onLightning = (info) => ...  (info.thunderDelay 초 뒤에 천둥소리를 내면 자연스러워요)
- *   - 풀/나무/물결 연동: Sky.getWind() -> { dir, speed, x, z, gust, strength }, Sky.getWeatherNow() -> { cloudCover, storm, flash, wind }
- *
- * 관리자 날씨 패널 (v8): 닉네임이 adminNicks(박준우, 19)이면 위쪽 패널에 [🌦 날씨] 버튼이 생겨요.
- *   누르면 구름/폭풍/바람 슬라이더와 프리셋이 나오고, 바꾸면 서버(/api/sky-weather)에 저장돼서 모든 접속자 하늘이 몇 초 안에 똑같이 바뀌어요.
- *   서버에 sky-weather.cjs 가 안 붙어 있으면 "내 화면만" 바뀌어요. (번개 타이밍과 시간 배속은 각자 화면 기준이에요)
- *
  * 테스트용 주소 옵션:  ?skyspeed=60 (60배속)   ?skytime=0 (0=해뜸, 300=정오, 600=해짐, 900=한밤)
- *   ?skycloud=0.8 (구름 양)  ?skystorm=0.5  ?skywind=3  ?skywinddir=90  ?skymeteor=0.5 (별똥별 확률)  ?skylightning=0 (번개 끄기)
+ *   ?skycloud=0.8 (구름 양)  ?skystorm=0.5  ?skywind=3  ?skywinddir=90  ?skymeteor=0.5 (별똥별 확률)
  * 설정을 바꾸고 싶으면 이 파일을 불러오기 전에 window.SKY_OPTIONS = { latitude: 37, ... } 를 지정하세요.
  */
 import * as THREE from 'three';
@@ -41,27 +31,23 @@ const OPT = Object.assign({
   starCount: 3600,
   sunRadius: 0.038,   // 해 알맹이 크기(라디안). 실제보다 일부러 크게
   moonRadius: 0.06,
-  adminNicks: ['박준우', '19'],   // 이 닉네임으로 접속하면 화면 위쪽에 시간 배속 버튼이 나와요 (자기 화면만 바뀜)
+  adminNicks: ['박준우'],   // 이 닉네임으로 접속하면 화면 위쪽에 시간 배속 버튼이 나와요 (자기 화면만 바뀜)
   epoch: '2026-10-28T12:00:00+09:00',  // 기준 시각 (한국시간). 이 순간의 하루 진행도가 epochTime
   epochTime: 0,       // 기준 시각의 하루 진행(초): 0 = 해 뜸, 300 = 정오(남중), 600 = 해 짐, 900 = 한밤
   syncClock: true,    // true 면 서버 시계에 맞춰요 (false 면 기기 시계)
   shootingStarChance: 0.01,  // 별똥별: 초당 확률 (0.01 = 1초에 100분의 1)
   clouds: true,       // false 면 구름을 그리지 않아요 (느린 기기용)
   lights: true,       // false 면 땅/물 조명은 건드리지 않아요
-  syncWeather: true,  // true 면 서버(/api/sky-weather)가 정한 날씨를 모든 접속자가 똑같이 따라요 (서버에 없으면 자동으로 내 화면만)
-  lightning: true,    // false 면 번개 없음
-  lightningRate: 0.15,  // 폭풍이 최대일 때 초당 번개 확률 (0.15 = 평균 7초에 한 번)
   weather: {}         // 시작 날씨. 예: { cloudCover: 0.5 }
 }, (typeof window !== 'undefined' && window.SKY_OPTIONS) || {});
 { const m = /[?&]skyspeed=([\d.]+)/.exec(Q); if (m) OPT.speed = parseFloat(m[1]); }
 const qnum = (k) => { const m = new RegExp('[?&]' + k + '=(-?[\\d.]+)').exec(Q); return m ? parseFloat(m[1]) : null; };
 { const m = qnum('skymeteor'); if (m !== null) OPT.shootingStarChance = m; }
-{ const m = qnum('skylightning'); if (m !== null) OPT.lightning = m > 0; }
 // 날씨 값: 게임이 바꾸는 목표값(WX_T)과 화면에 보이는 현재값(WX). 현재값이 목표값으로 천천히 따라가요.
 const WX_T = Object.assign({ cloudCover: 0.35, storm: 0, windDir: 90, windSpeed: 1 }, OPT.weather);
 { const a = qnum('skycloud'), b = qnum('skystorm'), c = qnum('skywind'), d = qnum('skywinddir');
   if (a !== null) WX_T.cloudCover = a; if (b !== null) WX_T.storm = b; if (c !== null) WX_T.windSpeed = c; if (d !== null) WX_T.windDir = d; }
-const WX = { cloudCover: WX_T.cloudCover, storm: WX_T.storm, wx: 0, wz: 0, ox: 0, oz: 0, gust: 0, gt: 0 };
+const WX = { cloudCover: WX_T.cloudCover, storm: WX_T.storm, wx: 0, wz: 0, ox: 0, oz: 0 };
 { const a = WX_T.windDir * Math.PI / 180; WX.wx = Math.sin(a) * WX_T.windSpeed; WX.wz = -Math.cos(a) * WX_T.windSpeed; }
 let offset = 0;   // 테스트용 시간 이동(초)
 const CLOUD_SPEED = 0.02;   // 바람 1일 때 구름 무늬가 흐르는 속도 (하늘에서 초당 약 0.6도)
@@ -75,7 +61,7 @@ let skyTimeParam = null;
 { const m = /[?&]skytime=([\d.]+)/.exec(Q); if (m) { skyTimeParam = parseFloat(m[1]); offset = skyTimeParam - phaseNow(); } }
 
 // ---------------- 화면에 직접 띄우는 진단 (태블릿/폰에서 콘솔 없이 에러 확인) ----------------
-const SKY_VERSION = 'sky.js v8 (관리자 날씨 패널 + 서버 날씨 동기화)';
+const SKY_VERSION = 'sky.js v6 (구름 속도·패널 인식 개선)';
 const DEBUG = /[?&]skydebug=1/.test(Q);
 function say(text, bad) {
   try {
@@ -151,11 +137,7 @@ function buildSpeedPanel() {
       '#sky-speed button{cursor:pointer;padding:4px 9px;border-radius:7px;border:1px solid #d9b25c;background:#3a2d5c;color:#f6e3a1;font:700 12px sans-serif}' +
       '#sky-speed button.on{background:#d9b25c;color:#2a1a00}' +
       '#sky-speed button:active{filter:brightness(1.4)}' +
-      'body.uw-open #sky-speed,body.uw-open #sky-wx{display:none}' +
-      '#sky-wx{position:fixed;left:50%;transform:translateX(-50%);z-index:8;width:min(360px,94vw);box-sizing:border-box;padding:7px 10px;border-radius:12px;background:rgba(20,14,38,.88);border:1px solid rgba(217,178,92,.75);color:#f6e3a1;font:600 12px sans-serif;user-select:none;-webkit-user-select:none}' +
-      '#sky-wx .wx-s{text-align:center;margin-bottom:5px}#sky-wx .wx-r{display:flex;gap:5px;justify-content:center;margin-bottom:5px}' +
-      '#sky-wx .wx-r button{cursor:pointer;padding:4px 9px;border-radius:7px;border:1px solid #d9b25c;background:#3a2d5c;color:#f6e3a1;font:700 12px sans-serif}' +
-      '#sky-wx .wx-r2{display:grid;grid-template-columns:64px 1fr 38px;gap:6px;align-items:center;margin:3px 0}#sky-wx .wx-r2 b{text-align:right}#sky-wx input{width:100%;accent-color:#d9b25c}';
+      'body.uw-open #sky-speed{display:none}';
     document.head.appendChild(st);
   }
   const el = document.createElement('div'); el.id = 'sky-speed';
@@ -164,8 +146,7 @@ function buildSpeedPanel() {
   const BTN = [
     ['실시간', 'real', () => S().reset()],
     ['⏸', 0, () => S().setSpeed(0)], ['×10', 10, () => S().setSpeed(10)], ['×60', 60, () => S().setSpeed(60)], ['×300', 300, () => S().setSpeed(300)],
-    ['해뜸', 't0', () => S().setTime(0)], ['정오', 't300', () => S().setTime(300)], ['해짐', 't600', () => S().setTime(600)], ['한밤', 't900', () => S().setTime(900)],
-    ['🌦 날씨', 'wx', () => toggleWeatherPanel()]
+    ['해뜸', 't0', () => S().setTime(0)], ['정오', 't300', () => S().setTime(300)], ['해짐', 't600', () => S().setTime(600)], ['한밤', 't900', () => S().setTime(900)]
   ];
   const btns = BTN.map(([txt, key, fn]) => {
     const b = document.createElement('button'); b.textContent = txt; b.tabIndex = -1;
@@ -179,18 +160,16 @@ function buildSpeedPanel() {
     const st = computeState(nowSec());
     lab.textContent = (st.isDay ? '☀️ 낮 ' : '🌙 밤 ') + two(st.time / 60) + ':' + two(st.time % 60) + ' / 20:00  ·  ×' + OPT.speed;
     const real = OPT.speed === 1 && offset === 0;
-    for (const { b, key } of btns) b.classList.toggle('on', key === 'wx' ? !!document.getElementById('sky-wx') : key === 'real' ? real : (typeof key === 'number' && !real && OPT.speed === key));
-    placeWx();
+    for (const { b, key } of btns) b.classList.toggle('on', key === 'real' ? real : (typeof key === 'number' && !real && OPT.speed === key));
   }
   refresh(); el._t = setInterval(refresh, 250);
   document.body.appendChild(el);
 }
 function removeSpeedPanel() {
-  const w = document.getElementById('sky-wx'); if (w) { clearInterval(w._t); w.remove(); }
   const el = document.getElementById('sky-speed');
   if (el) { clearInterval(el._t); el.remove(); }
 }
-let lastNickSeen = null, curNick = '';
+let lastNickSeen = null;
 if (typeof document !== 'undefined' && typeof setInterval !== 'undefined') {
   setInterval(() => {
     try {
@@ -201,93 +180,11 @@ if (typeof document !== 'undefined' && typeof setInterval !== 'undefined') {
       const loggedIn = !!login && login.style.display === 'none';
       const nick = s ? s.textContent : (loggedIn && inp ? inp.value : '');
       const ok = !!nick && OPT.adminNicks.some((n) => normNick(n) === normNick(nick));
-      curNick = ok ? normNick(nick) : '';
       const has = !!document.getElementById('sky-speed');
       if (DEBUG && nick !== lastNickSeen) { lastNickSeen = nick; if (nick) say('닉네임 인식: "' + normNick(nick) + '" -> ' + (ok ? '배속 패널 켬' : '배속 패널 없음 (대상 닉네임 아님)'), !ok); }
       if (ok && !has) buildSpeedPanel(); else if (!ok && has) removeSpeedPanel();
     } catch (e) { if (DEBUG) say('패널 오류: ' + (e && e.message), true); }
   }, 500);
-}
-
-// ---------------- 날씨 서버 동기화 + 관리자 날씨 패널 ----------------
-// 서버(/api/sky-weather)가 "지금 날씨"를 하나만 들고 있고, 접속자 모두가 4초마다 확인해서 똑같이 맞춰요.
-// 새로 들어온 사람은 바로 그 날씨로 시작하고, 바뀔 때는 몇 초에 걸쳐 부드럽게 따라가요. 주소에 ?skycloud 같은 테스트 값이 있으면 동기화를 끄고 그 값을 써요.
-const WX_API = '/api/sky-weather';
-const WX_SYNC = !!OPT.syncWeather && typeof fetch !== 'undefined' && typeof location !== 'undefined' && /^https?:/.test(location.protocol) && !/[?&]sky(cloud|storm|wind|winddir)=/.test(Q);
-let wxVer = -1, wxFails = 0, wxStatus = WX_SYNC ? '서버 확인 중…' : '내 화면만 (동기화 꺼짐)', wxSendTimer = null;
-const WX_KEYS = ['cloudCover', 'storm', 'windSpeed', 'windDir'];
-
-async function wxPoll() {
-  try {
-    const r = await fetch(WX_API, { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const j = await r.json();
-    wxFails = 0; wxStatus = '모두에게 연동 중';
-    if (j && typeof j.v === 'number' && j.v !== wxVer) {
-      const first = wxVer < 0; wxVer = j.v;
-      const w = j.weather;
-      if (w && WX_KEYS.every((k) => Number.isFinite(+w[k]))) {
-        const v = {}; WX_KEYS.forEach((k) => { v[k] = +w[k]; });
-        window.Sky.setWeather(v, first ? { instant: true } : undefined);
-        const p = document.getElementById('sky-wx'); if (p && p._fill) p._fill(v);
-        if (DEBUG) say('서버 날씨 적용 v' + j.v + ': ' + JSON.stringify(v), false);
-      }
-    }
-  } catch (e) { wxFails++; wxStatus = '서버 연동 없음 (내 화면만)'; if (DEBUG && wxFails === 1) say('날씨 서버 확인 실패: ' + (e && e.message), true); }
-  setTimeout(wxPoll, wxFails > 3 ? 60000 : 4000);
-}
-
-function wxSend(v) {   // 관리자가 바꾼 날씨를 서버에 저장 (슬라이더를 끄는 동안은 마지막 값만 보내요)
-  if (!WX_SYNC) { wxStatus = '내 화면만 (동기화 꺼짐)'; return; }
-  clearTimeout(wxSendTimer);
-  wxSendTimer = setTimeout(async () => {
-    try {
-      const r = await fetch(WX_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nick: curNick, weather: v }) });
-      if (r.status === 403) { wxStatus = '서버가 이 닉네임을 관리자로 인정하지 않아요 (내 화면만)'; return; }
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const j = await r.json(); if (typeof j.v === 'number') wxVer = j.v;
-      wxStatus = '모두에게 적용했어요 ✓';
-    } catch (e) { wxStatus = '서버에 보내지 못했어요 (내 화면만 바뀜)'; }
-  }, 250);
-}
-
-const WX_PRESETS = [['맑음', { cloudCover: 0.1, storm: 0, windSpeed: 0.6 }], ['구름 조금', { cloudCover: 0.4, storm: 0, windSpeed: 1 }],
-                    ['흐림', { cloudCover: 0.8, storm: 0.1, windSpeed: 1.3 }], ['폭풍', { cloudCover: 0.95, storm: 0.9, windSpeed: 3 }]];
-function placeWx() {
-  const el = document.getElementById('sky-wx'), sp = document.getElementById('sky-speed');
-  if (el && sp) el.style.top = (sp.getBoundingClientRect().bottom + 6) + 'px';
-}
-function toggleWeatherPanel() {
-  const old = document.getElementById('sky-wx');
-  if (old) { clearInterval(old._t); old.remove(); return; }
-  const el = document.createElement('div'); el.id = 'sky-wx';
-  ['pointerdown', 'pointermove', 'pointerup', 'touchstart', 'touchmove'].forEach((ev) => el.addEventListener(ev, (e) => e.stopPropagation(), { passive: true }));
-  const st = document.createElement('div'); st.className = 'wx-s'; el.appendChild(st);
-  const sliders = {};
-  const read = () => { const v = {}; WX_KEYS.forEach((k) => { v[k] = +sliders[k].input.value; }); return v; };
-  const fill = (w) => WX_KEYS.forEach((k) => { sliders[k].input.value = w[k]; sliders[k].out.textContent = Number(w[k]).toFixed(k === 'windDir' ? 0 : 2); });
-  const pr = document.createElement('div'); pr.className = 'wx-r';
-  for (const [txt, w] of WX_PRESETS) {
-    const b = document.createElement('button'); b.textContent = txt; b.tabIndex = -1;
-    b.addEventListener('click', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      const v = Object.assign({ windDir: window.Sky.getWeather().windDir }, w);
-      window.Sky.setWeather(v); fill(v); wxSend(v); b.blur();
-    });
-    pr.appendChild(b);
-  }
-  el.appendChild(pr);
-  for (const [k, label, mn, mx, step] of [['cloudCover', '구름 양', 0, 1, 0.01], ['storm', '폭풍', 0, 1, 0.01], ['windSpeed', '바람 세기', 0, 4, 0.05], ['windDir', '바람 방향', 0, 359, 1]]) {
-    const row = document.createElement('label'); row.className = 'wx-r2';
-    const t = document.createElement('span'); t.textContent = label;
-    const input = document.createElement('input'); input.type = 'range'; input.min = mn; input.max = mx; input.step = step; input.tabIndex = -1;
-    const out = document.createElement('b');
-    input.addEventListener('input', () => { out.textContent = Number(input.value).toFixed(k === 'windDir' ? 0 : 2); const v = read(); window.Sky.setWeather(v, { instant: true }); wxSend(v); });
-    row.append(t, input, out); el.appendChild(row); sliders[k] = { input, out };
-  }
-  el._fill = fill; fill(window.Sky.getWeather());
-  st.textContent = wxStatus; el._t = setInterval(() => { st.textContent = wxStatus; }, 500);
-  document.body.appendChild(el); placeWx();
 }
 
 // ---------------- 셰이더 (GLSL 주석은 영어로) ----------------
@@ -327,8 +224,6 @@ uniform vec3 uMetA[3];
 uniform vec3 uMetB[3];
 uniform vec3 uMetP;
 uniform float uMetVis;
-uniform float uFlash;
-uniform vec3 uFlashDir;
 varying vec3 vDir;
 
 float hash21(vec2 p) {
@@ -432,9 +327,6 @@ void main() {
   if (h > 0.0 && uCover >= 0.0) {
     float thr = mix(0.70, 0.30, uCover) - 0.06 * uStorm;
     float hf = smoothstep(0.0, 0.16, h);
-    // lightning: clouds light up from inside, strongest toward the strike direction
-    float fl = uFlash * (0.30 + 0.70 * pow(max(dot(d, uFlashDir), 0.0), 2.5));
-    vec3 fcol = vec3(0.78, 0.86, 1.0) * fl;
     vec3 amb = mix(uHor, uTop, 0.55) * 0.92 + 0.05;
     float lum = dot(amb, vec3(0.30, 0.59, 0.11));
     amb = mix(amb, vec3(lum), 0.45);
@@ -444,7 +336,7 @@ void main() {
     vec2 wd = uWindDir;
     vec2 pp = vec2(dot(uh, wd) * 0.35, dot(uh, vec2(-wd.y, wd.x)) * 2.2);
     float ci = smoothstep(0.52, 0.86, fbm4(pp)) * 0.32 * (1.0 - uCover * 0.5) * (1.0 - uStorm) * hf;
-    vec3 cic = amb + uLightCol * uLightAmt * 0.9 + fcol * 0.9;
+    vec3 cic = amb + uLightCol * uLightAmt * 0.9;
     col = mix(col, clamp(cic, 0.0, 1.0), ci);
 
     // low clouds with simple self shadowing and silver lining
@@ -454,14 +346,13 @@ void main() {
     float dens2 = cloudDensity(uv + ld * 0.05, thr);
     float lit = mix(1.0, 0.30, clamp(dens2 * 1.2 - dens * 0.2, 0.0, 1.0));
     vec3 base = amb * (1.0 - 0.45 * uStorm);
-    vec3 cc = base + uLightCol * uLightAmt * lit * (1.0 - 0.6 * uStorm) + fcol * (0.7 + 0.9 * dens) * 1.5;
+    vec3 cc = base + uLightCol * uLightAmt * lit * (1.0 - 0.6 * uStorm);
     float silver = pow(max(dot(d, uLightDir), 0.0), 8.0) * (1.0 - dens * 0.55) * uLightAmt;
     cc += uLightCol * silver * 0.5;
     float ca = dens * hf * mix(0.92, 1.0, uStorm);
     col = mix(col, clamp(cc, 0.0, 1.0), ca);
   }
 
-  col += vec3(0.62, 0.72, 1.0) * uFlash * (0.25 + 0.75 * pow(max(dot(d, uFlashDir), 0.0), 2.5)) * 0.22 * step(0.0, h);
   gl_FragColor = vec4(col, 1.0);
 }`;
 
@@ -573,8 +464,6 @@ function stepWeather(dt) {
   const a = rad(WX_T.windDir), sp = Math.max(0, WX_T.windSpeed);
   WX.wx += (Math.sin(a) * sp - WX.wx) * kw;
   WX.wz += (-Math.cos(a) * sp - WX.wz) * kw;
-  WX.gt += dt;
-  WX.gust = 0.5 + 0.5 * Math.sin(WX.gt * 0.9) * Math.sin(WX.gt * 0.37 + 1.7);   // 0~1 천천히 변하는 돌풍
   // 구름 무늬가 바람 방향으로 흘러가도록 (무늬 좌표는 반대로 이동)
   WX.ox = (WX.ox - WX.wx * dt * CLOUD_SPEED) % 50000;
   WX.oz = (WX.oz - WX.wz * dt * CLOUD_SPEED) % 50000;
@@ -613,37 +502,6 @@ function stepMeteors(dt, fwd, vis) {
   if (fwd && vis > 0.3 && Math.random() < OPT.shootingStarChance * dt) spawnMeteor(fwd);
 }
 
-// ---- 번개 (폭풍이 강할 때 가끔 번쩍여요) ----
-const LT = { t: -1, amp: 1, level: 0, dir: [0, 0.5, -1], dist: 0.5 };
-const FLASH_P = [[0, 1.0, 0.07], [0.13, 0.65, 0.06], [0.30, 0.9, 0.12]];   // [시작(초), 세기, 사라지는 시간(초)]: 짧게 세 번 번쩍
-function flashAt(t) {
-  let f = 0;
-  for (const p of FLASH_P) { const x = t - p[0]; if (x >= 0) f = Math.max(f, p[1] * Math.min(1, x / 0.015) * Math.exp(-x / p[2])); }
-  return f;
-}
-function strikeLightning(opts) {
-  const o = opts || {};
-  const az = o.azimuth !== undefined ? rad(o.azimuth) : Math.random() * Math.PI * 2;
-  const alt = 0.15 + Math.random() * 0.55;
-  LT.dir = [Math.sin(az) * Math.cos(alt), Math.sin(alt), -Math.cos(az) * Math.cos(alt)];
-  LT.dist = o.distance !== undefined ? clamp(o.distance, 0, 1) : Math.random();
-  LT.amp = (0.65 + 0.35 * Math.random()) * lerp(1, 0.5, LT.dist);   // 멀수록 약하게
-  LT.t = 0;
-  const detail = { distance: LT.dist, intensity: LT.amp, direction: LT.dir.slice(), thunderDelay: 0.4 + LT.dist * 6 };
-  try {
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('sky:lightning', { detail }));
-      if (window.Sky && typeof window.Sky.onLightning === 'function') window.Sky.onLightning(detail);
-    }
-  } catch (e) { /* 소리 연동 코드의 오류가 하늘을 멈추면 안 돼요 */ }
-}
-function stepLightning(dt) {
-  if (LT.t >= 0) { LT.t += dt; if (LT.t > 0.9) LT.t = -1; }
-  const rate = OPT.lightning ? OPT.lightningRate * ss((WX.storm - 0.45) / 0.35) : 0;   // 폭풍 0.5 부터 가끔, 1 이면 lightningRate
-  if (LT.t < 0 && rate > 0 && Math.random() < rate * dt) strikeLightning();
-  LT.level = LT.t >= 0 ? flashAt(LT.t) * LT.amp : 0;
-}
-
 // 하늘에 필요한 모든 값을 한 번에 계산 (THREE 없이도 동작 -> 테스트/미리보기에서 그대로 사용)
 function buildUniforms(st) {
   const c = skyColors(st.altitude);
@@ -680,11 +538,10 @@ function buildUniforms(st) {
       uLightCol: useSun ? [1, lerp(0.97, 0.62, k), lerp(0.9, 0.42, k)] : [0.62, 0.72, 1.0],
       uLightAmt: Math.max(sunAmt, moonAmt) * (1 - 0.25 * storm),
       uMetA: [].concat(MET[0].A, MET[1].A, MET[2].A), uMetB: [].concat(MET[0].B, MET[1].B, MET[2].B),
-      uMetP: metP, uMetVis: starVis, uFlash: LT.level, uFlashDir: LT.dir
+      uMetP: metP, uMetVis: starVis
     },
     star: { uH: st.hourAngle, uAlpha: starVis },
     k, hor, sunDir, moonDir, lvl,
-    stormK: ss((WX.storm - 0.15) / 0.45), flash: LT.level, flashDir: LT.dir,   // stormK: 0.6 이상이면 1 (직사광 거의 0)
     shade: clamp(1 - 0.45 * cover - 0.35 * storm, 0.25, 1)   // 날씨에 따른 땅 밝기 배율
   };
 }
@@ -734,8 +591,7 @@ function install(scene) {
     uMoonReady: moonReady, uMoonTex: { value: moonTex },
     uCover: { value: 0 }, uStorm: { value: 0 }, uWindOff: { value: new THREE.Vector2() }, uWindDir: { value: new THREE.Vector2(1, 0) },
     uCT: { value: 0 }, uLightDir: { value: new THREE.Vector3(0, 1, 0) }, uLightCol: { value: new THREE.Vector3(1, 1, 1) }, uLightAmt: { value: 1 },
-    uMetA: { value: [V3(), V3(), V3()] }, uMetB: { value: [V3(), V3(), V3()] }, uMetP: { value: new THREE.Vector3(-1, -1, -1) }, uMetVis: { value: 0 },
-    uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 0.5, -1) }
+    uMetA: { value: [V3(), V3(), V3()] }, uMetB: { value: [V3(), V3(), V3()] }, uMetP: { value: new THREE.Vector3(-1, -1, -1) }, uMetVis: { value: 0 }
   };
   const dome = new THREE.Mesh(
     new THREE.SphereGeometry(10, 48, 24),
@@ -772,7 +628,6 @@ function install(scene) {
   };
   const nightHemi = new THREE.Color(0x7f90c8), nightGround = new THREE.Color(0x1a2036);
   const warmSun = new THREE.Color(0xff9a55), moonCol = new THREE.Color(0x9fb4ff);
-  const stormHemi = new THREE.Color(0x6a7790), stormGround = new THREE.Color(0x181d2a), flashCol = new THREE.Color(0xcfdcff);
   const fwdV = new THREE.Vector3();
   let lastMs = performance.now();
 
@@ -791,7 +646,6 @@ function install(scene) {
     const nowMs = performance.now(), dt = Math.min(0.1, (nowMs - lastMs) / 1000);
     lastMs = nowMs;
     stepWeather(dt);
-    stepLightning(dt);
 
     const st = computeState(nowSec());
     // 별똥별은 메인 화면에서만, 카메라가 보는 방향 근처에 생겨요
@@ -814,14 +668,12 @@ function install(scene) {
       uni.uMetB.value[i].set(d.uMetB[i * 3], d.uMetB[i * 3 + 1], d.uMetB[i * 3 + 2]);
     }
     uni.uMetP.value.set(...d.uMetP); uni.uMetVis.value = d.uMetVis;
-    uni.uFlash.value = d.uFlash; uni.uFlashDir.value.set(...d.uFlashDir);
     su.uH.value = U.star.uH; su.uAlpha.value = U.star.uAlpha;
     su.uTime.value = nowMs / 1000; su.uPx.value = renderer.getPixelRatio();
     stars.visible = U.star.uAlpha > 0.01;
 
     // 먼 땅이 하늘 지평선 색으로 자연스럽게 사라지게
     if (scene.fog) scene.fog.color.setRGB(U.hor[0], U.hor[1], U.hor[2], THREE.SRGBColorSpace);
-    if (scene.fog && U.flash > 0.01) scene.fog.color.lerp(flashCol, Math.min(1, U.flash) * 0.35);
     if (scene.background && scene.background.isColor) scene.background.setRGB(U.hor[0], U.hor[1], U.hor[2], THREE.SRGBColorSpace);
 
     if (!OPT.lights) return;
@@ -830,27 +682,16 @@ function install(scene) {
       hemi.intensity = lerp(day.hi * lerp(0.78, 1.05, ss(U.lvl)), 0.32, dk) * lerp(1, U.shade, 0.6);
       hemi.color.lerpColors(day.hc, nightHemi, dk);
       hemi.groundColor.lerpColors(day.hg, nightGround, dk);
-      // 폭풍: 환경광이 어둡고 차가운 색으로
-      hemi.intensity *= lerp(1, 0.7, U.stormK);
-      hemi.color.lerp(stormHemi, 0.75 * U.stormK);
-      hemi.groundColor.lerp(stormGround, 0.6 * U.stormK);
-      // 번개: 잠깐 푸른 흰빛으로 밝아져요
-      if (U.flash > 0.01) { hemi.intensity += U.flash * Math.max(0.9, day.hi * 1.4); hemi.color.lerp(flashCol, Math.min(1, U.flash)); }
     }
     if (sunL) {
       if (st.sun.sin > -0.05) {            // 해가 떠 있을 때: 해가 빛을 줌 (질 때는 주황빛, 흐리면 약하게)
-        sunL.intensity = day.si * ss((st.sun.sin + 0.03) / 0.2) * lerp(0.55, 1.08, ss(U.lvl)) * U.shade * (1 - 0.95 * U.stormK);   // 폭풍이면 직사광 거의 0
+        sunL.intensity = day.si * ss((st.sun.sin + 0.03) / 0.2) * lerp(0.55, 1.08, ss(U.lvl)) * U.shade;
         sunL.color.lerpColors(day.sc, warmSun, U.k);
         sunL.position.set(U.sunDir[0] * 100, U.sunDir[1] * 100, U.sunDir[2] * 100);
       } else {                             // 밤: 달빛
-        sunL.intensity = 0.32 * ss(st.moon.sin / 0.25) * U.shade * (1 - 0.8 * U.stormK);
+        sunL.intensity = 0.32 * ss(st.moon.sin / 0.25) * U.shade;
         sunL.color.copy(moonCol);
         sunL.position.set(U.moonDir[0] * 100, U.moonDir[1] * 100, U.moonDir[2] * 100);
-      }
-      if (U.flash > 0.01) {   // 번개가 친 방향에서 푸른 흰빛이 잠깐 비춰요
-        sunL.intensity += U.flash * 1.6;
-        sunL.color.lerp(flashCol, Math.min(1, U.flash));
-        sunL.position.set(U.flashDir[0] * 100, Math.max(30, U.flashDir[1] * 100), U.flashDir[2] * 100);
       }
     }
   }
@@ -909,20 +750,8 @@ if (typeof window !== 'undefined') {
     },
     getWeather: () => ({ ...WX_T }),
     setShootingStarChance: (v) => { OPT.shootingStarChance = v; },   // 초당 확률 (0.01 = 100초에 한 번)
-    onLightning: null,   // Sky.onLightning = (info) => {...}  (info: distance 0~1, intensity, direction, thunderDelay 초)
-    strike: (opts) => strikeLightning(opts),   // 테스트용: 지금 바로 번개 한 번. opts: { azimuth: 도, distance: 0~1 }
-    setLightning: (o) => { if (!o) return; if (o.enabled !== undefined) OPT.lightning = !!o.enabled; if (o.rate !== undefined) OPT.lightningRate = o.rate; },
-    // 풀/나무/물결 연동용: 지금 화면에 적용 중인(부드럽게 변하는) 바람. strength = 속도 x 돌풍. dir: 북0 동90 남180 서270, x/z: 게임 세계 방향 (동=+x, 북=-z)
-    getWind: () => {
-      const sp = Math.hypot(WX.wx, WX.wz);
-      const dir = sp > 0.01 ? (deg(Math.atan2(WX.wx, -WX.wz)) + 360) % 360 : WX_T.windDir;
-      return { dir, speed: sp, x: WX.wx, z: WX.wz, gust: WX.gust, strength: sp * (1 + WX.gust * (0.25 + 0.6 * WX.storm)) };
-    },
-    getWeatherNow: () => ({ cloudCover: WX.cloudCover, storm: WX.storm, flash: LT.level, wind: window.Sky.getWind() }),
     shootStar: () => { const f = [0, 0.5, -0.85]; spawnMeteor(f); }  // 테스트용: 지금 바로 한 번 (카메라 방향은 무시)
   };
 }
 
-if (WX_SYNC) wxPoll();
-
-export const __sky = { computeState, buildUniforms, stepWeather, stepLightning, strikeLightning, LT, stepMeteors, spawnMeteor, makeStarData, DOME_VS, DOME_FS, STAR_VS, STAR_FS, OPT, WX, WX_T, MET };
+export const __sky = { computeState, buildUniforms, stepWeather, stepMeteors, spawnMeteor, makeStarData, DOME_VS, DOME_FS, STAR_VS, STAR_FS, OPT, WX, WX_T, MET };
