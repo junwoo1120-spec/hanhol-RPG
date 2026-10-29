@@ -270,7 +270,8 @@ function parsePlayer(p) {
       y: p[3],
       z: p[4],
       ry: p[5],
-      eq: p[6] === 1
+      eq: p[6] === 1,
+      level: Number(p[7]) || 1
     };
   }
 
@@ -282,7 +283,8 @@ function parsePlayer(p) {
       y: p.y ?? 0,
       z: p.z,
       ry: p.ry ?? 0,
-      eq: !!p.eq
+      eq: !!p.eq,
+      level: Number(p.level) || 1
     };
   }
 
@@ -1636,7 +1638,7 @@ function boot(socket, { id, seed }, nick, mode) {
     ['/ui/icon_quest.png', '퀘스트'],
     ['/ui/icon_trade.png', '거래'],
   ];
-  const MENU_SOON = ['퀘스트는 아직 준비 중이에요', '거래는 아직 준비 중이에요'];
+  const MENU_SOON = ['퀘스트는 아직 준비 중이에요'];
   const menuSlots = [];
   const menuEl = bui.querySelector('.bui-menu');
 
@@ -1667,7 +1669,8 @@ function boot(socket, { id, seed }, nick, mode) {
     b.classList.add('flash');
     setTimeout(() => b.classList.remove('flash'), 150);
     if (i === WIN_TABS.length) { toggleStatus(); return; }   // 5번째 = 상태창(두루마리)
-    if (i > WIN_TABS.length) { toast(MENU_SOON[i - WIN_TABS.length - 1]); return; }   // 퀘스트·거래: 아직 모양만
+    if (i === WIN_TABS.length + 2) { toggleTrade(); return; }   // 7번째 = 거래 (주변 플레이어 목록)
+    if (i > WIN_TABS.length) { toast(MENU_SOON[i - WIN_TABS.length - 1]); return; }   // 퀘스트: 아직 모양만
     toggleWin(i);
   }
 
@@ -1783,6 +1786,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   function openWin(i) {
+    closeTrade();
     scrEl.classList.remove('open', 'show');   // 상태창 두루마리가 열려 있으면 바로 닫음
     winIdx = i;
     renderWin();
@@ -1797,6 +1801,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   }
   function closeWin() {
     closeStatus();
+    closeTrade();
     uiOpen = false;
     document.body.classList.remove('uw-open');
     winEl.style.display = 'none';
@@ -1937,6 +1942,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   function openStatus() {
+    closeTrade();
     winEl.style.display = 'none';
     renderScr();
     clearTimeout(scrHideT);
@@ -1961,6 +1967,113 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   function toggleStatus() {
     if (uiOpen && scrEl.classList.contains('open')) closeWin();
     else openStatus();
+  }
+
+  // ---------- 거래 창: 주변 플레이어 목록 (이름 + 레벨만 표시, 직업은 표시 안 함) ----------
+  const TRADE_RANGE = Infinity;   // 이 거리(m) 안의 플레이어만 목록에 표시. 지금은 접속자 전부 (예: 80 으로 바꾸면 가까운 사람만)
+  const tradeStyle = document.createElement('style');
+  tradeStyle.textContent = `
+.trade{position:fixed;inset:0;z-index:61;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#e8dcc0;user-select:none;-webkit-user-select:none}
+.trade-box{position:relative;display:flex;flex-direction:column;box-sizing:border-box;width:min(94vw,460px);max-height:min(88vh,720px);border:2px solid #4a4030;border-radius:6px;background:linear-gradient(#1c1a18,#121110);box-shadow:0 0 0 2px #070605,inset 0 0 0 1px #5a4a30,0 12px 40px rgba(0,0,0,.8)}
+.trade-hd{flex:none;display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid #3a3226;background:linear-gradient(#26221c,#1a1814)}
+.trade-hd .ic{flex:none;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 35% 30%,#4a3a22,#1f170c);border:2px solid #b8924a}
+.trade-hd .ic img{width:28px;height:28px;object-fit:contain}
+.trade-hd h2{margin:0;font-size:24px;font-weight:700;color:#f1e6c8;text-shadow:0 2px 0 #000}
+.trade-x{margin-left:auto;font-size:24px;line-height:1;padding:6px 8px;cursor:pointer;color:#bba880}
+.trade-x:hover{color:#fff}
+.trade-sec{flex:none;padding:14px 16px 8px;font-size:19px;font-weight:700;color:#e2c98a;text-shadow:0 1px 0 #000}
+.trade-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding:0 12px 14px;touch-action:pan-y;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#5a4a30 transparent}
+.trade-row{display:flex;align-items:center;gap:12px;padding:8px 10px;margin-bottom:8px;border:1px solid #3a3226;border-radius:5px;background:linear-gradient(#24211d,#1a1816);box-shadow:inset 0 0 0 1px rgba(255,235,190,.04)}
+.trade-pt{position:relative;flex:none;width:58px;height:58px;box-sizing:border-box;border:2px solid #8a6b3a;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;color:#fff;text-shadow:0 2px 3px #000;box-shadow:0 0 0 1px #0a0705}
+.trade-pt i{position:absolute;right:-5px;bottom:-5px;width:11px;height:11px;border-radius:50%;background:#46d560;border:2px solid #121110;box-shadow:0 0 5px #46d560}
+.trade-info{flex:1;min-width:0}
+.trade-nm{font-size:18px;font-weight:700;color:#f4ead0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trade-lv{margin-top:4px;font-size:14px;color:#a89c82}
+.trade-btn{flex:none;padding:10px 16px;border:2px solid #9a7a3e;border-radius:4px;background:linear-gradient(#4a3a24,#2e2416);color:#f1dfb6;font:700 16px 'Galmuri11','Malgun Gothic',sans-serif;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,235,190,.25),0 2px 4px rgba(0,0,0,.5);text-shadow:0 1px 0 #000}
+.trade-btn:hover{filter:brightness(1.2)}
+.trade-btn:active{transform:translateY(1px)}
+.trade-empty{padding:30px 10px;text-align:center;font-size:15px;color:#8f846c;line-height:1.7}
+`;
+  document.head.appendChild(tradeStyle);
+  const tradeEl = document.createElement('div');
+  tradeEl.className = 'trade';
+  document.body.appendChild(tradeEl);
+  let tradeOn = false, tradeTimer = 0, tradeOpenT = 0, tradeKey = '';
+
+  const portraitColor = (name) => {
+    let h = 0;
+    for (const ch of String(name)) h = (h * 31 + ch.codePointAt(0)) % 360;
+    return 'linear-gradient(135deg,hsl(' + h + ',32%,34%),hsl(' + ((h + 40) % 360) + ',36%,16%))';
+  };
+  const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function tradePlayers() {
+    const list = [];
+    for (const [pid, r] of remotes) {
+      const d = Math.hypot(r.t.x - me.x, r.t.z - me.z);
+      if (d <= TRADE_RANGE) list.push({ pid, nick: r.nick || '플레이어', level: r.level || 1, d });
+    }
+    list.sort((a, b) => a.d - b.d);
+    return list;
+  }
+
+  function renderTrade(force) {
+    const ps = tradePlayers();
+    const key = ps.map((p) => p.pid + '|' + p.nick + '|' + p.level).join(',');
+    if (!force && key === tradeKey) return;   // 바뀐 게 없으면 다시 그리지 않음 (스크롤·버튼 눌림 유지)
+    tradeKey = key;
+    const prev = tradeEl.querySelector('.trade-list');
+    const scrollTop = prev ? prev.scrollTop : 0;
+    const rows = ps.length
+      ? ps.map((p) =>
+          '<div class="trade-row"><div class="trade-pt" style="background:' + portraitColor(p.nick) + '">' + esc(Array.from(p.nick)[0] || '?') + '<i></i></div>' +
+          '<div class="trade-info"><div class="trade-nm">' + esc(p.nick) + '</div><div class="trade-lv">Lv.' + p.level + '</div></div>' +
+          '<button class="trade-btn" data-trade="' + esc(p.pid) + '">거래하기</button></div>').join('')
+      : '<div class="trade-empty">주변에 거래할 수 있는<br>플레이어가 없어요</div>';
+    tradeEl.innerHTML =
+      '<div class="trade-box"><div class="trade-hd"><div class="ic"><img src="/ui/icon_trade.png" alt="" draggable="false"></div><h2>거래하기</h2><div class="trade-x" data-tclose="1">✕</div></div>' +
+      '<div class="trade-sec">주변 플레이어</div><div class="trade-list">' + rows + '</div></div>';
+    const lst = tradeEl.querySelector('.trade-list');
+    if (lst) lst.scrollTop = scrollTop;
+  }
+
+  tradeEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (performance.now() - tradeOpenT < 400) return;   // 메뉴를 연 그 터치의 click 이 바로 닫기로 처리되는 것 방지
+    if (t === tradeEl || t.closest('[data-tclose]')) { closeWin(); return; }
+    const b = t.closest('[data-trade]');
+    if (b) {
+      const r = remotes.get(b.getAttribute('data-trade'));
+      toast((r && r.nick ? r.nick + '님과의 ' : '') + '거래는 아직 준비 중이에요');   // TODO: 거래 신청 소켓 이벤트 연결
+    }
+  });
+
+  function openTrade() {
+    winEl.style.display = 'none';
+    scrEl.classList.remove('open', 'show');
+    tradeOn = true;
+    tradeOpenT = performance.now();
+    renderTrade(true);
+    tradeEl.style.display = 'flex';
+    clearInterval(tradeTimer);
+    tradeTimer = setInterval(() => renderTrade(false), 500);   // 열려 있는 동안 접속·퇴장을 바로 반영
+    if (!uiOpen) {
+      uiOpen = true;
+      document.body.classList.add('uw-open');
+      for (const k in keys) keys[k] = false;
+      jumpHeld = false;
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
+    }
+  }
+  function closeTrade() {
+    tradeOn = false;
+    clearInterval(tradeTimer);
+    tradeEl.style.display = 'none';
+  }
+  function toggleTrade() {
+    if (uiOpen && tradeOn) closeWin();
+    else openTrade();
   }
 
   // ---------- 화면 크기에 맞춰 터치 UI 크기 조절 ----------
@@ -2034,6 +2147,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       }
 
       remote.eq = !!p.eq;
+      remote.nick = p.nick || '플레이어';
+      remote.level = p.level || 1;
       remote.t = { x, y, z, ry };
     }
 
