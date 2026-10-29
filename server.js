@@ -5,6 +5,8 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
+// .mjs 파일(goblin.mjs)을 자바스크립트로 인식시키기. 안 하면 브라우저가 모듈 로드를 거부해요.
+try { if (express.static.mime) express.static.mime.define({ 'application/javascript': ['mjs'] }); } catch (e) { /* 무시 */ }
 app.use(express.static('public'));
 
 const SEED = Number(process.env.WORLD_SEED) || 12345;
@@ -36,7 +38,7 @@ io.on('connection', (socket) => {
       eq: false, eqT: 0, atkT: 0,
       level: 1   // 레벨 (아직 성장 시스템이 없어서 1 고정. 나중에 여기 값만 바꾸면 거래 목록에도 반영됨)
     });
-    socket.emit('init', { id: socket.id, seed: SEED });
+    socket.emit('init', { id: socket.id, seed: SEED, now: Date.now() });
   });
 
   socket.on('move', (m) => {
