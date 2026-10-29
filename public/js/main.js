@@ -1638,7 +1638,6 @@ function boot(socket, { id, seed }, nick, mode) {
     ['/ui/icon_quest.png', '퀘스트'],
     ['/ui/icon_trade.png', '거래'],
   ];
-  const MENU_SOON = ['퀘스트는 아직 준비 중이에요'];
   const menuSlots = [];
   const menuEl = bui.querySelector('.bui-menu');
 
@@ -1669,8 +1668,8 @@ function boot(socket, { id, seed }, nick, mode) {
     b.classList.add('flash');
     setTimeout(() => b.classList.remove('flash'), 150);
     if (i === WIN_TABS.length) { toggleStatus(); return; }   // 5번째 = 상태창(두루마리)
+    if (i === WIN_TABS.length + 1) { toggleQuest(); return; }   // 6번째 = 퀘스트
     if (i === WIN_TABS.length + 2) { toggleTrade(); return; }   // 7번째 = 거래 (주변 플레이어 목록)
-    if (i > WIN_TABS.length) { toast(MENU_SOON[i - WIN_TABS.length - 1]); return; }   // 퀘스트: 아직 모양만
     toggleWin(i);
   }
 
@@ -1787,6 +1786,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 
   function openWin(i) {
     closeTrade();
+    closeQuest();
     scrEl.classList.remove('open', 'show');   // 상태창 두루마리가 열려 있으면 바로 닫음
     winIdx = i;
     renderWin();
@@ -1802,6 +1802,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   function closeWin() {
     closeStatus();
     closeTrade();
+    closeQuest();
     uiOpen = false;
     document.body.classList.remove('uw-open');
     winEl.style.display = 'none';
@@ -1943,6 +1944,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 
   function openStatus() {
     closeTrade();
+    closeQuest();
     winEl.style.display = 'none';
     renderScr();
     clearTimeout(scrHideT);
@@ -2050,6 +2052,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   function openTrade() {
+    closeQuest();
     winEl.style.display = 'none';
     scrEl.classList.remove('open', 'show');
     tradeOn = true;
@@ -2074,6 +2077,154 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   function toggleTrade() {
     if (uiOpen && tradeOn) closeWin();
     else openTrade();
+  }
+
+  // ---------- 퀘스트 창: 진행중 / 전체 / 완료 / 실패 ----------
+  // 퀘스트 데이터. 지금은 퀘스트가 하나도 없어서 비어 있어요. 나중에 아래 모양으로 넣으면 목록에 바로 나타나요.
+  // { id: 'q1', title: '잃어버린 마을의 흔적', status: 'active'(진행중) | 'done'(완료) | 'fail'(실패),
+  //   summary: '숲의 경계 지역으로 이동하기', dist: '342m', desc: '설명...',
+  //   goals: [{ text: '숲의 경계 지역으로 이동하기', dist: '342m' }],
+  //   rewards: [{ kind: 'gold', text: '골드 500' }, { kind: 'exp', text: '경험치 1,200' }] }
+  const QUESTS = [];
+  const QUEST_TABS = [
+    ['active', '진행중', '진행중인 퀘스트가 없습니다'],
+    ['all', '전체', '퀘스트가 없습니다'],
+    ['done', '완료', '완료한 퀘스트가 없습니다'],
+    ['fail', '실패', '실패한 퀘스트가 없습니다'],
+  ];
+  const questStyle = document.createElement('style');
+  questStyle.textContent = `
+.quest{position:fixed;inset:0;z-index:61;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#e8dcc0;user-select:none;-webkit-user-select:none}
+.q-box{position:relative;display:flex;flex-direction:column;box-sizing:border-box;width:min(96vw,1000px);height:min(88vh,640px);border:2px solid #4a4030;border-radius:6px;background:linear-gradient(#1c1a18,#121110);box-shadow:0 0 0 2px #070605,inset 0 0 0 1px #5a4a30,0 12px 40px rgba(0,0,0,.8)}
+.q-hd{flex:none;display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #3a3226;background:linear-gradient(#26221c,#1a1814)}
+.q-hd .ic{flex:none;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 35% 30%,#4a3a22,#1f170c);border:2px solid #b8924a}
+.q-hd .ic img{width:28px;height:28px;object-fit:contain}
+.q-hd h2{margin:0;font-size:24px;font-weight:700;color:#f1e6c8;text-shadow:0 2px 0 #000}
+.q-x{margin-left:auto;font-size:24px;line-height:1;padding:6px 8px;cursor:pointer;color:#bba880}
+.q-x:hover{color:#fff}
+.q-body{flex:1 1 auto;min-height:0;display:flex;gap:12px;padding:12px}
+.q-left{flex:0 0 42%;min-width:0;display:flex;flex-direction:column}
+.q-tabs{flex:none;display:flex;margin-bottom:10px;border:1px solid #3a3226;border-radius:4px;overflow:hidden}
+.q-tab{flex:1;text-align:center;padding:10px 0;font-size:15px;font-weight:700;color:#a89c82;background:#17150f;cursor:pointer;border-right:1px solid #3a3226}
+.q-tab:last-child{border-right:0}
+.q-tab.on{color:#f4e2ac;background:linear-gradient(#3a2e1a,#251d10);box-shadow:inset 0 0 0 2px #b8924a}
+.q-list{flex:1 1 auto;min-height:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#5a4a30 transparent}
+.q-row{display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:8px;border:1px solid #2e2820;border-radius:4px;background:linear-gradient(#1f1c18,#171512);cursor:pointer}
+.q-row.sel{border-color:#d9a43c;box-shadow:0 0 0 1px #d9a43c,0 0 10px rgba(217,164,60,.35)}
+.q-dia{flex:none;width:34px;height:34px;display:flex;align-items:center;justify-content:center}
+.q-dia b{display:block;width:24px;height:24px;transform:rotate(45deg);border:2px solid #d9a43c;display:flex;align-items:center;justify-content:center}
+.q-dia b i{transform:rotate(-45deg);font-style:normal;font-weight:700;font-size:15px;color:#f4c24a}
+.q-row.done .q-dia b{border-color:#5aa0ea}.q-row.done .q-dia b i{color:#8ec4ff}
+.q-row.fail .q-dia b{border-color:#9a9a9a}.q-row.fail .q-dia b i{color:#bdbdbd}
+.q-ri{flex:1;min-width:0}
+.q-rt{font-size:16px;font-weight:700;color:#f4ead0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-rs{margin-top:3px;font-size:12.5px;color:#a89c82;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-rd{flex:none;font-size:12.5px;color:#a89c82}
+.q-empty{padding:40px 10px;text-align:center;font-size:16px;color:#8f846c}
+.q-right{flex:1 1 0;min-width:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;box-sizing:border-box;padding:18px 20px;border:2px solid #6b5636;border-radius:4px;background:url(/ui/parchment.jpg) 0 0/cover #cdb88d;color:#33200d;text-shadow:0 1px 0 rgba(255,235,190,.35);scrollbar-width:none}
+.q-right::-webkit-scrollbar{display:none}
+.q-dt{display:flex;align-items:center;gap:12px;font-size:22px;font-weight:700;color:#2a1a0c;padding-bottom:10px;border-bottom:1px solid rgba(70,42,18,.5)}
+.q-desc{margin:12px 0 16px;font-size:14.5px;line-height:1.8;color:#3d2a14}
+.q-sh{display:flex;align-items:center;gap:10px;margin:14px 0 8px;font-size:16px;font-weight:700;color:#2a1a0c}
+.q-sh::after{content:'';flex:1;height:1px;background:rgba(70,42,18,.55)}
+.q-goal{display:flex;align-items:center;gap:10px;padding:5px 2px;font-size:14.5px;color:#33200d}
+.q-goal span:last-child{margin-left:auto;color:#5e4828}
+.q-rw{display:flex;align-items:center;gap:12px;padding:5px 2px;font-size:14.5px}
+.q-rwi{flex:none;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:2px solid #3d2810;border-radius:3px;background:#2b1f14;font-size:18px;font-weight:700;color:#e8c050}
+.q-track{display:block;margin:20px auto 4px;padding:10px 40px;border:2px solid #3d2810;border-radius:4px;background:linear-gradient(#2a2f3a,#14171e);color:#eadfc0;font:700 16px 'Galmuri11','Malgun Gothic',sans-serif;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,235,190,.2)}
+.q-track:hover{filter:brightness(1.25)}
+.q-none{display:flex;align-items:center;justify-content:center;height:100%;text-align:center;line-height:1.9;font-size:16px;color:#6b5636}
+@media (max-width:620px){
+.q-body{flex-direction:column}
+.q-left{flex:0 0 46%}
+.q-right{flex:1 1 0;padding:12px 14px}
+.q-tab{font-size:13px;padding:8px 0}
+}
+`;
+  document.head.appendChild(questStyle);
+  const questEl = document.createElement('div');
+  questEl.className = 'quest';
+  document.body.appendChild(questEl);
+  let questOn = false, questTab = 0, questSel = null, questOpenT = 0;
+
+  function questList() {
+    const key = QUEST_TABS[questTab][0];
+    return QUESTS.filter((q) => key === 'all' || q.status === key);
+  }
+  const questMark = (st) => (st === 'done' ? '✓' : st === 'fail' ? '✕' : '!');
+
+  function questDetail(q) {
+    if (!q) return '<div class="q-none">퀘스트를 선택하면<br>상세 정보가 표시됩니다.</div>';
+    const goals = (q.goals || []).map((g) =>
+      '<div class="q-goal"><span>◆</span><span>' + esc(g.text) + '</span><span>' + esc(g.dist || '') + '</span></div>').join('');
+    const rewards = (q.rewards || []).map((r) =>
+      '<div class="q-rw"><div class="q-rwi">' + (r.kind === 'exp' ? 'EXP' : '●') + '</div><span>' + esc(r.text) + '</span></div>').join('');
+    return '<div class="q-dt"><span class="q-dia"><b><i>' + questMark(q.status) + '</i></b></span>' + esc(q.title) + '</div>' +
+      '<div class="q-desc">' + esc(q.desc || '').replace(/\n/g, '<br>') + '</div>' +
+      (goals ? '<div class="q-sh">목표</div>' + goals : '') +
+      (rewards ? '<div class="q-sh">보상</div>' + rewards : '') +
+      (q.status === 'active' ? '<button class="q-track" data-qtrack="' + esc(q.id) + '">추적하기</button>' : '');
+  }
+
+  function renderQuest() {
+    const list = questList();
+    if (!list.some((q) => q.id === questSel)) questSel = list.length ? list[0].id : null;
+    const cur = list.find((q) => q.id === questSel) || null;
+    const prev = questEl.querySelector('.q-list');
+    const scrollTop = prev ? prev.scrollTop : 0;
+    const tabs = QUEST_TABS.map((t, k) => '<div class="q-tab' + (k === questTab ? ' on' : '') + '" data-qtab="' + k + '">' + t[1] + '</div>').join('');
+    const rows = list.length
+      ? list.map((q) =>
+          '<div class="q-row ' + esc(q.status) + (q.id === questSel ? ' sel' : '') + '" data-qid="' + esc(q.id) + '">' +
+          '<div class="q-dia"><b><i>' + questMark(q.status) + '</i></b></div>' +
+          '<div class="q-ri"><div class="q-rt">' + esc(q.title) + '</div><div class="q-rs">' + esc(q.summary || '') + '</div></div>' +
+          '<div class="q-rd">' + esc(q.dist || '') + '</div></div>').join('')
+      : '<div class="q-empty">' + QUEST_TABS[questTab][2] + '</div>';
+    questEl.innerHTML =
+      '<div class="q-box"><div class="q-hd"><div class="ic"><img src="/ui/icon_quest.png" alt="" draggable="false"></div><h2>퀘스트</h2><div class="q-x" data-qclose="1">✕</div></div>' +
+      '<div class="q-body"><div class="q-left"><div class="q-tabs">' + tabs + '</div><div class="q-list">' + rows + '</div></div>' +
+      '<div class="q-right">' + questDetail(cur) + '</div></div></div>';
+    const lst = questEl.querySelector('.q-list');
+    if (lst) lst.scrollTop = scrollTop;
+  }
+
+  questEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (performance.now() - questOpenT < 400) return;   // 메뉴를 연 그 터치의 click 이 바로 닫기로 처리되는 것 방지
+    if (t === questEl || t.closest('[data-qclose]')) { closeWin(); return; }
+    const tab = t.closest('[data-qtab]');
+    if (tab) { questTab = Number(tab.getAttribute('data-qtab')); questSel = null; renderQuest(); return; }
+    const row = t.closest('[data-qid]');
+    if (row) { questSel = row.getAttribute('data-qid'); renderQuest(); return; }
+    if (t.closest('[data-qtrack]')) toast('퀘스트 추적은 아직 준비 중이에요');   // TODO: 추적 표시 연결
+  });
+
+  function openQuest() {
+    closeTrade();
+    winEl.style.display = 'none';
+    scrEl.classList.remove('open', 'show');
+    questOn = true;
+    questOpenT = performance.now();
+    questTab = 0;   // 열 때는 항상 진행중 탭부터
+    questSel = null;
+    renderQuest();
+    questEl.style.display = 'flex';
+    if (!uiOpen) {
+      uiOpen = true;
+      document.body.classList.add('uw-open');
+      for (const k in keys) keys[k] = false;
+      jumpHeld = false;
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
+    }
+  }
+  function closeQuest() {
+    questOn = false;
+    questEl.style.display = 'none';
+  }
+  function toggleQuest() {
+    if (uiOpen && questOn) closeWin();
+    else openQuest();
   }
 
   // ---------- 화면 크기에 맞춰 터치 UI 크기 조절 ----------
