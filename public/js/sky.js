@@ -50,6 +50,7 @@ const WX_T = Object.assign({ cloudCover: 0.35, storm: 0, windDir: 90, windSpeed:
 const WX = { cloudCover: WX_T.cloudCover, storm: WX_T.storm, wx: 0, wz: 0, ox: 0, oz: 0 };
 { const a = WX_T.windDir * Math.PI / 180; WX.wx = Math.sin(a) * WX_T.windSpeed; WX.wz = -Math.cos(a) * WX_T.windSpeed; }
 let offset = 0;   // 테스트용 시간 이동(초)
+const CLOUD_SPEED = 0.02;   // 바람 1일 때 구름 무늬가 흐르는 속도 (하늘에서 초당 약 0.6도)
 
 // ---- 시계: 서버 시계에 맞추기 ----
 const EPOCH = Date.parse(OPT.epoch) / 1000;
@@ -60,7 +61,7 @@ let skyTimeParam = null;
 { const m = /[?&]skytime=([\d.]+)/.exec(Q); if (m) { skyTimeParam = parseFloat(m[1]); offset = skyTimeParam - phaseNow(); } }
 
 // ---------------- 화면에 직접 띄우는 진단 (태블릿/폰에서 콘솔 없이 에러 확인) ----------------
-const SKY_VERSION = 'sky.js v5 (별똥별 대각선·시간 배속 패널)';
+const SKY_VERSION = 'sky.js v6 (구름 속도·패널 인식 개선)';
 const DEBUG = /[?&]skydebug=1/.test(Q);
 function say(text, bad) {
   try {
@@ -88,8 +89,8 @@ if (DEBUG && typeof window !== 'undefined') {
 
 // ---- 서버 시계 맞추기: 같은 서버(주소)에 가벼운 요청을 보내 응답의 Date(+Age) 헤더를 읽어요 ----
 function initClouds() {   // 구름 무늬 위치도 "서버 기준 시각"에서 정해서 모두 같게 시작
-  const T = (nowSec() - EPOCH) % 100000;
-  WX.ox = -WX.wx * 0.004 * T; WX.oz = -WX.wz * 0.004 * T;
+  const T = (nowSec() - EPOCH) % 20000;
+  WX.ox = -WX.wx * CLOUD_SPEED * T; WX.oz = -WX.wz * CLOUD_SPEED * T;
 }
 async function syncClock() {
   if (!OPT.syncClock || typeof fetch === 'undefined' || typeof location === 'undefined' || !/^https?:/.test(location.protocol)) return;
@@ -168,16 +169,22 @@ function removeSpeedPanel() {
   const el = document.getElementById('sky-speed');
   if (el) { clearInterval(el._t); el.remove(); }
 }
+let lastNickSeen = null;
 if (typeof document !== 'undefined' && typeof setInterval !== 'undefined') {
   setInterval(() => {
     try {
       if (!document.body || !OPT.adminNicks || !OPT.adminNicks.length) return;
+      // 1) 게임 화면의 닉네임 표시(.rpg-status)  2) 없으면 로그인 창이 닫힌 뒤 입력칸(#nick)의 값
       const s = document.querySelector('.rpg-status');
-      const ok = !!s && OPT.adminNicks.some((n) => normNick(n) === normNick(s.textContent));
+      const login = document.getElementById('login'), inp = document.getElementById('nick');
+      const loggedIn = !!login && login.style.display === 'none';
+      const nick = s ? s.textContent : (loggedIn && inp ? inp.value : '');
+      const ok = !!nick && OPT.adminNicks.some((n) => normNick(n) === normNick(nick));
       const has = !!document.getElementById('sky-speed');
+      if (DEBUG && nick !== lastNickSeen) { lastNickSeen = nick; if (nick) say('닉네임 인식: "' + normNick(nick) + '" -> ' + (ok ? '배속 패널 켬' : '배속 패널 없음 (대상 닉네임 아님)'), !ok); }
       if (ok && !has) buildSpeedPanel(); else if (!ok && has) removeSpeedPanel();
-    } catch (e) { /* 패널 실패는 게임에 영향 없음 */ }
-  }, 700);
+    } catch (e) { if (DEBUG) say('패널 오류: ' + (e && e.message), true); }
+  }, 500);
 }
 
 // ---------------- 셰이더 (GLSL 주석은 영어로) ----------------
@@ -458,8 +465,8 @@ function stepWeather(dt) {
   WX.wx += (Math.sin(a) * sp - WX.wx) * kw;
   WX.wz += (-Math.cos(a) * sp - WX.wz) * kw;
   // 구름 무늬가 바람 방향으로 흘러가도록 (무늬 좌표는 반대로 이동)
-  WX.ox = (WX.ox - WX.wx * dt * 0.004) % 50000;
-  WX.oz = (WX.oz - WX.wz * dt * 0.004) % 50000;
+  WX.ox = (WX.ox - WX.wx * dt * CLOUD_SPEED) % 50000;
+  WX.oz = (WX.oz - WX.wz * dt * CLOUD_SPEED) % 50000;
 }
 
 // ---- 별똥별 ----
