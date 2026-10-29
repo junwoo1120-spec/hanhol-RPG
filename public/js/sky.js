@@ -1,7 +1,10 @@
 /*!
  * js/sky.js - 오픈월드용 3D 하늘 (낮/밤, 해, 달, 별)
  *
- * - 하루 20분 = 낮 10분 + 밤 10분 (접속자 모두 같은 시각. 기준: 기기 시계의 20분 주기)
+ * - 하루 20분 = 낮 10분 + 밤 10분. 기준 시각: 2026-10-28 12:00:00 (한국시간)에 하루가 시작(해 뜸)하고, 20분마다 반복돼요.
+ * - 시각은 기기 시계가 아니라 "게임 서버 시계"를 기준으로 맞춰요 (서버 응답의 시간을 읽어서 보정).
+ *   그래서 태블릿 시계가 틀려도 모든 접속자가 같은 하늘을 봐요. 서버에 접속이 안 되면 기기 시계를 써요.
+ * - 해가 뜰 때부터 남중(가장 높이 뜸)까지 하늘이 점점 밝고 선명해지고, 이후엔 다시 서서히 어두워져요.
  * - 해/달/별은 항상 동쪽(+x)에서 떠서 남쪽 하늘을 지나 서쪽(-x)으로 져요. 북쪽 = -z.
  * - 게임 카메라가 실제로 보는 방향을 그대로 쓰기 때문에, 시점을 어떻게 돌려도 방향이 맞아요.
  * - main.js 를 고치지 않아요. index.html 에서 main.js 보다 먼저 불러오면 스스로 장면에 붙어요.
@@ -28,6 +31,10 @@ const OPT = Object.assign({
   starCount: 3600,
   sunRadius: 0.038,   // 해 알맹이 크기(라디안). 실제보다 일부러 크게
   moonRadius: 0.06,
+  adminNicks: ['박준우'],   // 이 닉네임으로 접속하면 화면 위쪽에 시간 배속 버튼이 나와요 (자기 화면만 바뀜)
+  epoch: '2026-10-28T12:00:00+09:00',  // 기준 시각 (한국시간). 이 순간의 하루 진행도가 epochTime
+  epochTime: 0,       // 기준 시각의 하루 진행(초): 0 = 해 뜸, 300 = 정오(남중), 600 = 해 짐, 900 = 한밤
+  syncClock: true,    // true 면 서버 시계에 맞춰요 (false 면 기기 시계)
   shootingStarChance: 0.01,  // 별똥별: 초당 확률 (0.01 = 1초에 100분의 1)
   clouds: true,       // false 면 구름을 그리지 않아요 (느린 기기용)
   lights: true,       // false 면 땅/물 조명은 건드리지 않아요
@@ -42,11 +49,18 @@ const WX_T = Object.assign({ cloudCover: 0.35, storm: 0, windDir: 90, windSpeed:
   if (a !== null) WX_T.cloudCover = a; if (b !== null) WX_T.storm = b; if (c !== null) WX_T.windSpeed = c; if (d !== null) WX_T.windDir = d; }
 const WX = { cloudCover: WX_T.cloudCover, storm: WX_T.storm, wx: 0, wz: 0, ox: 0, oz: 0 };
 { const a = WX_T.windDir * Math.PI / 180; WX.wx = Math.sin(a) * WX_T.windSpeed; WX.wz = -Math.cos(a) * WX_T.windSpeed; }
-let offset = 0;
-{ const m = /[?&]skytime=([\d.]+)/.exec(Q); if (m) offset = parseFloat(m[1]) - (Date.now() / 1000) * OPT.speed; }
+let offset = 0;   // 테스트용 시간 이동(초)
+
+// ---- 시계: 서버 시계에 맞추기 ----
+const EPOCH = Date.parse(OPT.epoch) / 1000;
+let clockOffsetMs = 0, clockSynced = false;
+const nowSec = () => (Date.now() + clockOffsetMs) / 1000;             // 모든 접속자가 같은 값을 갖는 "서버 기준 지금"
+const phaseNow = () => (nowSec() - EPOCH) * OPT.speed + OPT.epochTime;  // 기준 시각부터 흐른 하루 진행(초)
+let skyTimeParam = null;
+{ const m = /[?&]skytime=([\d.]+)/.exec(Q); if (m) { skyTimeParam = parseFloat(m[1]); offset = skyTimeParam - phaseNow(); } }
 
 // ---------------- 화면에 직접 띄우는 진단 (태블릿/폰에서 콘솔 없이 에러 확인) ----------------
-const SKY_VERSION = 'sky.js v3 (구름·날씨·별똥별)';
+const SKY_VERSION = 'sky.js v5 (별똥별 대각선·시간 배속 패널)';
 const DEBUG = /[?&]skydebug=1/.test(Q);
 function say(text, bad) {
   try {
@@ -72,6 +86,100 @@ if (DEBUG && typeof window !== 'undefined') {
   console.error = function (...a) { ce.apply(console, a); say('콘솔 오류: ' + a.map(String).join(' '), true); };
 }
 
+// ---- 서버 시계 맞추기: 같은 서버(주소)에 가벼운 요청을 보내 응답의 Date(+Age) 헤더를 읽어요 ----
+function initClouds() {   // 구름 무늬 위치도 "서버 기준 시각"에서 정해서 모두 같게 시작
+  const T = (nowSec() - EPOCH) % 100000;
+  WX.ox = -WX.wx * 0.004 * T; WX.oz = -WX.wz * 0.004 * T;
+}
+async function syncClock() {
+  if (!OPT.syncClock || typeof fetch === 'undefined' || typeof location === 'undefined' || !/^https?:/.test(location.protocol)) return;
+  const offs = [];
+  for (let i = 0; i < 4; i++) {
+    try {
+      const t0 = Date.now();
+      const r = await fetch(location.origin + '/?_sky=' + t0 + '_' + i, { method: 'HEAD', cache: 'no-store' });
+      const t1 = Date.now(), ds = r.headers.get('Date');
+      if (ds) {
+        const srv = Date.parse(ds) + (parseInt(r.headers.get('Age') || '0', 10) || 0) * 1000;   // Date 는 초 단위로 잘려 있어서 +0.5초
+        if (!isNaN(srv)) offs.push(srv + 500 - (t0 + t1) / 2);
+      }
+    } catch (e) { /* 실패하면 다음 시도 */ }
+    await new Promise((res) => setTimeout(res, 250));
+  }
+  if (!offs.length) { if (DEBUG) say('시간 동기화 실패 -> 기기 시계를 써요', true); return; }
+  offs.sort((a, b) => a - b);
+  const m = offs[Math.floor(offs.length / 2)];
+  const first = !clockSynced;
+  clockOffsetMs = first ? m : clockOffsetMs + (m - clockOffsetMs) * 0.5;
+  clockSynced = true;
+  if (skyTimeParam !== null) offset = skyTimeParam - phaseNow();   // ?skytime 테스트 값은 동기화 후에도 유지
+  if (first) initClouds();
+  if (DEBUG) say('시간 동기화 완료: 서버 시계가 기기보다 ' + (m / 1000).toFixed(1) + '초 ' + (m >= 0 ? '빠름' : '느림'), false);
+}
+initClouds();
+syncClock();
+if (typeof setInterval !== 'undefined') setInterval(syncClock, 5 * 60 * 1000);
+
+// ---------------- 시간 배속 패널 (지정한 닉네임 전용, 화면 위쪽) ----------------
+// 게임 화면의 닉네임 표시(.rpg-status)를 보고, adminNicks 에 있는 닉네임이면 버튼을 보여줘요.
+// 이 배속은 "내 화면의 하늘"만 바꿔요 (다른 사람 화면에는 영향 없음).
+const normNick = (s) => String(s || '').normalize('NFC').trim();
+function buildSpeedPanel() {
+  if (document.getElementById('sky-speed')) return;
+  if (!document.getElementById('sky-speed-css')) {
+    const st = document.createElement('style'); st.id = 'sky-speed-css';
+    st.textContent =
+      '#sky-speed{position:fixed;left:50%;top:calc(8px + 54px * var(--ui,1) + 8px);transform:translateX(-50%);z-index:8;max-width:94vw;' +
+      'display:flex;flex-wrap:wrap;gap:5px;align-items:center;justify-content:center;padding:5px 8px;border-radius:12px;' +
+      'background:rgba(20,14,38,.82);border:1px solid rgba(217,178,92,.75);color:#f6e3a1;font:600 12px sans-serif;user-select:none;-webkit-user-select:none}' +
+      '#sky-speed .sk-l{min-width:150px;text-align:center}' +
+      '#sky-speed button{cursor:pointer;padding:4px 9px;border-radius:7px;border:1px solid #d9b25c;background:#3a2d5c;color:#f6e3a1;font:700 12px sans-serif}' +
+      '#sky-speed button.on{background:#d9b25c;color:#2a1a00}' +
+      '#sky-speed button:active{filter:brightness(1.4)}' +
+      'body.uw-open #sky-speed{display:none}';
+    document.head.appendChild(st);
+  }
+  const el = document.createElement('div'); el.id = 'sky-speed';
+  const lab = document.createElement('span'); lab.className = 'sk-l'; el.appendChild(lab);
+  const S = () => window.Sky;
+  const BTN = [
+    ['실시간', 'real', () => S().reset()],
+    ['⏸', 0, () => S().setSpeed(0)], ['×10', 10, () => S().setSpeed(10)], ['×60', 60, () => S().setSpeed(60)], ['×300', 300, () => S().setSpeed(300)],
+    ['해뜸', 't0', () => S().setTime(0)], ['정오', 't300', () => S().setTime(300)], ['해짐', 't600', () => S().setTime(600)], ['한밤', 't900', () => S().setTime(900)]
+  ];
+  const btns = BTN.map(([txt, key, fn]) => {
+    const b = document.createElement('button'); b.textContent = txt; b.tabIndex = -1;
+    const go = (e) => { e.preventDefault(); e.stopPropagation(); fn(); b.blur(); refresh(); };
+    b.addEventListener('pointerdown', (e) => e.stopPropagation());
+    b.addEventListener('click', go);
+    el.appendChild(b); return { b, key };
+  });
+  const two = (n) => String(Math.floor(n)).padStart(2, '0');
+  function refresh() {
+    const st = computeState(nowSec());
+    lab.textContent = (st.isDay ? '☀️ 낮 ' : '🌙 밤 ') + two(st.time / 60) + ':' + two(st.time % 60) + ' / 20:00  ·  ×' + OPT.speed;
+    const real = OPT.speed === 1 && offset === 0;
+    for (const { b, key } of btns) b.classList.toggle('on', key === 'real' ? real : (typeof key === 'number' && !real && OPT.speed === key));
+  }
+  refresh(); el._t = setInterval(refresh, 250);
+  document.body.appendChild(el);
+}
+function removeSpeedPanel() {
+  const el = document.getElementById('sky-speed');
+  if (el) { clearInterval(el._t); el.remove(); }
+}
+if (typeof document !== 'undefined' && typeof setInterval !== 'undefined') {
+  setInterval(() => {
+    try {
+      if (!document.body || !OPT.adminNicks || !OPT.adminNicks.length) return;
+      const s = document.querySelector('.rpg-status');
+      const ok = !!s && OPT.adminNicks.some((n) => normNick(n) === normNick(s.textContent));
+      const has = !!document.getElementById('sky-speed');
+      if (ok && !has) buildSpeedPanel(); else if (!ok && has) removeSpeedPanel();
+    } catch (e) { /* 패널 실패는 게임에 영향 없음 */ }
+  }, 700);
+}
+
 // ---------------- 셰이더 (GLSL 주석은 영어로) ----------------
 const DOME_VS = `
 varying vec3 vDir;
@@ -90,6 +198,7 @@ uniform vec3 uSunDir;
 uniform vec3 uMoonDir;
 uniform vec3 uSunCol;
 uniform float uSunK;
+uniform float uSunPow;
 uniform float uSunVis;
 uniform float uMoonVis;
 uniform float uSunR;
@@ -167,7 +276,7 @@ void main() {
   vec3 sdd = d - uSunDir * s;
   float th = atan(dot(sdd, su), dot(sdd, sr));
   float rays = pow(abs(cos(th * 3.0 + 0.4)), 26.0) + 0.6 * pow(abs(cos(th * 5.0 + 1.1)), 34.0);
-  float sunLight = (bloom + rays * 0.028 * exp(-x / 9.0)) * dim * uSunVis * front;
+  float sunLight = (bloom + rays * 0.028 * exp(-x / 9.0)) * dim * uSunVis * front * uSunPow;
   col = vec3(1.0) - (vec3(1.0) - col) * exp(-tint * sunLight * 1.6);
   float disc = (1.0 - smoothstep(r * 0.96, r * 1.04, ang)) * front;
   vec3 lowCol = mix(vec3(1.0, 0.86, 0.55), vec3(1.0, 0.66, 0.34), smoothstep(0.2, 1.0, x));
@@ -290,10 +399,12 @@ const STOPS = [
   [-0.55, '#060a1e', '#101840'],
   [-0.3,  '#1c2352', '#5a3a68'],
   [-0.12, '#35306a', '#b8576a'],
-  [0.02,  '#46549c', '#f08f58'],
-  [0.22,  '#4a86d2', '#cfe3f2'],
-  [0.6,   '#3b82d6', '#a8d8f5'],
-  [1,     '#3b82d6', '#a8d8f5']
+  [0.02,  '#46549c', '#f08f58'],   // 해 뜰 때: 보랏빛 + 주황 지평선
+  [0.14,  '#5873b0', '#f4c490'],   // 이른 아침: 황금빛
+  [0.30,  '#5a8cc8', '#e6dcc8'],   // 아침: 뿌옇고 따뜻한 지평선
+  [0.50,  '#4a8ad8', '#c4def2'],   // 오전
+  [0.70,  '#3f88e2', '#aedaf8'],   // 한낮 직전
+  [0.80,  '#3a8aec', '#a4d6fa']    // 남중: 가장 맑고 밝은 하늘
 ];
 const hex3 = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
 function skyColors(alt) {
@@ -322,9 +433,9 @@ function dirOf(p) {
   return [Math.sin(z) * Math.cos(a), Math.sin(a), -Math.cos(z) * Math.cos(a)];
 }
 
-function computeState(nowSec) {
+function computeState(nowSec) {   // nowSec = 서버 기준 지금(초)
   const L = OPT.dayLength, half = L / 2;
-  const t = (((nowSec * OPT.speed + offset) % L) + L) % L;
+  const t = ((((nowSec - EPOCH) * OPT.speed + OPT.epochTime + offset) % L) + L) % L;
   const H = 2 * Math.PI * (t - L / 4) / L;          // t=0 해 뜸(동), L/4 정오(남), L/2 해 짐(서)
   const lat = rad(OPT.latitude);
   const sun = altaz(H, 0, lat), moon = altaz(H + Math.PI, 0, lat);
@@ -347,8 +458,8 @@ function stepWeather(dt) {
   WX.wx += (Math.sin(a) * sp - WX.wx) * kw;
   WX.wz += (-Math.cos(a) * sp - WX.wz) * kw;
   // 구름 무늬가 바람 방향으로 흘러가도록 (무늬 좌표는 반대로 이동)
-  WX.ox = (WX.ox - WX.wx * dt * 0.004) % 200;
-  WX.oz = (WX.oz - WX.wz * dt * 0.004) % 200;
+  WX.ox = (WX.ox - WX.wx * dt * 0.004) % 50000;
+  WX.oz = (WX.oz - WX.wz * dt * 0.004) % 50000;
 }
 
 // ---- 별똥별 ----
@@ -357,19 +468,25 @@ const v3 = {
   cross: (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]],
   norm: (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; }
 };
-// fwd = 지금 카메라가 보는 방향. 그 근처 하늘에서 떨어지게 해서 실제로 눈에 띄게 함
+// fwd = 지금 카메라가 보는 방향. 그 근처 하늘에서 시작해서 "땅 쪽으로 대각선"으로 떨어져요
 function spawnMeteor(fwd) {
   const m = MET.find((x) => x.age < 0);
   if (!m) return;
   const az0 = Math.atan2(fwd[0], -fwd[2]), alt0 = Math.asin(clamp(fwd[1], -1, 1));
   const az = az0 + (Math.random() - 0.5) * 1.2;
-  const alt = clamp(alt0 + (Math.random() - 0.2) * 0.5, 0.3, 1.25);
+  const alt = clamp(alt0 + 0.1 + Math.random() * 0.5, 0.5, 1.3);      // 떨어질 공간이 있게 비교적 높은 곳에서 시작
   const P = [Math.sin(az) * Math.cos(alt), Math.sin(alt), -Math.cos(az) * Math.cos(alt)];
-  const e = v3.norm(v3.cross([0, 1, 0], P)), n = v3.cross(P, e);
-  const phi = Math.random() * Math.PI * 2, len = 0.25 + Math.random() * 0.3;
-  let T = [e[0] * Math.cos(phi) + n[0] * Math.sin(phi), e[1] * Math.cos(phi) + n[1] * Math.sin(phi), e[2] * Math.cos(phi) + n[2] * Math.sin(phi)];
-  let B = v3.norm([P[0] + T[0] * len, P[1] + T[1] * len, P[2] + T[2] * len]);
-  if (B[1] < 0.15) { T = [-T[0], -T[1], -T[2]]; B = v3.norm([P[0] + T[0] * len, P[1] + T[1] * len, P[2] + T[2] * len]); }
+  const e = v3.norm(v3.cross([0, 1, 0], P));                           // 수평(옆) 방향
+  const n = v3.cross(P, e);                                            // 하늘 위쪽 방향 (항상 위를 향함)
+  const side = Math.random() < 0.5 ? -1 : 1;                           // 왼쪽 아래 / 오른쪽 아래
+  const th = 0.45 + Math.random() * 0.55;                              // 아래로 기울어진 각도 약 26°~58° (대각선)
+  const T = [0, 1, 2].map((i) => e[i] * side * Math.cos(th) - n[i] * Math.sin(th));
+  let len = 0.25 + Math.random() * 0.3, B = P;
+  for (let i = 0; i < 6; i++) {                                        // 지평선 아래로 내려가지 않게 길이 조절
+    B = v3.norm([P[0] + T[0] * len, P[1] + T[1] * len, P[2] + T[2] * len]);
+    if (B[1] >= 0.1) break;
+    len *= 0.75;
+  }
   m.A = P; m.B = B; m.age = 0;
 }
 // vis = 별이 보이는 정도(밤 + 맑음). 확률은 "초당" 이라서 dt 를 곱해요
@@ -381,11 +498,15 @@ function stepMeteors(dt, fwd, vis) {
 // 하늘에 필요한 모든 값을 한 번에 계산 (THREE 없이도 동작 -> 테스트/미리보기에서 그대로 사용)
 function buildUniforms(st) {
   const c = skyColors(st.altitude);
-  const k = 1 - ss(Math.max(0, st.sun.alt) / 22);   // 0 = 높이 떠 있음, 1 = 지평선 근처
+  const k = 1 - ss(Math.max(0, st.sun.alt) / 30);   // 0 = 높이 떠 있음, 1 = 지평선 근처
   const cover = WX.cloudCover, storm = WX.storm;
   const o = clamp(cover * 0.5 + storm * 0.85, 0, 1);  // 하늘이 회색으로 덮이는 정도
   const grey = (col, f) => { const l = 0.3 * col[0] + 0.59 * col[1] + 0.11 * col[2]; return col.map((v) => lerp(v, l * f, o * 0.75)); };
-  const top = grey(c.top, 0.80 - 0.25 * storm), hor = grey(c.hor, 0.95 - 0.25 * storm);
+  // 해가 높아질수록 하늘이 점점 밝아져요 (해 뜰 때 0.78배 -> 남중 1.12배). 땅 조명도 같은 곡선을 따라요.
+  const lvl = clamp(st.sun.sin / 0.8, 0, 1);                      // 0 = 해 뜸, 1 = 남중
+  const bright = lerp(1, 0.78 + 0.34 * ss(lvl), ss(st.sun.sin / 0.10));
+  const top = grey(c.top, 0.80 - 0.25 * storm).map((v) => clamp(v * bright, 0, 1));
+  const hor = grey(c.hor, 0.95 - 0.25 * storm).map((v) => clamp(v * bright, 0, 1));
   const sunDir = dirOf(st.sun), moonDir = dirOf(st.moon);
   const sunCol = [1, lerp(0.96, 0.5, k), lerp(0.86, 0.22, k)];
   const starVis = clamp(1 - cover * 0.9 - storm, 0, 1) * ss((-st.altitude - 0.02) / 0.3);
@@ -399,13 +520,13 @@ function buildUniforms(st) {
 
   return {
     dome: {
-      uTop: top, uHor: hor, uSunDir: sunDir, uMoonDir: moonDir, uSunCol: sunCol, uSunK: k,
+      uTop: top, uHor: hor, uSunDir: sunDir, uMoonDir: moonDir, uSunCol: sunCol, uSunK: k, uSunPow: lerp(0.8, 1.15, ss(lvl)),
       uSunVis: ss((st.sun.alt + 12) / 6) * (1 - 0.6 * storm) * (1 - 0.25 * cover),
       uMoonVis: ss((st.moon.alt + 12) / 6) * (1 - 0.5 * storm),
       uSunR: OPT.sunRadius * (1 + 0.4 * k),
       uMoonR: OPT.moonRadius * (1 + 0.25 * (1 - Math.min(1, Math.max(0, st.moon.alt) / 40))),
       uCover: OPT.clouds ? cover : -1, uStorm: storm,
-      uWindOff: [WX.ox, WX.oz], uWindDir: wd, uCT: performance.now() / 1000 % 5000,
+      uWindOff: [WX.ox, WX.oz], uWindDir: wd, uCT: nowSec() % 5000,
       uLightDir: useSun ? sunDir : moonDir,
       uLightCol: useSun ? [1, lerp(0.97, 0.62, k), lerp(0.9, 0.42, k)] : [0.62, 0.72, 1.0],
       uLightAmt: Math.max(sunAmt, moonAmt) * (1 - 0.25 * storm),
@@ -413,7 +534,7 @@ function buildUniforms(st) {
       uMetP: metP, uMetVis: starVis
     },
     star: { uH: st.hourAngle, uAlpha: starVis },
-    k, hor, sunDir, moonDir,
+    k, hor, sunDir, moonDir, lvl,
     shade: clamp(1 - 0.45 * cover - 0.35 * storm, 0.25, 1)   // 날씨에 따른 땅 밝기 배율
   };
 }
@@ -458,7 +579,7 @@ function install(scene) {
     uTop: { value: V3() }, uHor: { value: V3() },
     uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uMoonDir: { value: new THREE.Vector3(0, -1, 0) },
     uSunCol: { value: new THREE.Vector3(1, 1, 1) },
-    uSunK: { value: 0 }, uSunVis: { value: 1 }, uMoonVis: { value: 0 },
+    uSunK: { value: 0 }, uSunPow: { value: 1 }, uSunVis: { value: 1 }, uMoonVis: { value: 0 },
     uSunR: { value: OPT.sunRadius }, uMoonR: { value: OPT.moonRadius },
     uMoonReady: moonReady, uMoonTex: { value: moonTex },
     uCover: { value: 0 }, uStorm: { value: 0 }, uWindOff: { value: new THREE.Vector2() }, uWindDir: { value: new THREE.Vector2(1, 0) },
@@ -519,7 +640,7 @@ function install(scene) {
     lastMs = nowMs;
     stepWeather(dt);
 
-    const st = computeState(Date.now() / 1000);
+    const st = computeState(nowSec());
     // 별똥별은 메인 화면에서만, 카메라가 보는 방향 근처에 생겨요
     if (main && dt > 0) {
       camera.getWorldDirection(fwdV);
@@ -530,7 +651,7 @@ function install(scene) {
     uni.uTop.value.set(...d.uTop); uni.uHor.value.set(...d.uHor);
     uni.uSunDir.value.set(...d.uSunDir); uni.uMoonDir.value.set(...d.uMoonDir);
     uni.uSunCol.value.set(...d.uSunCol);
-    uni.uSunK.value = d.uSunK; uni.uSunVis.value = d.uSunVis; uni.uMoonVis.value = d.uMoonVis;
+    uni.uSunK.value = d.uSunK; uni.uSunPow.value = d.uSunPow; uni.uSunVis.value = d.uSunVis; uni.uMoonVis.value = d.uMoonVis;
     uni.uSunR.value = d.uSunR; uni.uMoonR.value = d.uMoonR;
     uni.uCover.value = d.uCover; uni.uStorm.value = d.uStorm; uni.uCT.value = d.uCT;
     uni.uWindOff.value.set(...d.uWindOff); uni.uWindDir.value.set(...d.uWindDir);
@@ -551,13 +672,13 @@ function install(scene) {
     if (!OPT.lights) return;
     const dk = st.darkness;
     if (hemi) {
-      hemi.intensity = lerp(day.hi, 0.32, dk) * lerp(1, U.shade, 0.6);
+      hemi.intensity = lerp(day.hi * lerp(0.78, 1.05, ss(U.lvl)), 0.32, dk) * lerp(1, U.shade, 0.6);
       hemi.color.lerpColors(day.hc, nightHemi, dk);
       hemi.groundColor.lerpColors(day.hg, nightGround, dk);
     }
     if (sunL) {
       if (st.sun.sin > -0.05) {            // 해가 떠 있을 때: 해가 빛을 줌 (질 때는 주황빛, 흐리면 약하게)
-        sunL.intensity = day.si * ss((st.sun.sin + 0.03) / 0.2) * U.shade;
+        sunL.intensity = day.si * ss((st.sun.sin + 0.03) / 0.2) * lerp(0.55, 1.08, ss(U.lvl)) * U.shade;
         sunL.color.lerpColors(day.sc, warmSun, U.k);
         sunL.position.set(U.sunDir[0] * 100, U.sunDir[1] * 100, U.sunDir[2] * 100);
       } else {                             // 밤: 달빛
@@ -605,9 +726,12 @@ if (THREE.WebGLRenderer && THREE.WebGLRenderer.prototype) {
 if (typeof window !== 'undefined') {
   window.Sky = {
     version: SKY_VERSION,
-    getState: () => computeState(Date.now() / 1000),
-    setTime: (sec) => { offset = sec - (Date.now() / 1000) * OPT.speed; },   // 0=해뜸 300=정오 600=해짐 900=한밤
-    setSpeed: (v) => { const t = computeState(Date.now() / 1000).time; OPT.speed = v; offset = t - (Date.now() / 1000) * v; },
+    getState: () => computeState(nowSec()),
+    serverNow: () => nowSec() * 1000,                    // 서버 기준 지금(ms)
+    syncToServerTime: (serverMs) => { clockOffsetMs = serverMs - Date.now(); clockSynced = true; },   // 서버가 직접 시간을 알려줄 때
+    setTime: (sec) => { skyTimeParam = null; offset = sec - phaseNow(); },   // 테스트용. 0=해뜸 300=정오 600=해짐 900=한밤
+    setSpeed: (v) => { skyTimeParam = null; const t = computeState(nowSec()).time; OPT.speed = v; offset = t - phaseNow(); },
+    reset: () => { skyTimeParam = null; OPT.speed = 1; offset = 0; },   // 실시간(서버 시각)으로 되돌리기
     // 날씨/바람: 목표값을 바꾸면 현재 하늘이 몇 초에 걸쳐 부드럽게 따라가요. instant 로 즉시 바꿀 수도 있어요.
     weather: WX_T,
     setWeather: (w, opts) => {
