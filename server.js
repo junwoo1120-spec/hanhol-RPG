@@ -33,7 +33,8 @@ io.on('connection', (socket) => {
       id: socket.id, nick,
       x: 0, y: 0, z: 0, ry: 0, t: 0,
       spawned: false, fast: false,
-      eq: false, eqT: 0, atkT: 0
+      eq: false, eqT: 0, atkT: 0,
+      level: 1   // 레벨 (아직 성장 시스템이 없어서 1 고정. 나중에 여기 값만 바꾸면 거래 목록에도 반영됨)
     });
     socket.emit('init', { id: socket.id, seed: SEED });
   });
@@ -106,7 +107,7 @@ io.on('connection', (socket) => {
 setInterval(() => {
   const list = [];
   for (const p of players.values()) {
-    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0]);
+    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level]);
   }
   io.emit('state', list);
 }, 1000 / 15);
