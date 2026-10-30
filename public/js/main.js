@@ -2347,7 +2347,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     { key: 'R', id: null, name: '없음', cd: 0 },
     { key: 'T', id: null, name: '없음', cd: 0 },
   ];
-  const SKILLBAR_ON_PC = false;   // true 로 하면 키보드 모드에서도 스킬 칸을 화면에 보여줘요 (지금은 모바일만)
+  const SKILLBAR_ON_PC = true;   // true 로 하면 키보드 모드에서도 스킬 칸을 화면에 보여줘요 (지금은 모바일만)
   const skillReadyAt = {};        // 스킬 id -> 다시 쓸 수 있는 시각(performance.now 기준)
   let fx = null;
   import('./skill-fx.js')
