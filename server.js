@@ -27,12 +27,14 @@ const EQUIP_MIN_MS = 300;    // 장착/해제 토글 최소 간격
 // 위치·추적·공격·체력은 전부 서버가 정해요. 계산 코드는 public/js/goblin-ai.mjs (브라우저도 같은 설정값을 읽음).
 // terrain.js 는 브라우저용 ESM 이라 파일 내용을 읽어서 불러와요 (파일을 따로 복사해 둘 필요 없음).
 let sim = null;
+let SKILLS = null;   // goblin-ai.mjs 의 스킬 설정 (쿨타임 등)
 (async () => {
   try {
     const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
     const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
     const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/goblin-ai.mjs')).href);
     sim = ai.createGoblinSim({ T: terr.makeTerrain(SEED), seed: SEED, WATER_LEVEL: terr.WATER_LEVEL, VILLAGE: terr.VILLAGE, PLAY_RADIUS: terr.PLAY_RADIUS });
+    SKILLS = ai.SKILLS;
     console.log('고블린 ' + sim.goblins.length + '마리 배치 완료');
   } catch (e) {
     console.error('고블린 시스템 로드 실패 (고블린 없이 계속 진행):', e);
@@ -147,6 +149,18 @@ io.on('connection', (socket) => {
     p.atkT = now;
     socket.broadcast.emit('atk', { id: socket.id, s: d && d.s === 1 ? 1 : 0 });
     resolveAttack(p, now);
+  });
+
+  // 스킬 사용 (E = 휩쓸기). 검을 든 상태에서만, 쿨타임은 서버가 다시 검사. 피해는 서버가 범위 안의 고블린 전부에게 확정
+  socket.on('skill', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !p.eq || !sim || !SKILLS || !d || d.id !== 'sweep') return;
+    const now = Date.now();
+    p.skillCd = p.skillCd || {};
+    if (now < (p.skillCd.sweep || 0) - 300) return;   // 쿨타임 중 (네트워크 지연 0.3초는 봐줌)
+    p.skillCd.sweep = now + SKILLS.sweep.COOLDOWN * 1000;
+    socket.broadcast.emit('skillfx', { id: socket.id, skill: 'sweep' });
+    sim.playerSkill(p, 'sweep', now);
   });
 
   socket.on('fast', (v) => {
