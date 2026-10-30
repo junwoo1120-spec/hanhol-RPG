@@ -122,16 +122,17 @@ body.touch .hk{width:76px}
 .tbtn .lbl{position:absolute;left:50%;bottom:-4px;transform:translateX(-50%);font:700 13px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-style:normal;color:#fff;white-space:nowrap;pointer-events:none;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000,0 2px 3px #000}
 .tbtn.lock .lbl{font-size:11px}
 .tbtn.run{right:132px;bottom:34px;width:58px;height:58px}
-.tbtn.lock{right:38px;bottom:218px;width:60px;height:60px;background-image:url(/ui/lock_btn.png)}
+.tbtn.lock{right:0;bottom:0;width:30px;height:30px;background-image:url(/ui/lock_btn.png)}
 
-.skillbar{display:none}
-body.touch .skillbar,.skillbar.always{display:flex;position:fixed;right:4px;top:40%;z-index:6;flex-direction:column;gap:6px;transform:translateY(-50%) scale(var(--ui,1));transform-origin:right center;pointer-events:none}
-.skill-slot{position:relative;width:56px;height:56px;box-sizing:border-box;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;background:#7b8056;border:2px solid #3f4429;box-shadow:inset 0 0 0 2px #9a9f72,0 3px 8px rgba(0,0,0,.5)}
-.skill-slot::before{content:'';position:absolute;inset:5px;background:#394440;border:1px solid #eef0e2;box-shadow:inset 0 0 0 2px rgba(0,0,0,.4)}
+.skillbar{display:flex;position:fixed;right:4px;top:40%;z-index:6;flex-direction:column;gap:6px;transform-origin:right center;pointer-events:none}
+body.touch .skillbar{transform:translateY(-50%) scale(var(--ui,1))}
+body.kbd .skillbar{transform:translateY(-50%) scale(var(--sk,1))}
+.skill-slot{position:relative;width:56px;height:56px;box-sizing:border-box;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center}
+.skill-slot::before{content:'';position:absolute;inset:0;background:#323a3e;border:2px solid #f0f2e6;box-shadow:inset 0 0 0 2px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.55)}
 .skill-slot .k{position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:3;font:700 9px 'Galmuri9','Galmuri11',sans-serif;font-style:normal;color:#fff;line-height:11px;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
 .skill-slot .n{position:relative;z-index:2;font:700 17px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#fff;white-space:nowrap;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000,-1px -1px #000,1px 1px #000,-1px 1px #000,1px -1px #000}
 .skill-slot .n.s{font-size:13px}
-.skill-slot .cdv{position:absolute;left:5px;right:5px;bottom:5px;height:0;background:rgba(0,0,0,.68);z-index:4}
+.skill-slot .cdv{position:absolute;left:2px;right:2px;bottom:2px;height:0;background:rgba(0,0,0,.68);z-index:4}
 .skill-slot .cdn{position:absolute;z-index:5;font:700 22px 'Galmuri11',sans-serif;font-style:normal;color:#ffe9a8;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000}
 .skill-slot.cool .n{opacity:.45}
 .skill-slot.press{filter:brightness(1.35)}
@@ -2347,7 +2348,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     { key: 'R', id: null, name: '없음', cd: 0 },
     { key: 'T', id: null, name: '없음', cd: 0 },
   ];
-  const SKILLBAR_ON_PC = true;   // true 로 하면 키보드 모드에서도 스킬 칸을 화면에 보여줘요 (지금은 모바일만)
+  const SKILLBAR_PC_SCALE = 5;    // 컴퓨터(키보드 모드)에서 스킬 칸 크기 배율. 화면 높이를 넘지 않게 자동으로 줄여요
   const skillReadyAt = {};        // 스킬 id -> 다시 쓸 수 있는 시각(performance.now 기준)
   let fx = null;
   import('./skill-fx.js')
@@ -2366,7 +2367,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       if (!startWeaponSweep(myRig)) return;          // 장착/해제 모션 중이면 못 씀 (쿨타임도 안 씀)
       skillReadyAt.sweep = performance.now() + def.cd * 1000;
       socket.emit('skill', { id: 'sweep' });
-      if (fx) fx.play('sweep', myAvatar.position.x, myAvatar.position.y, myAvatar.position.z, me.ry);
+      if (fx) { try { fx.play('sweep', myAvatar.position.x, myAvatar.position.y, myAvatar.position.z, me.ry); } catch (err) { console.error('스킬 이펙트 오류:', err); } }
     }
   }
 
@@ -2375,13 +2376,18 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const remote = d && remotes.get(d.id);
     if (!remote || d.skill !== 'sweep') return;
     startWeaponSweep(remote.g.userData.rig, true);
-    if (fx) fx.play('sweep', remote.g.position.x, remote.g.position.y, remote.g.position.z, remote.g.rotation.y);
+    if (fx) { try { fx.play('sweep', remote.g.position.x, remote.g.position.y, remote.g.position.z, remote.g.rotation.y); } catch (err) { console.error('스킬 이펙트 오류:', err); } }
   });
 
   // 화면의 스킬 칸 (참고 이미지 스타일, 오른쪽 끝 화면 가운데 위쪽)
-  if (touchMode || SKILLBAR_ON_PC) {
+  {
     const bar = document.createElement('div');
-    bar.className = 'skillbar' + (SKILLBAR_ON_PC ? ' always' : '');
+    bar.className = 'skillbar';
+    if (!touchMode) {
+      const fit = () => bar.style.setProperty('--sk', String(Math.max(1, Math.min(SKILLBAR_PC_SCALE, (window.innerHeight * 0.85) / (56 * 3 + 12)))));
+      fit();
+      window.addEventListener('resize', fit);
+    }
     const slotEls = SKILL_SLOTS.map((def) => {
       const el = document.createElement('div');
       el.className = 'skill-slot';
@@ -2671,7 +2677,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       animateHumanoid(remote.g, dt, remote.sp, !rAir, remote.vy);
     }
 
-    if (fx) fx.update(dt);
+    if (fx) { try { fx.update(dt); } catch (err) { console.error('스킬 이펙트 오류 (이펙트만 끕니다):', err); fx = null; } }
     if (goblins) {
       try { goblins.update(dt); } catch (err) { console.error('고블린 오류 (고블린만 끕니다):', err); goblins = null; }
     }
