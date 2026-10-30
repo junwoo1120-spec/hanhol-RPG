@@ -125,7 +125,7 @@ body.touch .hk{width:76px}
 .tbtn.lock{right:0;bottom:0;width:30px;height:30px;background-image:url(/ui/lock_btn.png)}
 
 .skillbar{display:flex;position:fixed;right:4px;top:40%;z-index:6;flex-direction:column;gap:6px;transform-origin:right center;pointer-events:none}
-body.touch .skillbar{transform:translateY(-50%) scale(calc(var(--ui,1) * .5))}
+body.touch .skillbar{top:46%;transform:translateY(-50%) scale(var(--ui,1))}
 body.kbd .skillbar{transform:translateY(-50%) scale(var(--sk,1))}
 .skill-slot{position:relative;width:56px;height:56px;box-sizing:border-box;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center}
 .skill-slot::before{content:'';position:absolute;inset:0;background:#323a3e;border:2px solid #f0f2e6;box-shadow:inset 0 0 0 2px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.55)}
@@ -136,7 +136,7 @@ body.kbd .skillbar{transform:translateY(-50%) scale(var(--sk,1))}
 .skill-slot .cdn{position:absolute;z-index:5;font:700 22px 'Galmuri11',sans-serif;font-style:normal;color:#ffe9a8;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000}
 .skill-slot.cool .n{opacity:.45}
 .skill-slot.press{filter:brightness(1.35)}
-.toast{position:fixed;left:50%;top:70px;transform:translateX(-50%);padding:6px 14px;border-radius:14px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font:600 13px sans-serif;z-index:9;pointer-events:none;opacity:0;transition:opacity .25s}
+.toast{position:fixed;left:50%;top:120px;transform:translateX(-50%);padding:6px 14px;border-radius:14px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font:600 13px sans-serif;z-index:9;pointer-events:none;opacity:0;transition:opacity .25s}
 .toast.show{opacity:1}
 body.touch .joy-base{transform:scale(var(--ui,1));transform-origin:left bottom}
 .tgroup{display:none}
@@ -2360,9 +2360,9 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (!def) return;
     if (uiOpen) return;
     if (!def.id) { toast('비어 있는 스킬 칸이에요'); return; }
-    if (!isWeaponEquipped(myRig)) { toast('검을 먼저 장착해야 해요'); return; }
+    if (!isWeaponEquipped(myRig)) return;   // 검을 안 들고 있으면 아무 일도 안 함 (안내 메시지 없음)
     const left = (skillReadyAt[def.id] || 0) - performance.now();
-    if (left > 0) { toast(def.name + ' 쿨타임 ' + Math.ceil(left / 1000) + '초'); return; }
+    if (left > 0) return;   // 쿨타임 중에는 아무 일도 안 함 (칸에 남은 시간이 표시됨)
     if (def.id === 'sweep') {
       if (!startWeaponSweep(myRig)) return;          // 장착/해제 모션 중이면 못 씀 (쿨타임도 안 씀)
       skillReadyAt.sweep = performance.now() + def.cd * 1000;
