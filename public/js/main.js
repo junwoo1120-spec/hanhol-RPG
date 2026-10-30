@@ -125,7 +125,7 @@ body.touch .hk{width:76px}
 .tbtn.lock{right:0;bottom:0;width:30px;height:30px;background-image:url(/ui/lock_btn.png)}
 
 .skillbar{display:flex;position:fixed;right:4px;top:40%;z-index:6;flex-direction:column;gap:6px;transform-origin:right center;pointer-events:none}
-body.touch .skillbar{transform:translateY(-50%) scale(var(--ui,1))}
+body.touch .skillbar{transform:translateY(-50%) scale(calc(var(--ui,1) * .5))}
 body.kbd .skillbar{transform:translateY(-50%) scale(var(--sk,1))}
 .skill-slot{position:relative;width:56px;height:56px;box-sizing:border-box;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center}
 .skill-slot::before{content:'';position:absolute;inset:0;background:#323a3e;border:2px solid #f0f2e6;box-shadow:inset 0 0 0 2px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.55)}
@@ -2348,11 +2348,11 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     { key: 'R', id: null, name: '없음', cd: 0 },
     { key: 'T', id: null, name: '없음', cd: 0 },
   ];
-  const SKILLBAR_PC_SCALE = 5;    // 컴퓨터(키보드 모드)에서 스킬 칸 크기 배율. 화면 높이를 넘지 않게 자동으로 줄여요
+  const SKILLBAR_PC_SCALE = 2.5;  // 컴퓨터(키보드 모드)에서 스킬 칸 크기 배율. 화면 높이를 넘지 않게 자동으로 줄여요
   const skillReadyAt = {};        // 스킬 id -> 다시 쓸 수 있는 시각(performance.now 기준)
-  let fx = null;
+  let skillFx = null;   // (이름 주의: 게임 루프 안에 fx 라는 다른 변수가 있어서 skillFx 로 씀)
   import('./skill-fx.js')
-    .then((m) => { fx = m.createSkillFx(scene); })
+    .then((m) => { skillFx = m.createSkillFx(scene); })
     .catch((err) => console.error('스킬 이펙트 로드 실패:', err));
 
   function useSkill(key) {
@@ -2367,7 +2367,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       if (!startWeaponSweep(myRig)) return;          // 장착/해제 모션 중이면 못 씀 (쿨타임도 안 씀)
       skillReadyAt.sweep = performance.now() + def.cd * 1000;
       socket.emit('skill', { id: 'sweep' });
-      if (fx) { try { fx.play('sweep', myAvatar.position.x, myAvatar.position.y, myAvatar.position.z, me.ry); } catch (err) { console.error('스킬 이펙트 오류:', err); } }
+      if (skillFx) { try { skillFx.play('sweep', myAvatar.position.x, myAvatar.position.y, myAvatar.position.z, me.ry); } catch (err) { console.error('스킬 이펙트 오류:', err); } }
     }
   }
 
@@ -2376,7 +2376,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const remote = d && remotes.get(d.id);
     if (!remote || d.skill !== 'sweep') return;
     startWeaponSweep(remote.g.userData.rig, true);
-    if (fx) { try { fx.play('sweep', remote.g.position.x, remote.g.position.y, remote.g.position.z, remote.g.rotation.y); } catch (err) { console.error('스킬 이펙트 오류:', err); } }
+    if (skillFx) { try { skillFx.play('sweep', remote.g.position.x, remote.g.position.y, remote.g.position.z, remote.g.rotation.y); } catch (err) { console.error('스킬 이펙트 오류:', err); } }
   });
 
   // 화면의 스킬 칸 (참고 이미지 스타일, 오른쪽 끝 화면 가운데 위쪽)
@@ -2677,7 +2677,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       animateHumanoid(remote.g, dt, remote.sp, !rAir, remote.vy);
     }
 
-    if (fx) { try { fx.update(dt); } catch (err) { console.error('스킬 이펙트 오류 (이펙트만 끕니다):', err); fx = null; } }
+    if (skillFx) { try { skillFx.update(dt); } catch (err) { console.error('스킬 이펙트 오류 (이펙트만 끕니다):', err); skillFx = null; } }
     if (goblins) {
       try { goblins.update(dt); } catch (err) { console.error('고블린 오류 (고블린만 끕니다):', err); goblins = null; }
     }
