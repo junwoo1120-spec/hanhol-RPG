@@ -7,7 +7,7 @@ import {
   roomFloorY, roomGhost, clampCameraRoom, clampCameraInRoom, innFloor, stairsInfo,
 } from './village-layout.js';
 import { makeHumanoid, animateHumanoid, humanReady } from './character.js';
-import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, setWeaponHandlers, isWeaponEquipped } from './weapon.js';
+import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSweep, setWeaponHandlers, isWeaponEquipped } from './weapon.js';
 import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
 
@@ -45,7 +45,8 @@ const HELP_KEYBOARD = [
   [['F'], '속도 배율 켜기/끄기'],
   [['[', ']'], '속도 배율 -10 / +10'],
   [['1'], '나무검 장착/해제 (테스트)'],
-  [['마우스 왼쪽', 'E'], '검 공격 (E는 문 근처가 아닐 때)'],
+  [['마우스 왼쪽'], '검 공격'],
+  [['E'], '스킬: 휩쓸기 (문 근처에서는 문 열기). R, T는 빈 스킬 칸'],
   [['H'], '조작법 열기/닫기'],
   [['Esc'], '마우스 잠금 해제'],
 ];
@@ -57,6 +58,7 @@ const HELP_TOUCH = [
   [['🔒'], '시점 고정 켜기/끄기'],
   [['화면 톡 터치'], '검 공격 (나무검 장착 후)'],
   [['공격 버튼'], '처음 누르면 나무검 장착, 이후 공격'],
+  [['오른쪽 스킬 칸 E R T'], 'E = 휩쓸기 (쿨타임 10초). R, T는 아직 빈 칸'],
   [['속도 패널'], '속도 배율 ×10~100'],
   [['하단 메뉴 버튼'], '인벤토리·장비·스킬·특성·상태창·퀘스트·거래 (단축키 없음)'],
 ];
@@ -122,6 +124,17 @@ body.touch .hk{width:76px}
 .tbtn.run{right:132px;bottom:34px;width:58px;height:58px}
 .tbtn.lock{right:38px;bottom:218px;width:60px;height:60px;background-image:url(/ui/lock_btn.png)}
 
+.skillbar{display:none}
+body.touch .skillbar,.skillbar.always{display:flex;position:fixed;right:4px;top:40%;z-index:6;flex-direction:column;gap:6px;transform:translateY(-50%) scale(var(--ui,1));transform-origin:right center;pointer-events:none}
+.skill-slot{position:relative;width:56px;height:56px;box-sizing:border-box;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center;background:#7b8056;border:2px solid #3f4429;box-shadow:inset 0 0 0 2px #9a9f72,0 3px 8px rgba(0,0,0,.5)}
+.skill-slot::before{content:'';position:absolute;inset:5px;background:#394440;border:1px solid #eef0e2;box-shadow:inset 0 0 0 2px rgba(0,0,0,.4)}
+.skill-slot .k{position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:3;font:700 9px 'Galmuri9','Galmuri11',sans-serif;font-style:normal;color:#fff;line-height:11px;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
+.skill-slot .n{position:relative;z-index:2;font:700 17px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#fff;white-space:nowrap;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000,-1px -1px #000,1px 1px #000,-1px 1px #000,1px -1px #000}
+.skill-slot .n.s{font-size:13px}
+.skill-slot .cdv{position:absolute;left:5px;right:5px;bottom:5px;height:0;background:rgba(0,0,0,.68);z-index:4}
+.skill-slot .cdn{position:absolute;z-index:5;font:700 22px 'Galmuri11',sans-serif;font-style:normal;color:#ffe9a8;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000}
+.skill-slot.cool .n{opacity:.45}
+.skill-slot.press{filter:brightness(1.35)}
 .toast{position:fixed;left:50%;top:70px;transform:translateX(-50%);padding:6px 14px;border-radius:14px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font:600 13px sans-serif;z-index:9;pointer-events:none;opacity:0;transition:opacity .25s}
 .toast.show{opacity:1}
 body.touch .joy-base{transform:scale(var(--ui,1));transform-origin:left bottom}
@@ -1328,10 +1341,12 @@ function boot(socket, { id, seed }, nick, mode) {
 
     if (e.code === 'Space') jumpBuffer = 0.15;
     if (e.code === 'KeyF') setFast(!fast);
-    if (e.code === 'KeyE') {   // 문/집 상호작용이 가능하면 그걸 하고, 아니면 공격
+    if (e.code === 'KeyE') {   // 문/집 상호작용이 가능하면 그걸 하고, 아니면 스킬 E (휩쓸기)
       if (hintAct || currentAction()) doDoorAction();
-      else doAttack();
+      else useSkill('E');
     }
+    if (e.code === 'KeyR') useSkill('R');
+    if (e.code === 'KeyT') useSkill('T');
     if (e.code === 'Digit1') toggleWeapon();
     if (e.code === 'KeyH') toggleHelp();
     if (e.code === 'BracketLeft') setMult(fastMult - 10);
@@ -1683,7 +1698,7 @@ function boot(socket, { id, seed }, nick, mode) {
   const winStyle = document.createElement('style');
   winStyle.textContent = `
 .uiwin{position:fixed;inset:0;z-index:60;display:none;background:rgba(0,0,0,.14);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#2a1a0c;user-select:none;-webkit-user-select:none;overflow:hidden}
-body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-open .tgroup,body.uw-open .rpg-compass,body.uw-open #hud,body.uw-open .cross{display:none!important}
+body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-open .tgroup,body.uw-open .skillbar,body.uw-open .rpg-compass,body.uw-open #hud,body.uw-open .cross{display:none!important}
 .uwb-stage{position:absolute;left:50%;top:50%;width:1536px;height:1024px;margin:-512px 0 0 -768px;transform-origin:50% 50%;background:#3a2a1c url(/ui/book_bg.png) 0 0/100% 100% no-repeat;box-shadow:0 10px 40px rgba(0,0,0,.6)}
 .uwb-tab{position:absolute;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:14px;cursor:pointer;font-size:32px;font-weight:700;color:#2e1d0e;text-shadow:0 1px 0 rgba(255,235,190,.35);padding-bottom:6px}
 .uwb-tab img{width:54px;height:54px;object-fit:contain;pointer-events:none;filter:sepia(.6) brightness(.55)}
@@ -2324,6 +2339,79 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (Number.isFinite(p.z)) me.z = p.z;
   });
 
+  // ---------- 스킬 (E / R / T) ----------
+  // 지금은 E = 휩쓸기만 있고 R·T 는 빈 칸이에요. 스킬을 더하려면 SKILL_SLOTS 의 id 를 채우고 useSkill 에 동작을 넣으면 돼요.
+  // 실제 피해·범위·쿨타임 확정은 서버(server.js 'skill' + goblin-ai.mjs SKILLS). 여기는 입력·모션·이펙트·쿨타임 표시.
+  const SKILL_SLOTS = [
+    { key: 'E', id: 'sweep', name: '휩쓸기', cd: 10 },   // cd = 쿨타임(초). 서버 값(goblin-ai.mjs SKILLS.sweep.COOLDOWN)과 같게
+    { key: 'R', id: null, name: '없음', cd: 0 },
+    { key: 'T', id: null, name: '없음', cd: 0 },
+  ];
+  const SKILLBAR_ON_PC = false;   // true 로 하면 키보드 모드에서도 스킬 칸을 화면에 보여줘요 (지금은 모바일만)
+  const skillReadyAt = {};        // 스킬 id -> 다시 쓸 수 있는 시각(performance.now 기준)
+  let fx = null;
+  import('./skill-fx.js')
+    .then((m) => { fx = m.createSkillFx(scene); })
+    .catch((err) => console.error('스킬 이펙트 로드 실패:', err));
+
+  function useSkill(key) {
+    const def = SKILL_SLOTS.find((s) => s.key === key);
+    if (!def) return;
+    if (uiOpen) return;
+    if (!def.id) { toast('비어 있는 스킬 칸이에요'); return; }
+    if (!isWeaponEquipped(myRig)) { toast('검을 먼저 장착해야 해요'); return; }
+    const left = (skillReadyAt[def.id] || 0) - performance.now();
+    if (left > 0) { toast(def.name + ' 쿨타임 ' + Math.ceil(left / 1000) + '초'); return; }
+    if (def.id === 'sweep') {
+      if (!startWeaponSweep(myRig)) return;          // 장착/해제 모션 중이면 못 씀 (쿨타임도 안 씀)
+      skillReadyAt.sweep = performance.now() + def.cd * 1000;
+      socket.emit('skill', { id: 'sweep' });
+      if (fx) fx.play('sweep', myAvatar.position.x, myAvatar.position.y, myAvatar.position.z, me.ry);
+    }
+  }
+
+  // 다른 플레이어가 쓴 스킬 (모션 + 이펙트)
+  socket.on('skillfx', (d) => {
+    const remote = d && remotes.get(d.id);
+    if (!remote || d.skill !== 'sweep') return;
+    startWeaponSweep(remote.g.userData.rig, true);
+    if (fx) fx.play('sweep', remote.g.position.x, remote.g.position.y, remote.g.position.z, remote.g.rotation.y);
+  });
+
+  // 화면의 스킬 칸 (참고 이미지 스타일, 오른쪽 끝 화면 가운데 위쪽)
+  if (touchMode || SKILLBAR_ON_PC) {
+    const bar = document.createElement('div');
+    bar.className = 'skillbar' + (SKILLBAR_ON_PC ? ' always' : '');
+    const slotEls = SKILL_SLOTS.map((def) => {
+      const el = document.createElement('div');
+      el.className = 'skill-slot';
+      el.innerHTML = '<i class="k">' + def.key + '</i><b class="n' + (def.name.length > 2 ? ' s' : '') + '">' + def.name + '</b><div class="cdv"></div><em class="cdn"></em>';
+      el.addEventListener('pointerdown', (e) => { e.preventDefault(); el.classList.add('press'); useSkill(def.key); });
+      const up = () => el.classList.remove('press');
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+      el.addEventListener('pointerleave', up);
+      bar.appendChild(el);
+      return { def, el, cdv: el.querySelector('.cdv'), cdn: el.querySelector('.cdn') };
+    });
+    document.body.appendChild(bar);
+    setInterval(() => {   // 쿨타임 표시 (아래에서 위로 줄어드는 어두운 막 + 남은 초)
+      const now = performance.now();
+      for (const s of slotEls) {
+        const left = s.def.id ? (skillReadyAt[s.def.id] || 0) - now : 0;
+        if (left > 0) {
+          s.el.classList.add('cool');
+          s.cdv.style.height = Math.min(100, (left / (s.def.cd * 1000)) * 100) + '%';
+          s.cdn.textContent = Math.ceil(left / 1000);
+        } else if (s.el.classList.contains('cool')) {
+          s.el.classList.remove('cool');
+          s.cdv.style.height = '0';
+          s.cdn.textContent = '';
+        }
+      }
+    }, 100);
+  }
+
   // ---------- 게임 루프 ----------
   // ---------- 고블린 (서버가 위치·전투를 정하고, 여기서는 받아서 그림) ----------
   // goblin.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
@@ -2583,6 +2671,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       animateHumanoid(remote.g, dt, remote.sp, !rAir, remote.vy);
     }
 
+    if (fx) fx.update(dt);
     if (goblins) {
       try { goblins.update(dt); } catch (err) { console.error('고블린 오류 (고블린만 끕니다):', err); goblins = null; }
     }
