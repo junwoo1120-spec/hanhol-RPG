@@ -189,6 +189,14 @@ const SLASH = [
     follow: [-0.50,  0.1, 0.30, -0.15, 0, 0.00,   1.10, -0.6, 0,   0.20, -0.35, 0]
   }
 ];
+// 스킬 "휩쓸기": 몸을 오른쪽으로 크게 비틀었다가 검을 수평으로 왼쪽까지 휘두름 (몸통 비틀기가 주된 움직임)
+const SWEEP_T = { windup: 0.20, swing: 0.28, follow: 0.20, recover: 0.25 };
+const SWEEP = {
+  windup: [-1.45,  0.25, 0.95,  -0.30, 0, 0.15,   1.00,  0.35, 0,   0.00, -0.95, 0],
+  mid:    [-1.45,  0.00, 0.95,  -0.25, 0, 0.10,   1.00,  0.00, 0,   0.05,  0.05, 0],
+  end:    [-1.40, -0.25, 0.95,  -0.25, 0, 0.10,   1.00, -0.40, 0,   0.10,  0.95, 0],
+  follow: [-1.40, -0.25, 0.95,  -0.25, 0, 0.10,   1.00, -0.40, 0,   0.10,  0.90, 0]
+};
 const PROC_UPPER_Z = 0.61;   // 코드 캐릭터(fallback)는 팔이 곧게 내려가 있어서 GLB(A자 팔)보다 이만큼 덜 모음
 
 export const WS = { NONE: 0, EQUIPPING: 1, READY: 2, ATTACKING: 3, UNEQUIPPING: 4 };
@@ -203,7 +211,7 @@ function getWp(rig) {
   if (!rig.wp) {
     rig.wp = {
       kind: DEFAULT_WEAPON,
-      mode: WS.NONE, t: 0, cd: 0, queued: false, want: false, hitDone: false, side: 0, nextSide: 0,
+      mode: WS.NONE, t: 0, cd: 0, queued: false, want: false, hitDone: false, side: 0, nextSide: 0, sweep: false,
       armW: 0, runAmt: 0, moveAmt: 0, phase: 0, time: 0, scale: 1,
       mount: null,
       base: new Float32Array(12), pose: new Float32Array(12),
@@ -286,6 +294,19 @@ export function startWeaponAttack(rig, remote = false, side = -1) {
   return false;
 }
 
+// 스킬 "휩쓸기" 모션 시작. 성공하면 true (장착 중이고 장착/해제 모션이 아닐 때). 평타 도중이면 끊고 시작.
+// remote=true 면 서버가 허용한 스킬이므로 쿨다운을 다시 검사하지 않음
+export function startWeaponSweep(rig, remote = false) {
+  const wp = rig && rig.wp;
+  if (!wp || !wp.want) return false;
+  if (wp.mode === WS.ATTACKING && wp.sweep) return false;   // 이미 휩쓸기 중
+  if (wp.mode === WS.READY ? (remote || wp.cd <= 0) : wp.mode === WS.ATTACKING) {
+    beginAttack(wp, 0, true);
+    return true;
+  }
+  return false;
+}
+
 // 공격 시작/타격 프레임 콜백 등록 (null 로 해제). 타격 프레임은 "시각상 휘두른 순간" 알림일 뿐, 피해 확정은 서버 몫
 export function setWeaponHandlers(rig, { onStart = null, onHit = null } = {}) {
   const wp = getWp(rig);
@@ -308,19 +329,20 @@ export function getWeaponStateName(rig) {
 export function resetWeapon(rig) {
   const wp = rig && rig.wp;
   if (!wp) return;
-  wp.mode = WS.NONE; wp.t = 0; wp.cd = 0; wp.queued = false; wp.want = false; wp.hitDone = false; wp.armW = 0;
+  wp.mode = WS.NONE; wp.t = 0; wp.cd = 0; wp.queued = false; wp.want = false; wp.hitDone = false; wp.armW = 0; wp.sweep = false;
   if (wp.mount) wp.mount.visible = false;
 }
 
-function beginAttack(wp, side) {
+function beginAttack(wp, side, sweep = false) {
+  wp.sweep = sweep;
   wp.side = side;
-  wp.nextSide = 1 - side;   // 다음 평타는 반대 방향
+  if (!sweep) wp.nextSide = 1 - side;   // 다음 평타는 반대 방향
   wp.mode = WS.ATTACKING;
   wp.t = 0;
-  wp.cd = WEAPON_CFG.attack.cooldown;
+  wp.cd = sweep ? 0.9 : WEAPON_CFG.attack.cooldown;
   wp.queued = false;
   wp.hitDone = false;
-  if (wp.onStart) wp.onStart(side);
+  if (wp.onStart && !sweep) wp.onStart(side);   // 휩쓸기는 'atk' 대신 스킬 이벤트로 따로 알림
 }
 
 // ============================================================
@@ -356,12 +378,13 @@ export function updateWeapon(rig, dt, loco) {
       else if (wp.queued && wp.cd <= 0) beginAttack(wp, wp.nextSide);
       break;
     case WS.ATTACKING: {
+      const AT = wp.sweep ? SWEEP_T : A;
       wp.t += dt;
-      if (!wp.hitDone && wp.t >= A.windup + A.swing * 0.5) {
+      if (!wp.hitDone && wp.t >= AT.windup + AT.swing * 0.5) {
         wp.hitDone = true;
-        if (wp.onHit) wp.onHit();
+        if (wp.onHit && !wp.sweep) wp.onHit();
       }
-      if (wp.t >= A.windup + A.swing + A.follow + A.recover) { wp.mode = WS.READY; wp.t = 0; }
+      if (wp.t >= AT.windup + AT.swing + AT.follow + AT.recover) { wp.mode = WS.READY; wp.t = 0; wp.sweep = false; }
       break;
     }
     case WS.UNEQUIPPING:
@@ -412,8 +435,9 @@ export function updateWeapon(rig, dt, loco) {
     }
     case WS.ATTACKING: {
       const t = wp.t;
-      const t1 = A.windup, t2 = t1 + A.swing * 0.5, t3 = t1 + A.swing, t4 = t3 + A.follow, t5 = t4 + A.recover;
-      const S = SLASH[wp.side];
+      const AT = wp.sweep ? SWEEP_T : A;
+      const t1 = AT.windup, t2 = t1 + AT.swing * 0.5, t3 = t1 + AT.swing, t4 = t3 + AT.follow, t5 = t4 + AT.recover;
+      const S = wp.sweep ? SWEEP : SLASH[wp.side];
       let a, b, k;
       if (t < t1)      { a = base;     b = S.windup; k = smooth(0, 1, t / t1); }
       else if (t < t2) { a = S.windup; b = S.mid;    k = (t - t1) / (t2 - t1); }
