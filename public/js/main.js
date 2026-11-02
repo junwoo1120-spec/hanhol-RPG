@@ -45,7 +45,8 @@ const HELP_KEYBOARD = [
   [['F'], '속도 배율 켜기/끄기'],
   [['[', ']'], '속도 배율 -10 / +10'],
   [['1'], '나무검 장착/해제 (테스트)'],
-  [['마우스 왼쪽'], '검 공격'],
+  [['마우스 왼쪽', 'Enter'], '검 공격'],
+  [['Q'], '대쉬: 이동 방향(앞·옆·뒤)으로 5m 짧게 돌진, 입력 없으면 앞으로 (쿨타임 1초)'],
   [['E'], '스킬: 휩쓸기 (문 근처에서는 문 열기). R, T는 빈 스킬 칸'],
   [['H'], '조작법 열기/닫기'],
   [['Esc'], '마우스 잠금 해제'],
@@ -58,7 +59,7 @@ const HELP_TOUCH = [
   [['🔒'], '시점 고정 켜기/끄기'],
   [['화면 톡 터치'], '검 공격 (나무검 장착 후)'],
   [['공격 버튼'], '처음 누르면 나무검 장착, 이후 공격'],
-  [['오른쪽 스킬 칸 E R T'], 'E = 휩쓸기 (쿨타임 10초). R, T는 아직 빈 칸'],
+  [['오른쪽 스킬 칸 Q E R T'], 'Q = 대쉬 (쿨타임 1초, 조이스틱 방향으로 돌진), E = 휩쓸기 (쿨타임 10초). R, T는 아직 빈 칸'],
   [['속도 패널'], '속도 배율 ×10~100'],
   [['하단 메뉴 버튼'], '인벤토리·장비·스킬·특성·상태창·퀘스트·거래 (단축키 없음)'],
 ];
@@ -132,7 +133,12 @@ body.kbd .skillbar{transform:translateY(-50%) scale(var(--sk,1))}
 .skill-slot .k{position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:3;font:700 9px 'Galmuri9','Galmuri11',sans-serif;font-style:normal;color:#fff;line-height:11px;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
 .skill-slot .n{position:relative;z-index:2;font:700 17px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#fff;white-space:nowrap;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000,-1px -1px #000,1px 1px #000,-1px 1px #000,1px -1px #000}
 .skill-slot .n.s{font-size:13px}
-.skill-slot .cdv{position:absolute;left:2px;right:2px;bottom:2px;height:0;background:rgba(0,0,0,.68);z-index:4}
+.skill-slot .cdc{position:absolute;inset:2px;overflow:hidden;z-index:4;pointer-events:none}
+.skill-slot .cdv{position:absolute;left:0;right:0;bottom:0;height:0;background:rgba(0,0,0,.68)}
+.skill-slot.round::before{display:none}
+.skill-slot.round .cdc{inset:0;border-radius:50%}
+.skill-slot.round .k{top:-4px}
+.skill-slot .im{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none;user-select:none;-webkit-user-drag:none}
 .skill-slot .cdn{position:absolute;z-index:5;font:700 22px 'Galmuri11',sans-serif;font-style:normal;color:#ffe9a8;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000}
 .skill-slot.cool .n{opacity:.45}
 .skill-slot.press{filter:brightness(1.35)}
@@ -1346,6 +1352,8 @@ function boot(socket, { id, seed }, nick, mode) {
       if (hintAct || currentAction()) doDoorAction();
       else useSkill('E');
     }
+    if (e.code === 'KeyQ') useSkill('Q');
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') doAttack();   // 일반 공격
     if (e.code === 'KeyR') useSkill('R');
     if (e.code === 'KeyT') useSkill('T');
     if (e.code === 'Digit1') toggleWeapon();
@@ -2344,6 +2352,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   // 지금은 E = 휩쓸기만 있고 R·T 는 빈 칸이에요. 스킬을 더하려면 SKILL_SLOTS 의 id 를 채우고 useSkill 에 동작을 넣으면 돼요.
   // 실제 피해·범위·쿨타임 확정은 서버(server.js 'skill' + goblin-ai.mjs SKILLS). 여기는 입력·모션·이펙트·쿨타임 표시.
   const SKILL_SLOTS = [
+    { key: 'Q', id: 'dash', name: '대쉬', cd: 1, img: '/ui/dash_btn.png' },   // 대쉬는 아래 "대쉬 (Q)" 구역 참고
     { key: 'E', id: 'sweep', name: '휩쓸기', cd: 10 },   // cd = 쿨타임(초). 서버 값(goblin-ai.mjs SKILLS.sweep.COOLDOWN)과 같게
     { key: 'R', id: null, name: '없음', cd: 0 },
     { key: 'T', id: null, name: '없음', cd: 0 },
@@ -2355,10 +2364,48 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     .then((m) => { skillFx = m.createSkillFx(scene); })
     .catch((err) => console.error('스킬 이펙트 로드 실패:', err));
 
+  // ---------- 대쉬 (Q) ----------
+  // 이동 입력 방향(앞·옆·뒤 아무 쪽이나)으로 5m 를 0.18초 만에 돌진. 입력이 없으면 바라보는 앞쪽. 쿨타임 1초.
+  // 이동은 일반 이동과 같은 충돌(나무·바위·건물·방 벽)을 적용해요. 서버는 쿨타임만 확인하고 다른 플레이어에게 이펙트를 알려줘요.
+  const DASH = { dist: 5, time: 0.18, cd: 1.0 };
+  const dashProfile = (u) => u * (1.4 - 0.4 * u);   // 시작이 빠르고 끝이 부드러운 이동 곡선 (skill-fx.js 의 dashProfile 과 같게)
+  let dashT = 0;                       // 남은 대쉬 시간(초). 0 이면 대쉬 중 아님
+  let dashDX = 0, dashDZ = 1;          // 대쉬 방향 (월드, 길이 1)
+  let dashPitch = 0, dashRoll = 0;     // 몸 기울기 목표 (앞으로 숙임 / 옆으로 기움)
+  let dashLean = 0;                    // 기울기 적용 정도 (0~1, 부드럽게 변함)
+  let dashInX = 0, dashInZ = 0, dashInLen = 0;   // 이번 프레임 이동 입력 (게임 루프가 매번 갱신)
+  let fovKick = 0;                     // 대쉬할 때 시야각을 살짝 넓혀 속도감을 줌
+  const baseFov = camera.fov;
+  myAvatar.rotation.order = 'YXZ';     // 몸 기울기(앞/옆)를 좌우 회전 위에 얹기 위해
+
+  function startDash() {
+    const now = performance.now();
+    if (uiOpen || dashT > 0 || now < (skillReadyAt.dash || 0)) return;
+    let dx, dz;
+    if (dashInLen > 0.01) { dx = dashInX / dashInLen; dz = dashInZ / dashInLen; }
+    else { dx = Math.sin(me.ry); dz = Math.cos(me.ry); }
+    dashDX = dx; dashDZ = dz; dashT = DASH.time;
+    skillReadyAt.dash = now + DASH.cd * 1000;
+    if (shiftLock) {   // 시점 고정: 바라보는 방향 기준으로 앞/옆 기울기 계산
+      dashPitch = 0.5 * (dx * Math.sin(me.ry) + dz * Math.cos(me.ry));
+      dashRoll = -0.5 * (dx * Math.cos(me.ry) - dz * Math.sin(me.ry));
+    } else { dashPitch = 0.5; dashRoll = 0; }   // 아니면 대쉬 방향으로 몸을 돌리니까 항상 앞으로 숙임
+    socket.emit('dash', { dx, dz });
+    if (skillFx) { try { skillFx.playDash(me.x, me.y, me.z, dx, dz); } catch (err) { console.error('대쉬 이펙트 오류:', err); } }
+  }
+
+  // 다른 플레이어의 대쉬 (이펙트)
+  socket.on('dashfx', (d) => {
+    const remote = d && remotes.get(d.id);
+    if (!remote || !skillFx) return;
+    try { skillFx.playDash(remote.g.position.x, remote.g.position.y, remote.g.position.z, d.dx, d.dz); } catch (err) { console.error('대쉬 이펙트 오류:', err); }
+  });
+
   function useSkill(key) {
     const def = SKILL_SLOTS.find((s) => s.key === key);
     if (!def) return;
     if (uiOpen) return;
+    if (key === 'Q') { startDash(); return; }   // 대쉬는 검이 없어도 됨
     if (!def.id) { toast('비어 있는 스킬 칸이에요'); return; }
     if (!isWeaponEquipped(myRig)) return;   // 검을 안 들고 있으면 아무 일도 안 함 (안내 메시지 없음)
     const left = (skillReadyAt[def.id] || 0) - performance.now();
@@ -2390,8 +2437,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     }
     const slotEls = SKILL_SLOTS.map((def) => {
       const el = document.createElement('div');
-      el.className = 'skill-slot';
-      el.innerHTML = '<i class="k">' + def.key + '</i><b class="n' + (def.name.length > 2 ? ' s' : '') + '">' + def.name + '</b><div class="cdv"></div><em class="cdn"></em>';
+      el.className = 'skill-slot' + (def.img ? ' round' : '');
+      el.innerHTML = '<i class="k">' + def.key + '</i>' + (def.img ? '<img class="im" src="' + def.img + '" alt="" draggable="false">' : '<b class="n' + (def.name.length > 2 ? ' s' : '') + '">' + def.name + '</b>') + '<div class="cdc"><div class="cdv"></div></div><em class="cdn"></em>';
       el.addEventListener('pointerdown', (e) => { e.preventDefault(); el.classList.add('press'); useSkill(def.key); });
       const up = () => el.classList.remove('press');
       el.addEventListener('pointerup', up);
@@ -2497,10 +2544,41 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const mx = fx * inF + rx * inR;
     const mz = fz * inF + rz * inR;
     const len = Math.hypot(mx, mz);
+    dashInX = mx; dashInZ = mz; dashInLen = len;   // 대쉬 방향 결정용
 
     let moved = 0;
+    let dashFrame = false;
 
-    if (len > 0.01) {
+    if (dashT > 0) {
+      // 대쉬 중: 입력 대신 대쉬 방향으로 이동 (작은 걸음으로 쪼개서 충돌 검사 → 벽을 뚫지 않음)
+      const u0 = 1 - dashT / DASH.time;
+      const u1 = Math.min(1, u0 + dt / DASH.time);
+      const total = DASH.dist * (dashProfile(u1) - dashProfile(u0));
+      const nSub = Math.max(1, Math.ceil(total / 0.35)), sd = total / nSub;
+      const CRd = 0.4 * CHAR_SCALE;
+      let px = me.x, pz = me.z;
+      for (let i = 0; i < nSub; i++) {
+        let nx = px + dashDX * sd, nz = pz + dashDZ * sd;
+        const pr = Math.hypot(nx, nz);
+        if (pr > PLAY_RADIUS) { nx *= PLAY_RADIUS / pr; nz *= PLAY_RADIUS / pr; }
+        if (curRoom >= 0) {
+          const rc = collideRoom(curRoom, nx, nz, CRd);
+          nx = rc.x; nz = rc.z;
+        } else if (!fast) {
+          const cc = nature.collide(nx, nz, CRd);
+          const bc = collideBuildings(cc.x, cc.z, CRd, me.y);
+          nx = bc.x; nz = bc.z;
+        }
+        px = nx; pz = nz;
+      }
+      moved = Math.hypot(px - me.x, pz - me.z);
+      me.x = px;
+      me.z = pz;
+      dashT = Math.max(0, dashT - dt);
+      dashFrame = true;
+      if (!shiftLock) me.ry = Math.atan2(dashDX, dashDZ);
+      idleTime = 0;
+    } else if (len > 0.01) {
       const running = RUN_TOGGLE ? runOn : (keys.ControlLeft || keys.ControlRight);
       const speed =
         7 * SPEED_SCALE * (running ? RUN_MULT : 1) * (fast ? fastMult : 1) * mag;
@@ -2584,7 +2662,16 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const inHouse = updateHouses(dt, me.x, me.y, me.z, curRoom);   // 문 열림 애니메이션 + 방 보이기 + 실내 조명
     myAvatar.position.set(me.x, me.y, me.z);
     myAvatar.rotation.y = me.ry;
-    animateHumanoid(myAvatar, dt, moved / Math.max(dt, 1e-4), grounded, vy);
+    // 대쉬 모션: 달리기 동작을 빠르게 + 몸을 이동 방향으로 기울임 (끝나면 부드럽게 원래대로)
+    dashLean += ((dashT > 0 ? 1 : 0) - dashLean) * (1 - Math.exp(-(dashT > 0 ? 22 : 12) * dt));
+    myAvatar.rotation.x = dashPitch * dashLean;
+    myAvatar.rotation.z = dashRoll * dashLean;
+    animateHumanoid(myAvatar, dt, dashFrame ? 13 : moved / Math.max(dt, 1e-4), grounded, vy);
+    fovKick += ((dashT > 0 ? 9 : 0) - fovKick) * (1 - Math.exp(-14 * dt));
+    if (Math.abs(fovKick) > 0.02 || camera.fov !== baseFov) {
+      camera.fov = baseFov + (Math.abs(fovKick) > 0.02 ? fovKick : 0);
+      camera.updateProjectionMatrix();
+    }
 
     // 3인칭 카메라 (360도 궤도 회전, 시프트락이면 어깨 너머 시점)
     slk += ((shiftLock ? 1 : 0) - slk) * (1 - Math.exp(-10 * dt));
