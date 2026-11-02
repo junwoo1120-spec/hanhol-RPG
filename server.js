@@ -103,7 +103,7 @@ io.on('connection', (socket) => {
       const dt = Math.max((now - p.t) / 1000, 0.016);
       const d = Math.hypot(m.x - p.x, m.z - p.z);
       // 서버 검증: 너무 빠르면 되돌림 (속도 배율 켜면 한도도 함께 증가)
-      if (d > MAX_SPEED * (p.fast ? FAST_MULT : 1) * dt + 1) {
+      if (d > MAX_SPEED * (p.fast ? FAST_MULT : 1) * dt + 1 + (now < (p.dashUntil || 0) ? 6 : 0)) {   // 대쉬 직후 잠깐은 한도를 넉넉히
         socket.emit('correct', { x: p.x, y: p.y, z: p.z });
         return;
       }
@@ -161,6 +161,18 @@ io.on('connection', (socket) => {
     p.skillCd.sweep = now + SKILLS.sweep.COOLDOWN * 1000;
     socket.broadcast.emit('skillfx', { id: socket.id, skill: 'sweep' });
     sim.playerSkill(p, 'sweep', now);
+  });
+
+  // 대쉬 (Q): 이동 자체는 클라이언트가 하고(5m), 서버는 쿨타임(1초)만 확인해서 다른 플레이어에게 이펙트를 알려줌
+  socket.on('dash', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !d || !Number.isFinite(d.dx) || !Number.isFinite(d.dz)) return;
+    const now = Date.now();
+    if (now - (p.dashT || 0) < 800) return;   // 쿨타임 1초 (네트워크 지연 오차 허용)
+    p.dashT = now;
+    p.dashUntil = now + 500;
+    const len = Math.hypot(d.dx, d.dz) || 1;
+    socket.broadcast.emit('dashfx', { id: socket.id, dx: d.dx / len, dz: d.dz / len });
   });
 
   socket.on('fast', (v) => {
