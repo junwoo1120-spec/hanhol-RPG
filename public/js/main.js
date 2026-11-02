@@ -124,7 +124,11 @@ body.touch .hk{width:76px}
 .tbtn.run.on{background:url(/ui/run_btn.png) center/contain no-repeat;filter:brightness(1.3) drop-shadow(0 0 8px #f6d36b)}
 .tbtn.jump span,.tbtn.run span,.tbtn.dash span{display:none}
 .tbtn.jump.press,.tbtn.run.press,.tbtn.dash.press{filter:brightness(1.4) drop-shadow(0 3px 6px rgba(0,0,0,.6))}
-.tbtn.dash{right:38px;bottom:218px;width:62px;height:62px;background-image:url(/ui/dash_btn.png)}
+.tbtn.dash{right:129px;bottom:133px;width:64px;height:64px;background-image:url(/ui/dash_btn.png)}
+.tbtn.dash.pc{right:113px;bottom:117px;width:96px;height:96px}
+.tbtn.dash .k{position:absolute;top:-6px;left:50%;transform:translateX(-50%);z-index:3;font:700 12px 'Galmuri9','Galmuri11',sans-serif;font-style:normal;color:#fff;line-height:13px;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
+.tbtn.dash.pc .n{font-size:22px}
+.tbtn.dash.pc .cdn{font-size:33px}
 .tbtn.dash .n{position:relative;z-index:2;font:700 15px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-style:normal;color:#fff;white-space:nowrap;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000,-1px -1px #000,1px 1px #000,-1px 1px #000,1px -1px #000}
 .tbtn.dash .cdc{position:absolute;inset:0;border-radius:50%;overflow:hidden;z-index:4;pointer-events:none}
 .tbtn.dash .cdv{position:absolute;left:0;right:0;bottom:0;height:0;background:rgba(0,0,0,.68)}
@@ -133,7 +137,7 @@ body.touch .hk{width:76px}
 .tbtn .lbl{position:absolute;left:50%;bottom:-4px;transform:translateX(-50%);font:700 13px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-style:normal;color:#fff;white-space:nowrap;pointer-events:none;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000,0 2px 3px #000}
 .tbtn.lock .lbl{font-size:11px}
 .tbtn.run{right:132px;bottom:34px;width:58px;height:58px}
-.tbtn.lock{right:0;bottom:0;width:30px;height:30px;background-image:url(/ui/lock_btn.png)}
+.tbtn.lock{right:0;bottom:10px;width:30px;height:30px;background-image:url(/ui/lock_btn.png)}
 
 .skillbar{display:flex;position:fixed;right:4px;top:40%;z-index:6;flex-direction:column;gap:6px;transform-origin:right center;pointer-events:none}
 body.touch .skillbar{top:46%;transform:translateY(-50%) scale(var(--ui,1))}
@@ -1676,7 +1680,7 @@ function boot(socket, { id, seed }, nick, mode) {
   const winStyle = document.createElement('style');
   winStyle.textContent = `
 .uiwin{position:fixed;inset:0;z-index:60;display:none;background:rgba(0,0,0,.14);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#2a1a0c;user-select:none;-webkit-user-select:none;overflow:hidden}
-body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-open .tgroup,body.uw-open .skillbar,body.uw-open .rpg-compass,body.uw-open #hud,body.uw-open .cross{display:none!important}
+body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-open .tgroup,body.uw-open .tbtn.dash,body.uw-open .skillbar,body.uw-open .rpg-compass,body.uw-open #hud,body.uw-open .cross{display:none!important}
 .uwb-stage{position:absolute;left:50%;top:50%;width:1536px;height:1024px;margin:-512px 0 0 -768px;transform-origin:50% 50%;background:#3a2a1c url(/ui/book_bg.png) 0 0/100% 100% no-repeat;box-shadow:0 10px 40px rgba(0,0,0,.6)}
 .uwb-tab{position:absolute;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:14px;cursor:pointer;font-size:32px;font-weight:700;color:#2e1d0e;text-shadow:0 1px 0 rgba(255,235,190,.35);padding-bottom:6px}
 .uwb-tab img{width:54px;height:54px;object-fit:contain;pointer-events:none;filter:sepia(.6) brightness(.55)}
@@ -2406,15 +2410,15 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     }
     const slotEls = SKILL_SLOTS.map((def) => {
       const el = document.createElement('div');
-      const inGroup = touchMode && !!def.img;   // 모바일: 대쉬는 오른쪽 아래 버튼 묶음(공격 버튼 위 빈 자리)에 둠
-      el.className = inGroup ? 'tbtn dash' : 'skill-slot' + (def.img ? ' round' : '');
-      el.innerHTML = (inGroup ? '' : '<i class="k">' + def.key + '</i>') + (def.img && !inGroup ? '<img class="im" src="' + def.img + '" alt="" draggable="false">' : '') + '<b class="n' + (def.name.length > 2 ? ' s' : '') + '">' + def.name + '</b><div class="cdc"><div class="cdv"></div></div><em class="cdn"></em>';
+      const isDash = !!def.img;   // 대쉬는 스킬 칸이 아니라 따로 둔 둥근 버튼 (모바일: 오른쪽 아래 버튼 묶음의 빈 자리 / 컴퓨터: 같은 위치에 1.5배)
+      el.className = isDash ? 'tbtn dash' + (touchMode ? '' : ' pc') : 'skill-slot';
+      el.innerHTML = (isDash && touchMode ? '' : '<i class="k">' + def.key + '</i>') + '<b class="n' + (def.name.length > 2 ? ' s' : '') + '">' + def.name + '</b><div class="cdc"><div class="cdv"></div></div><em class="cdn"></em>';
       el.addEventListener('pointerdown', (e) => { e.preventDefault(); el.classList.add('press'); useSkill(def.key); });
       const up = () => el.classList.remove('press');
       el.addEventListener('pointerup', up);
       el.addEventListener('pointercancel', up);
       el.addEventListener('pointerleave', up);
-      (inGroup ? document.querySelector('.tgroup') || bar : bar).appendChild(el);
+      (isDash ? (touchMode ? document.querySelector('.tgroup') || document.body : document.body) : bar).appendChild(el);
       return { def, el, cdv: el.querySelector('.cdv'), cdn: el.querySelector('.cdn') };
     });
     document.body.appendChild(bar);
