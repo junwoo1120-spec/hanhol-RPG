@@ -144,6 +144,58 @@ function makePoints(N, size, color, additive, map) {
   return { pts: p, geo: g, mat: m, arr };
 }
 
+
+// ============================================================
+// 대쉬 이펙트: 지나온 길에 남는 속도선(빛줄기) + 출발점 충격 고리 + 먼지
+// 로컬 좌표: 원점 = 출발 위치(발밑), +Z = 대쉬 방향
+// ============================================================
+export const DASH_FX = {
+  dist: 5,            // 대쉬 거리 (main.js DASH.dist 와 같게)
+  time: 0.18,         // 대쉬 시간(초) (main.js DASH.time 과 같게)
+  life: 0.55,         // 이펙트 전체 수명(초)
+  streaks: [          // 속도선: 높이, 좌우 위치, 굵기, 꼬리 길이, 색
+    { y: 0.30, x: -0.55, rot: 0.5, w: 0.060, trail: 0.85, color: [0.85, 0.93, 1.0] },
+    { y: 0.80, x:  0.45, rot: -0.7, w: 0.080, trail: 1.00, color: [1, 1, 1] },
+    { y: 1.30, x: -0.35, rot: 1.0, w: 0.090, trail: 0.90, color: [1, 1, 1] },
+    { y: 1.80, x:  0.50, rot: -0.4, w: 0.070, trail: 0.80, color: [0.85, 0.93, 1.0] },
+    { y: 2.20, x: -0.10, rot: 0.9, w: 0.050, trail: 0.70, color: [1, 1, 1] },
+    { y: 1.05, x:  0.00, rot: 0.0, w: 0.140, trail: 0.55, color: [1, 1, 1] }
+  ],
+  dust: 12
+};
+const dashProfile = (u) => { u = Math.min(1, Math.max(0, u)); return u * (1.4 - 0.4 * u); };   // main.js 의 대쉬 이동 곡선과 같음
+
+function buildStreak(S) {
+  const SEGS = 18, n = (SEGS + 1) * 3;
+  const pos = new Float32Array(n * 3), col = new Float32Array(n * 4), uv = new Float32Array(n * 2), aT = new Float32Array(n), aW = new Float32Array(n);
+  const idx = [];
+  for (let i = 0; i <= SEGS; i++) {
+    const t = i / SEGS;
+    const half = S.w * 1.4 * (0.25 + 0.75 * t);   // 출발점 쪽은 가늘고 앞쪽(캐릭터 쪽)이 굵음
+    for (let k = 0; k < 3; k++) {
+      const w = k - 1, v = i * 3 + k;
+      pos[v * 3] = S.x + w * half * Math.cos(S.rot); pos[v * 3 + 1] = S.y + w * half * Math.sin(S.rot); pos[v * 3 + 2] = t * DASH_FX.dist;
+      uv[v * 2] = t; uv[v * 2 + 1] = (w + 1) / 2;
+      aT[v] = t; aW[v] = w;
+      col[v * 4] = S.color[0]; col[v * 4 + 1] = S.color[1]; col[v * 4 + 2] = S.color[2]; col[v * 4 + 3] = 0;
+    }
+    if (i < SEGS) { const a = i * 3; idx.push(a, a + 1, a + 3, a + 1, a + 4, a + 3, a + 1, a + 2, a + 4, a + 2, a + 5, a + 4); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+  g.setIndex(idx);
+  g.computeBoundingSphere();
+  // 선이 얇아서 옆에서 보면 안 보이지 않게, 위아래(Y)로도 살짝 넓힌 십자 형태는 생략하고 양면 + 가산 합성으로 처리
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false, map: textures().slash || null, blending: THREE.AdditiveBlending });
+  const mesh = new THREE.Mesh(g, mat);
+  mesh.rotation.z = 0;
+  mesh.renderOrder = 14;
+  mesh.frustumCulled = false;
+  return { S, mesh, geo: g, mat, aT, aW };
+}
+
 export function createSkillFx(scene) {
   const active = [];
   const H = SWEEP_FX.height, A = SWEEP_FX.arc;
@@ -202,7 +254,89 @@ export function createSkillFx(scene) {
     P.geo.attributes.position.needsUpdate = true;
   }
 
+
+  // ---------- 대쉬 ----------
+  const dashes = [];
+  function playDash(x, y, z, dx, dz) {
+    const tex = textures();
+    const group = new THREE.Group();
+    group.position.set(x, y, z);
+    group.rotation.y = Math.atan2(dx, dz);   // 로컬 +Z = 대쉬 방향
+    const streaks = DASH_FX.streaks.map(buildStreak);
+    for (const s of streaks) group.add(s.mesh);
+
+    // 출발점 충격 고리 (땅에 깔려서 퍼지며 사라짐)
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xdfe9ff, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide, fog: false, blending: THREE.AdditiveBlending });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.8, 32), ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.12;
+    ring.renderOrder = 13;
+    ring.frustumCulled = false;
+    group.add(ring);
+
+    // 먼지: 출발점에서 뒤쪽과 옆으로 퍼짐
+    const N = DASH_FX.dust, arr = new Float32Array(N * 3), du = [];
+    for (let i = 0; i < N; i++) {
+      const a = rnd(-1, 1);
+      du.push({ x: rnd(-0.5, 0.5), y: 0.2, z: rnd(-0.3, 0.4), vx: a * rnd(0.6, 1.6), vy: rnd(0.3, 0.9), vz: -rnd(0.6, 2.4) });
+      arr[i * 3 + 1] = -999;
+    }
+    const dg = new THREE.BufferGeometry();
+    dg.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+    const dm = new THREE.PointsMaterial({ color: 0xc9cdd2, size: 0.8, transparent: true, depthWrite: false, opacity: 0.5, fog: false, map: tex.dot || null });
+    const dp = new THREE.Points(dg, dm);
+    dp.frustumCulled = false;
+    dp.renderOrder = 9;
+    group.add(dp);
+
+    scene.add(group);
+    dashes.push({ group, streaks, ring, ringMat, dg, dm, du, arr, t: 0 });
+  }
+
+  function updateDashes(dt) {
+    for (let i = dashes.length - 1; i >= 0; i--) {
+      const e = dashes[i];
+      e.t += dt;
+      const t = e.t, life = DASH_FX.life;
+      const head = dashProfile(t / DASH_FX.time) * 1.03;    // 캐릭터가 지나간 지점까지만 선이 보임
+      const fade = 1 - smooth(0.10, life, t);
+      for (const s of e.streaks) {
+        const a = s.geo.attributes.color.array, trail = s.S.trail;
+        for (let v = 0; v < s.aT.length; v++) {
+          const behind = head - s.aT[v];
+          let alpha = 0;
+          if (behind >= 0) {
+            const body = 1 - smooth(0, trail, behind);
+            const edge = 1 - smooth(0.2, 1.0, Math.abs(s.aW[v]));
+            alpha = 0.9 * body * edge * fade;
+          }
+          a[v * 4 + 3] = alpha;
+        }
+        s.geo.attributes.color.needsUpdate = true;
+      }
+      const rs = 1 + 3.2 * ease(t / 0.35);
+      e.ring.scale.set(rs, rs, 1);
+      e.ringMat.opacity = 0.7 * (1 - smooth(0, 0.35, t));
+      const pa = e.arr;
+      for (let k = 0; k < e.du.length; k++) {
+        const d = e.du[k];
+        if (t < 0.02) { pa[k * 3 + 1] = -999; continue; }
+        pa[k * 3] = d.x + d.vx * t; pa[k * 3 + 1] = d.y + d.vy * t; pa[k * 3 + 2] = d.z + d.vz * t;
+      }
+      e.dg.attributes.position.needsUpdate = true;
+      e.dm.size = 0.6 + 1.4 * smooth(0, life, t);
+      e.dm.opacity = 0.5 * (1 - smooth(0.1, life, t));
+      if (t >= life) {
+        scene.remove(e.group);
+        for (const s of e.streaks) { s.geo.dispose(); s.mat.dispose(); }
+        e.ring.geometry.dispose(); e.ringMat.dispose(); e.dg.dispose(); e.dm.dispose();
+        dashes.splice(i, 1);
+      }
+    }
+  }
+
   function update(dt) {
+    updateDashes(dt);
     for (let i = active.length - 1; i >= 0; i--) {
       const e = active[i];
       e.t += dt;
@@ -249,5 +383,5 @@ export function createSkillFx(scene) {
     }
   }
 
-  return { play, update };
+  return { play, playDash, update };
 }
