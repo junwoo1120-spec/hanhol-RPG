@@ -42,8 +42,6 @@ const HELP_KEYBOARD = [
   [['←', '→', '↑', '↓'], '화면 회전'],
   [['마우스'], '화면 회전 (화면 클릭 후)'],
   [['터치'], '화면 드래그로 회전, 짧게 톡 터치하면 검 공격'],
-  [['F'], '속도 배율 켜기/끄기'],
-  [['[', ']'], '속도 배율 -10 / +10'],
   [['1'], '나무검 장착/해제 (테스트)'],
   [['마우스 왼쪽', 'Enter'], '검 공격'],
   [['Q'], '대쉬: 이동 방향(앞·옆·뒤)으로 5m 짧게 돌진, 입력 없으면 앞으로 (쿨타임 1초)'],
@@ -59,8 +57,8 @@ const HELP_TOUCH = [
   [['🔒'], '시점 고정 켜기/끄기'],
   [['화면 톡 터치'], '검 공격 (나무검 장착 후)'],
   [['공격 버튼'], '처음 누르면 나무검 장착, 이후 공격'],
-  [['오른쪽 스킬 칸 Q E R T'], 'Q = 대쉬 (쿨타임 1초, 조이스틱 방향으로 돌진), E = 휩쓸기 (쿨타임 10초). R, T는 아직 빈 칸'],
-  [['속도 패널'], '속도 배율 ×10~100'],
+  [['대쉬 버튼'], '조이스틱 방향으로 5m 돌진 (쿨타임 1초). 입력이 없으면 앞으로'],
+  [['오른쪽 스킬 칸 E R T'], 'E = 휩쓸기 (쿨타임 10초). R, T는 아직 빈 칸'],
   [['하단 메뉴 버튼'], '인벤토리·장비·스킬·특성·상태창·퀘스트·거래 (단축키 없음)'],
 ];
 
@@ -120,6 +118,18 @@ body.touch .hk{width:76px}
 .tbtn.atk span,.tbtn.lock span{display:none}
 .tbtn.atk.press,.tbtn.lock.press{filter:brightness(1.4) drop-shadow(0 3px 6px rgba(0,0,0,.6))}
 .tbtn.lock.on{background:url(/ui/lock_btn.png) center/contain no-repeat;filter:brightness(1.3) drop-shadow(0 0 8px #f6d36b)}
+.tbtn.jump,.tbtn.run,.tbtn.dash{border:0;border-radius:0;box-shadow:none;background-color:transparent;background-repeat:no-repeat;background-position:center;background-size:contain;filter:drop-shadow(0 3px 6px rgba(0,0,0,.6))}
+.tbtn.jump{background-image:url(/ui/jump_btn.png)}
+.tbtn.run{background-image:url(/ui/run_btn.png)}
+.tbtn.run.on{background:url(/ui/run_btn.png) center/contain no-repeat;filter:brightness(1.3) drop-shadow(0 0 8px #f6d36b)}
+.tbtn.jump span,.tbtn.run span,.tbtn.dash span{display:none}
+.tbtn.jump.press,.tbtn.run.press,.tbtn.dash.press{filter:brightness(1.4) drop-shadow(0 3px 6px rgba(0,0,0,.6))}
+.tbtn.dash{right:38px;bottom:218px;width:62px;height:62px;background-image:url(/ui/dash_btn.png)}
+.tbtn.dash .n{position:relative;z-index:2;font:700 15px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-style:normal;color:#fff;white-space:nowrap;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000,-1px -1px #000,1px 1px #000,-1px 1px #000,1px -1px #000}
+.tbtn.dash .cdc{position:absolute;inset:0;border-radius:50%;overflow:hidden;z-index:4;pointer-events:none}
+.tbtn.dash .cdv{position:absolute;left:0;right:0;bottom:0;height:0;background:rgba(0,0,0,.68)}
+.tbtn.dash .cdn{position:absolute;z-index:5;font:700 22px 'Galmuri11',sans-serif;font-style:normal;color:#ffe9a8;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000}
+.tbtn.dash.cool .n{opacity:.45}
 .tbtn .lbl{position:absolute;left:50%;bottom:-4px;transform:translateX(-50%);font:700 13px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-style:normal;color:#fff;white-space:nowrap;pointer-events:none;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000,0 2px 3px #000}
 .tbtn.lock .lbl{font-size:11px}
 .tbtn.run{right:132px;bottom:34px;width:58px;height:58px}
@@ -1057,27 +1067,10 @@ function boot(socket, { id, seed }, nick, mode) {
     updateModeUI();
   }
 
-  // ---------- 오른쪽 위: 속도 배율 패널 + 조작법 ----------
+  // ---------- 오른쪽 위: 조작법 ----------
   const stack = document.createElement('div');
   stack.className = 'rt-stack';
 
-  const panel = document.createElement('div');
-  panel.className = 'speedpanel';
-
-  const fastBtn = document.createElement('button');
-
-  const slider = document.createElement('input');
-  slider.type = 'range';
-  slider.min = String(FAST_MIN);
-  slider.max = String(FAST_MAX);
-  slider.step = '5';
-  slider.value = String(fastMult);
-
-  const hint = document.createElement('div');
-  hint.className = 'hint';
-  hint.textContent = 'F: 켜기/끄기   [ ]: 배율 조절';
-
-  panel.append(fastBtn, slider, hint);
 
   // 조작법 버튼 (책 아이콘) + 조작법 창
   const helpBtn = document.createElement('div');
@@ -1128,32 +1121,9 @@ function boot(socket, { id, seed }, nick, mode) {
   });
   setHelp(false); // 조작법은 H를 눌러야 열림
 
-  stack.append(panel, helpBtn, helpPanel);
+  stack.append(helpBtn, helpPanel);
   document.body.appendChild(stack);
 
-  function refreshPanel() {
-    fastBtn.textContent =
-      `⚡ 속도 ×${fastMult} ${fast ? 'ON' : 'OFF'}`;
-    fastBtn.style.background = fast ? '#d33' : '#3a2d5c';
-    slider.value = String(fastMult);
-  }
-
-  function setFast(v) {
-    fast = v;
-    refreshPanel();
-    socket.emit('fast', fast);
-    fastBtn.blur();
-  }
-
-  function setMult(m) {
-    fastMult = Math.max(FAST_MIN, Math.min(FAST_MAX, Math.round(m)));
-    refreshPanel();
-  }
-
-  fastBtn.addEventListener('click', () => setFast(!fast));
-  slider.addEventListener('input', () => setMult(Number(slider.value)));
-  slider.addEventListener('change', () => slider.blur());
-  refreshPanel();
   socket.emit('fast', false);
 
   // ---------- 나침반 (위쪽 가운데) ----------
@@ -1347,7 +1317,6 @@ function boot(socket, { id, seed }, nick, mode) {
     if (e.repeat) return;
 
     if (e.code === 'Space') jumpBuffer = 0.15;
-    if (e.code === 'KeyF') setFast(!fast);
     if (e.code === 'KeyE') {   // 문/집 상호작용이 가능하면 그걸 하고, 아니면 스킬 E (휩쓸기)
       if (hintAct || currentAction()) doDoorAction();
       else useSkill('E');
@@ -1358,8 +1327,6 @@ function boot(socket, { id, seed }, nick, mode) {
     if (e.code === 'KeyT') useSkill('T');
     if (e.code === 'Digit1') toggleWeapon();
     if (e.code === 'KeyH') toggleHelp();
-    if (e.code === 'BracketLeft') setMult(fastMult - 10);
-    if (e.code === 'BracketRight') setMult(fastMult + 10);
 
     if ((e.code === 'ControlLeft' || e.code === 'ControlRight') && RUN_TOGGLE) {
       setRun(!runOn);
@@ -1601,12 +1568,14 @@ function boot(socket, { id, seed }, nick, mode) {
       return b;
     };
 
-    makeBtn('jump', '⤒', '점프',
+    const jumpBtn = makeBtn('jump', '', '',
       () => { jumpHeld = true; jumpBuffer = 0.15; },
       () => { jumpHeld = false; });
+    jumpBtn.insertAdjacentHTML('beforeend', '<i class="lbl">점프</i>');
     const atkBtn = makeBtn('atk', '', '', () => { if (isWeaponEquipped(myRig)) doAttack(); else toggleWeapon(); });
     atkBtn.insertAdjacentHTML('beforeend', '<i class="lbl">공격</i>');
-    runBtn = makeBtn('run', '🏃', '달리기', () => setRun(!runOn));
+    runBtn = makeBtn('run', '', '', () => setRun(!runOn));
+    runBtn.insertAdjacentHTML('beforeend', '<i class="lbl">달리기</i>');
     lockBtn = makeBtn('lock', '', '', () => toggleShiftLock());
     lockBtn.insertAdjacentHTML('beforeend', '<i class="lbl">쉬프트락</i>');
 
@@ -2437,14 +2406,15 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     }
     const slotEls = SKILL_SLOTS.map((def) => {
       const el = document.createElement('div');
-      el.className = 'skill-slot' + (def.img ? ' round' : '');
-      el.innerHTML = '<i class="k">' + def.key + '</i>' + (def.img ? '<img class="im" src="' + def.img + '" alt="" draggable="false">' : '<b class="n' + (def.name.length > 2 ? ' s' : '') + '">' + def.name + '</b>') + '<div class="cdc"><div class="cdv"></div></div><em class="cdn"></em>';
+      const inGroup = touchMode && !!def.img;   // 모바일: 대쉬는 오른쪽 아래 버튼 묶음(공격 버튼 위 빈 자리)에 둠
+      el.className = inGroup ? 'tbtn dash' : 'skill-slot' + (def.img ? ' round' : '');
+      el.innerHTML = (inGroup ? '' : '<i class="k">' + def.key + '</i>') + (def.img && !inGroup ? '<img class="im" src="' + def.img + '" alt="" draggable="false">' : '') + '<b class="n' + (def.name.length > 2 ? ' s' : '') + '">' + def.name + '</b><div class="cdc"><div class="cdv"></div></div><em class="cdn"></em>';
       el.addEventListener('pointerdown', (e) => { e.preventDefault(); el.classList.add('press'); useSkill(def.key); });
       const up = () => el.classList.remove('press');
       el.addEventListener('pointerup', up);
       el.addEventListener('pointercancel', up);
       el.addEventListener('pointerleave', up);
-      bar.appendChild(el);
+      (inGroup ? document.querySelector('.tgroup') || bar : bar).appendChild(el);
       return { def, el, cdv: el.querySelector('.cdv'), cdn: el.querySelector('.cdn') };
     });
     document.body.appendChild(bar);
