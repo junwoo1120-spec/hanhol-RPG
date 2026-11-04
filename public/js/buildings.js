@@ -146,6 +146,100 @@ function signTex() {
   return t;
 }
 
+// ---------- 가게 간판 / 시세판 / 다트판 (가로로 긴 캔버스) ----------
+function canvasTexWH(w, h, draw) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+const SIGN_FONT = '"Noto Sans KR","Malgun Gothic","Apple SD Gothic Neo",sans-serif';
+// 간판 속 그림 (원점 중심, 반지름 약 60)
+const SIGN_ICONS = {
+  smith(g) {   // 모루 + 불똥
+    g.fillStyle = '#dfe3e8'; g.strokeStyle = '#1d1f24'; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(-50, -20); g.lineTo(36, -20); g.lineTo(56, -8); g.lineTo(36, 2); g.lineTo(20, 2); g.lineTo(28, 24); g.lineTo(40, 32); g.lineTo(-40, 32); g.lineTo(-28, 24); g.lineTo(-20, 2); g.lineTo(-50, 2); g.closePath(); g.fill(); g.stroke();
+    g.strokeStyle = '#ffb347'; g.lineWidth = 4;
+    for (const [x, y, a] of [[-26, -34, -0.7], [0, -40, 0], [26, -34, 0.7]]) { g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.sin(a) * 14, y - 14); g.stroke(); }
+  },
+  shop(g) {    // 돈주머니
+    g.fillStyle = '#c9a96b'; g.strokeStyle = '#4a3320'; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(-18, -38); g.quadraticCurveTo(-54, -4, -40, 30); g.quadraticCurveTo(0, 44, 40, 30); g.quadraticCurveTo(54, -4, 18, -38); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = '#7a5230'; g.fillRect(-22, -44, 44, 10); g.strokeRect(-22, -44, 44, 10);
+    g.fillStyle = '#f2c94c'; g.beginPath(); g.arc(0, 6, 18, 0, 6.2832); g.fill(); g.stroke();
+    g.lineWidth = 2; g.beginPath(); g.arc(0, 6, 10, 0, 6.2832); g.stroke();
+  },
+  market(g) {  // 저울
+    g.strokeStyle = '#f2c94c'; g.fillStyle = '#f2c94c'; g.lineWidth = 6;
+    g.beginPath(); g.moveTo(0, -46); g.lineTo(0, 34); g.stroke();
+    g.beginPath(); g.moveTo(-46, -30); g.lineTo(46, -30); g.stroke();
+    g.lineWidth = 3;
+    for (const sx of [-1, 1]) {
+      g.beginPath(); g.moveTo(sx * 46, -30); g.lineTo(sx * 30, 4); g.moveTo(sx * 46, -30); g.lineTo(sx * 62, 4); g.stroke();
+      g.beginPath(); g.arc(sx * 46, 4, 18, 0, Math.PI); g.closePath(); g.fill();
+    }
+    g.fillRect(-22, 30, 44, 8);
+  },
+  tavern(g) {  // 맥주잔
+    g.fillStyle = '#e8c872'; g.strokeStyle = '#3d2a14'; g.lineWidth = 3;
+    g.fillRect(-32, -22, 56, 58); g.strokeRect(-32, -22, 56, 58);
+    g.strokeStyle = '#e8c872'; g.lineWidth = 8; g.beginPath(); g.arc(30, 8, 18, -1.2, 1.2); g.stroke();
+    g.fillStyle = '#fff7e0';
+    for (const x of [-22, -6, 10]) { g.beginPath(); g.arc(x, -24, 14, 0, 6.2832); g.fill(); }
+    g.strokeStyle = 'rgba(80,50,10,0.35)'; g.lineWidth = 3;
+    for (const x of [-18, -4, 10]) { g.beginPath(); g.moveTo(x, -8); g.lineTo(x, 28); g.stroke(); }
+  },
+};
+function shopSignTex(ko, en, bg, icon) {
+  return canvasTexWH(512, 256, (g, W, H) => {
+    g.fillStyle = bg; g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 60; i++) { g.fillStyle = `rgba(0,0,0,${0.04 + (i % 5) * 0.015})`; g.fillRect((i * 97) % W, 0, 2 + (i % 3), H); }
+    g.strokeStyle = '#d9a441'; g.lineWidth = 12; g.strokeRect(10, 10, W - 20, H - 20);
+    g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 3; g.strokeRect(26, 26, W - 52, H - 52);
+    g.save(); g.translate(108, H / 2 - 6);
+    g.fillStyle = 'rgba(0,0,0,0.30)'; g.beginPath(); g.arc(0, 0, 70, 0, 6.2832); g.fill();
+    icon(g);
+    g.restore();
+    g.fillStyle = '#f6d98a'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `bold ${ko.length >= 3 ? 84 : 112}px ${SIGN_FONT}`; g.fillText(ko, 330, H * 0.42);
+    g.font = 'bold 40px Georgia,serif'; g.fillStyle = '#e8c872'; g.fillText(en, 330, H * 0.80);
+  });
+}
+// 판매소 시세판 (양피지 + 품목 줄)
+function boardTex() {
+  return canvasTexWH(512, 256, (g, W, H) => {
+    const r = rng(91);
+    g.fillStyle = '#cdb27e'; g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 160; i++) { g.fillStyle = `rgba(${r() < 0.5 ? '255,255,255' : '90,60,20'},${0.03 + r() * 0.06})`; g.beginPath(); g.arc(r() * W, r() * H, 6 + r() * 26, 0, 6.2832); g.fill(); }
+    g.strokeStyle = '#5a3a22'; g.lineWidth = 8; g.strokeRect(4, 4, W - 8, H - 8);
+    g.fillStyle = '#3b2412'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = `bold 56px ${SIGN_FONT}`; g.fillText('매입 시세', W / 2, 44);
+    g.fillRect(70, 80, W - 140, 3);
+    const rows = [['가죽', '#8a6a4a'], ['뼈', '#e5dfcb'], ['약초', '#5a8a3a'], ['광석', '#6b7078']];
+    rows.forEach(([name, col], i) => {
+      const y = 112 + i * 36;
+      g.fillStyle = col; g.fillRect(60, y - 12, 24, 24); g.strokeStyle = '#3b2412'; g.lineWidth = 2; g.strokeRect(60, y - 12, 24, 24);
+      g.fillStyle = '#3b2412'; g.textAlign = 'left'; g.font = `bold 28px ${SIGN_FONT}`; g.fillText(name, 100, y);
+      g.fillRect(190, y + 2, 190, 2);
+      g.fillStyle = '#b88a1c'; g.beginPath(); g.arc(410, y, 11, 0, 6.2832); g.fill(); g.beginPath(); g.arc(440, y, 11, 0, 6.2832); g.fill();
+    });
+  });
+}
+// 다트판
+function dartTex() {
+  return canvasTexWH(256, 256, (g, W) => {
+    const c = W / 2, cols = ['#1d1b1a', '#e9dfc2', '#1d1b1a', '#b32f2f', '#e9dfc2', '#2f7a46'];
+    for (let i = 0; i < cols.length; i++) { g.fillStyle = cols[i]; g.beginPath(); g.arc(c, c, c - 4 - i * ((c - 24) / cols.length), 0, 6.2832); g.fill(); }
+    g.fillStyle = '#b32f2f'; g.beginPath(); g.arc(c, c, 12, 0, 6.2832); g.fill();
+    g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 2;
+    for (let a = 0; a < 20; a++) { g.beginPath(); g.moveTo(c, c); g.lineTo(c + Math.cos(a * 0.314) * (c - 4), c + Math.sin(a * 0.314) * (c - 4)); g.stroke(); }
+  });
+}
+
 // ---------- 재질 ----------
 const DS = { side: THREE.DoubleSide };
 const lam = (map, extra = {}) => new THREE.MeshLambertMaterial({ map, ...extra });
@@ -196,6 +290,20 @@ MAT.portal = new THREE.ShaderMaterial({
   fragmentShader: 'uniform sampler2D tMap;\nuniform vec2 uRes;\nvoid main() {\n  gl_FragColor = texture2D(tMap, gl_FragCoord.xy / uRes);\n  #include <colorspace_fragment>\n}',
 });
 export function setPortalTexture(tex, w, h) { portalUniforms.tMap.value = tex; portalUniforms.uRes.value.set(w, h); }
+
+// 가게 4종(대장간·상점·판매소·술집)에 쓰는 재질
+const flat = (color) => new THREE.MeshLambertMaterial({ color });
+Object.assign(MAT, {
+  steel: flat(0xa3abb3), coal: flat(0x1c1b1e), ore: flat(0x5c626a), water: new THREE.MeshBasicMaterial({ color: 0x2f6a94 }),
+  leather: flat(0x6b4a2f), sack: flat(0xb79a68), bone: flat(0xe6e0cc), herb: flat(0x5b8a3c),
+  hide1: flat(0x8a6a48), hide2: flat(0xcdbd9f), hide3: flat(0x4d4137),
+  glassR: flat(0xa83a46), glassB: flat(0x3a5fa8), clothG: flat(0x3f7a52), clothY: flat(0xcfae45), fruitR: flat(0xc2412f), fruitY: flat(0xd8b53a),
+  board: lam(boardTex()), dart: lam(dartTex()),
+  signSmith: lam(shopSignTex('대장간', 'SMITHY', '#43403f', SIGN_ICONS.smith)),
+  signShop: lam(shopSignTex('상점', 'SHOP', '#4a4a2a', SIGN_ICONS.shop)),
+  signMarket: lam(shopSignTex('판매소', 'MARKET', '#2e4058', SIGN_ICONS.market)),
+  signTavern: lam(shopSignTex('술집', 'TAVERN', '#5a2e24', SIGN_ICONS.tavern)),
+});
 const TILE = { floor: 4, timberLight: 3, plaster: 6, plasterWarm: 6, navy: 6, stone: 4, timber: 3, timberBlue: 3, doorWood: 2, roofRed: 4, roofNavy: 4, roofBrown: 4 };
 
 // ---------- 도형 모으기 ----------
@@ -579,6 +687,7 @@ function tableware(b, w, d, h) {
   b.geo('mug', new THREE.CylinderGeometry(0.1, 0.1, 0.2, 8), w * 0.12, h + 0.16, d * 0.2);
 }
 
+const cyl = (rt, rb, h, seg = 10) => new THREE.CylinderGeometry(rt, rb, h, seg);
 const FURN = {
   table(b, it) {
     const { w, d } = it, h = 1.0;
@@ -745,6 +854,293 @@ const FURN = {
     b.box('iron', 0.06, 0.06, 0.3, 0, y - 0.1, 0.18);
     b.box('candle', 0.1, 0.22, 0.1, 0, y + 0.04, 0.3);
     b.box('flame', 0.06, 0.12, 0.06, 0, y + 0.21, 0.3);
+  },
+  // ================= 대장간 =================
+  forge(b, it, R) {   // 돌 화덕 + 숯불 + 후드와 굴뚝(천장까지)
+    const { w, d } = it, H = 1.15, top = R.h - 0.4 - FLOOR_Y;
+    b.box('stone', w, H, d, 0, H / 2, 0);
+    b.box('stone', w + 0.3, 0.16, d + 0.2, 0, H + 0.08, 0.05);
+    b.box('coal', w - 1.0, 0.1, d - 1.0, 0, H + 0.21, 0.1);
+    b.box('fire', w - 1.9, 0.14, d - 1.7, 0, H + 0.3, 0.1);
+    b.box('flame', w * 0.3, 0.34, d * 0.3, 0, H + 0.52, 0.1);
+    for (const sx of [-1, 1]) b.box('stone', 0.5, 1.6, 0.6, sx * (w / 2 - 0.3), H + 0.96, -d / 2 + 0.5);
+    b.box('stone', w, 0.5, d * 0.75, 0, 3.15, -d * 0.12);
+    b.box('stone', w - 0.9, top - 3.4, d * 0.6, 0, (3.4 + top) / 2, -d * 0.2);
+    b.box('iron', w - 0.5, 0.08, 0.1, 0, 2.55, d / 2 - 0.15);
+    for (const x of [-0.9, -0.3, 0.4, 1.0]) b.box('iron', 0.05, 0.75, 0.05, x, 2.1, d / 2 - 0.15, 0, 0, 0.08);
+    b.box('stone', w + 0.8, 0.05, 0.9, 0, 0.025, d / 2 + 0.45);
+  },
+  bellows(b) {        // 풀무 (코는 -z 쪽 = 화로 쪽)
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('timber', 0.1, 0.55, 0.1, sx * 0.36, 0.275, sz * 0.55);
+    b.box('timber', 0.9, 0.1, 1.4, 0, 0.6, 0);
+    for (let i = 0; i < 3; i++) b.box('leather', 0.88 - i * 0.02, 0.12, 1.2 - i * 0.04, 0, 0.72 + i * 0.13, 0.04);
+    b.box('timberLight', 0.9, 0.1, 1.2, 0, 1.15, 0, 0, 0, -0.1);
+    b.box('timber', 0.08, 0.08, 0.9, 0, 1.3, 0.85);
+    b.box('iron', 0.14, 0.14, 0.14, 0, 1.3, 1.3);
+    b.box('iron', 0.1, 0.1, 0.7, 0, 0.78, -1.0);
+  },
+  anvil(b) {          // 나무 그루터기 위의 모루 + 망치 + 달궈진 쇠막대
+    b.geo('timber', cyl(0.38, 0.46, 0.75, 10), 0, 0.375, 0);
+    b.box('steel', 0.64, 0.12, 0.42, 0, 0.81, 0);
+    b.box('steel', 0.42, 0.22, 0.3, 0, 0.98, 0);
+    b.box('steel', 1.0, 0.14, 0.44, 0, 1.16, 0);
+    b.geo('steel', new THREE.ConeGeometry(0.19, 0.55, 8), 0.72, 1.16, 0, 0, -Math.PI / 2);
+    b.box('timberLight', 0.5, 0.05, 0.05, -0.15, 1.26, 0.12, 0.4);
+    b.box('steel', 0.16, 0.12, 0.12, -0.38, 1.28, 0.12, 0.4);
+    b.box('fire', 0.4, 0.04, 0.07, 0.1, 1.25, -0.05);
+  },
+  quench(b, it) {     // 담금질 물통
+    const { w, d } = it;
+    b.box('timber', w, 0.75, d, 0, 0.375, 0);
+    b.box('water', w - 0.22, 0.04, d - 0.22, 0, 0.77, 0);
+    for (const x of [-w * 0.32, w * 0.32]) b.box('iron', 0.08, 0.8, d + 0.06, x, 0.4, 0);
+    b.box('iron', 0.7, 0.05, 0.05, -w * 0.2, 0.84, 0.05, 0.4);
+  },
+  workbench(b, it) {  // 작업대 + 바이스 + 연장 걸이판
+    const { w, d } = it, h = 1.0;
+    b.box('timberLight', w, 0.14, d, 0, h, 0);
+    for (const sx of [-1, 1]) b.box('timber', 0.2, h - 0.07, d - 0.1, sx * (w / 2 - 0.2), (h - 0.07) / 2, 0);
+    b.box('timber', w - 0.4, 0.1, d - 0.2, 0, 0.35, 0);
+    b.box('iron', 0.3, 0.32, 0.22, w * 0.36, h + 0.23, d / 2 - 0.2);
+    b.box('iron', 0.1, 0.1, 0.4, w * 0.36, h + 0.3, d / 2 + 0.05);
+    b.box('steel', 0.6, 0.06, 0.12, -w * 0.3, h + 0.1, 0.12);
+    b.box('steel', 0.5, 0.18, 0.3, w * 0.02, h + 0.16, -0.1);
+    b.box('timberLight', 0.5, 0.05, 0.05, -w * 0.12, h + 0.1, 0.2);
+    b.box('steel', 0.16, 0.12, 0.12, -w * 0.12 - 0.22, h + 0.12, 0.2);
+    b.box('timber', w, 1.5, 0.08, 0, h + 0.9, -d / 2 + 0.04);
+    const n = Math.floor((w - 0.6) / 0.55);
+    for (let i = 0; i < n; i++) {
+      const x = -((n - 1) * 0.55) / 2 + i * 0.55, k = i % 3;
+      if (k === 0) { b.box('timberLight', 0.05, 0.6, 0.05, x, h + 0.9, -d / 2 + 0.11); b.box('steel', 0.24, 0.13, 0.12, x, h + 1.25, -d / 2 + 0.11); }
+      else if (k === 1) { b.box('iron', 0.04, 0.8, 0.04, x - 0.04, h + 0.9, -d / 2 + 0.11, 0, 0.1); b.box('iron', 0.04, 0.8, 0.04, x + 0.04, h + 0.9, -d / 2 + 0.11, 0, -0.1); }
+      else b.box('steel', 0.05, 0.6, 0.03, x, h + 0.9, -d / 2 + 0.11);
+    }
+  },
+  grindstone(b) {     // 숫돌 (물받이 + 손잡이)
+    for (const sx of [-1, 1]) b.box('timber', 0.14, 1.05, 1.0, sx * 0.55, 0.52, 0);
+    b.geo('stone', cyl(0.56, 0.56, 0.22, 18), 0, 0.82, 0, 0, Math.PI / 2);
+    b.box('iron', 1.3, 0.06, 0.06, 0, 0.82, 0);
+    b.box('iron', 0.06, 0.06, 0.5, 0.72, 0.82, 0.2);
+    b.box('timber', 0.8, 0.22, 0.6, 0, 0.16, 0.32);
+    b.box('water', 0.7, 0.03, 0.5, 0, 0.29, 0.32);
+  },
+  weaponRack(b, it) { // 무기 걸이: 칼·도끼·창을 세워 둠
+    const { w, d } = it, H = 2.7;
+    for (const sx of [-1, 1]) b.box('timber', 0.14, H, d - 0.1, sx * (w / 2 - 0.07), H / 2, 0);
+    b.box('timber', w, 0.14, d - 0.1, 0, H - 0.07, 0);
+    b.box('timber', w - 0.2, H - 0.6, 0.08, 0, (H - 0.6) / 2 + 0.15, -d / 2 + 0.06);
+    b.box('timberLight', w - 0.2, 0.08, d - 0.2, 0, 0.75, 0.02);
+    b.box('timberLight', w - 0.2, 0.08, 0.1, 0, 2.3, -d / 2 + 0.14);
+    const n = Math.max(2, Math.floor((w - 0.8) / 0.62));
+    for (let i = 0; i < n; i++) {
+      const x = -((n - 1) * 0.62) / 2 + i * 0.62, kind = i % 4, z = -0.06;
+      if (kind === 1) {          // 도끼
+        b.box('timberLight', 0.07, 1.6, 0.07, x, 1.6, z);
+        b.box('steel', 0.36, 0.3, 0.05, x + 0.16, 2.05, z);
+      } else if (kind === 3) {   // 창
+        b.box('timberLight', 0.06, 1.8, 0.06, x, 1.7, z);
+        b.geo('steel', new THREE.ConeGeometry(0.07, 0.36, 4), x, 2.78 - 0.1, z);
+      } else {                   // 칼
+        b.box('leather', 0.06, 0.3, 0.06, x, 0.95, z);
+        b.box('iron', 0.1, 0.1, 0.1, x, 0.79, z);
+        b.box('iron', 0.4, 0.07, 0.07, x, 1.13, z);
+        b.box('steel', 0.11, 1.1, 0.03, x, 1.72, z);
+      }
+    }
+  },
+  toolWall(b, it) {   // 연장 걸이판: 망치·집게·편자·정
+    const { w, d } = it;
+    b.box('timber', w, 2.4, 0.1, 0, 1.6, -d / 2 + 0.05);
+    b.box('timberLight', w + 0.2, 0.12, 0.16, 0, 2.86, -d / 2 + 0.08);
+    b.box('timberLight', w + 0.2, 0.12, 0.16, 0, 0.4, -d / 2 + 0.08);
+    const cols = Math.max(3, Math.floor(w / 0.7));
+    for (let i = 0; i < cols; i++) for (const [j, y] of [[0, 2.25], [1, 1.2]]) {
+      const x = -((cols - 1) * 0.7) / 2 + i * 0.7, k = (i + j) % 4, z = -d / 2 + 0.14;
+      if (k === 0) { b.box('timberLight', 0.05, 0.6, 0.05, x, y, z); b.box('steel', 0.26, 0.14, 0.12, x, y + 0.3, z); }
+      else if (k === 1) { b.box('iron', 0.04, 0.8, 0.04, x - 0.05, y, z, 0, 0.12); b.box('iron', 0.04, 0.8, 0.04, x + 0.05, y, z, 0, -0.12); }
+      else if (k === 2) b.geo('iron', new THREE.TorusGeometry(0.14, 0.035, 6, 12, Math.PI * 1.6), x, y, z, 0, 0.6);
+      else b.box('steel', 0.05, 0.6, 0.03, x, y, z);
+    }
+  },
+  ingots(b, it) {     // 철괴 더미
+    const { w, d } = it;
+    b.box('timberLight', w, 0.12, d, 0, 0.06, 0);
+    for (let layer = 0; layer < 4; layer++) for (let i = 0; i < 4 - layer; i++)
+      b.box(layer % 2 ? 'steel' : 'iron', 0.34, 0.14, d - 0.2, -(3 - layer) * 0.19 + i * 0.38, 0.19 + layer * 0.15, 0);
+  },
+  coalbin(b, it) {    // 숯 통 + 삽
+    const { w, d } = it, h = 0.9;
+    b.box('timber', w, 0.1, d, 0, 0.05, 0);
+    b.box('timber', w, h, 0.1, 0, h / 2, -d / 2 + 0.05);
+    for (const sx of [-1, 1]) b.box('timber', 0.1, h, d, sx * (w / 2 - 0.05), h / 2, 0);
+    b.box('timber', w, 0.4, 0.1, 0, 0.25, d / 2 - 0.05);
+    for (const [x, z, s, hh] of [[-0.4, -0.1, 0.55, 0.75], [0.2, 0.0, 0.65, 0.9], [0.55, -0.2, 0.45, 0.65], [-0.1, 0.3, 0.5, 0.55]]) b.box('coal', s, hh, s, x * w * 0.5, hh / 2, z * d * 0.5, x * 3);
+    b.box('timberLight', 0.06, 1.3, 0.06, w / 2 - 0.2, 0.7, d / 2 - 0.2, 0, 0, 0.45);
+    b.box('iron', 0.28, 0.04, 0.3, w / 2 - 0.2 + 0.28, 0.12, d / 2 - 0.2);
+  },
+  soot(b, it) { b.box('coal', it.w, 0.03, it.d, 0, 0.015, 0); },   // 화로 앞 바닥 그을음
+  hangLamp(b, it, R) {   // 천장에 매단 등
+    const top = R.h - 0.45 - FLOOR_Y, y = top - 1.5;
+    b.box('iron', 0.04, top - y, 0.04, 0, (top + y) / 2, 0);
+    b.box('iron', 0.5, 0.06, 0.5, 0, y + 0.33, 0);
+    b.box('lamp', 0.36, 0.5, 0.36, 0, y + 0.05, 0);
+    b.box('iron', 0.5, 0.06, 0.5, 0, y - 0.22, 0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('iron', 0.04, 0.55, 0.04, sx * 0.2, y + 0.05, sz * 0.2);
+  },
+  // ================= 상점 / 판매소 =================
+  counter(b, it) {    // 계산대: 저울 + 돈상자 + 장부
+    const { w, d } = it, h = 1.05, t = h + 0.12;
+    b.box('timber', w, h, d, 0, h / 2, 0);
+    b.box('timberLight', w + 0.3, 0.12, d + 0.3, 0, h + 0.06, 0);
+    for (const x of [-w * 0.42, -w * 0.14, w * 0.14, w * 0.42]) b.box('timberLight', 0.9, h - 0.3, 0.04, x, h / 2, d / 2 + 0.02);
+    b.box('iron', 0.5, 0.06, 0.3, 0, t + 0.03, 0);
+    b.box('iron', 0.06, 0.62, 0.06, 0, t + 0.34, 0);
+    b.box('iron', 0.9, 0.05, 0.05, 0, t + 0.66, 0);
+    for (const sx of [-1, 1]) { b.box('iron', 0.02, 0.3, 0.02, sx * 0.4, t + 0.5, 0); b.geo('steel', cyl(0.18, 0.12, 0.04, 12), sx * 0.4, t + 0.34, 0); }
+    b.geo('iron', cyl(0.07, 0.09, 0.08, 8), -0.4, t + 0.4, 0);
+    b.box('timber', 0.5, 0.28, 0.34, -w * 0.32, t + 0.14, 0);
+    b.box('iron', 0.52, 0.05, 0.36, -w * 0.32, t + 0.3, 0);
+    b.box('clothB', 0.4, 0.06, 0.3, w * 0.3, t + 0.03, 0.05);
+    b.box('linen', 0.36, 0.03, 0.26, w * 0.3, t + 0.075, 0.05);
+    for (let i = 0; i < 3; i++) b.geo('lamp', cyl(0.07, 0.07, 0.03, 8), w * 0.4, t + 0.02 + i * 0.03, -0.1);
+  },
+  goodsShelf(b, it) { // 상품 진열장: 물약·항아리·상자·천 (책 아님)
+    const { w, d } = it, H = 3.0;
+    b.box('timber', 0.1, H, d, -w / 2 + 0.05, H / 2, 0);
+    b.box('timber', 0.1, H, d, w / 2 - 0.05, H / 2, 0);
+    b.box('timber', w - 0.2, H - 0.1, 0.06, 0, H / 2, -d / 2 + 0.03);
+    for (const y of [0.08, 0.9, 1.7, 2.5, 2.96]) b.box('timber', w, 0.08, d, 0, y, 0);
+    const n = Math.floor((w - 0.6) / 0.6);
+    [0.12, 0.94, 1.74, 2.54].forEach((y, r) => {
+      for (let i = 0; i < n; i++) {
+        const x = -((n - 1) * 0.6) / 2 + i * 0.6, t = (i + r * 2) % 5, z = 0.02;
+        if (t === 0 || t === 4) {
+          const gm = t === 0 ? 'glassR' : 'glassB';
+          b.geo(gm, cyl(0.1, 0.13, 0.34, 8), x, y + 0.17, z);
+          b.geo(gm, cyl(0.04, 0.1, 0.14, 8), x, y + 0.41, z);
+          b.box('leather', 0.07, 0.07, 0.07, x, y + 0.52, z);
+        } else if (t === 1) {
+          b.geo('ceramic', cyl(0.17, 0.17, 0.3, 10), x, y + 0.15, z);
+          b.geo('leather', cyl(0.18, 0.18, 0.05, 10), x, y + 0.33, z);
+        } else if (t === 2) {
+          b.box('timberLight', 0.4, 0.3, 0.32, x, y + 0.15, z);
+          b.box('clothR', 0.42, 0.06, 0.34, x, y + 0.15, z);
+        } else {
+          b.box('clothB', 0.42, 0.1, 0.32, x, y + 0.05, z);
+          b.box('clothG', 0.4, 0.1, 0.3, x, y + 0.15, z);
+          b.box('clothY', 0.38, 0.1, 0.3, x, y + 0.25, z);
+        }
+      }
+    });
+  },
+  displayTable(b, it) {  // 진열 탁자: 천 두루마리·과일 바구니·병
+    const { w, d } = it, h = 0.95;
+    b.box('timberLight', w, 0.1, d, 0, h, 0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('timber', 0.14, h - 0.05, 0.14, sx * (w / 2 - 0.15), (h - 0.05) / 2, sz * (d / 2 - 0.15));
+    b.box('clothR', w - 0.2, 0.03, d - 0.2, 0, h + 0.065, 0);
+    const y0 = h + 0.08;
+    b.geo('clothB', cyl(0.13, 0.13, 0.9, 10), -w * 0.28, y0 + 0.13, -0.22, 0, Math.PI / 2);
+    b.geo('clothG', cyl(0.13, 0.13, 0.9, 10), -w * 0.28, y0 + 0.13, 0.12, 0, Math.PI / 2);
+    b.geo('clothY', cyl(0.13, 0.13, 0.9, 10), -w * 0.28, y0 + 0.36, -0.05, 0, Math.PI / 2);
+    b.geo('leather', cyl(0.28, 0.22, 0.2, 10), w * 0.12, y0 + 0.1, -0.1);
+    for (const [fx, fz] of [[-0.1, -0.05], [0.08, 0.08], [0.05, -0.12], [-0.06, 0.1]]) b.geo('fruitR', new THREE.SphereGeometry(0.09, 6, 5), w * 0.12 + fx, y0 + 0.24, -0.1 + fz);
+    b.geo('leather', cyl(0.24, 0.2, 0.18, 10), w * 0.3, y0 + 0.09, 0.15);
+    for (const [fx, fz] of [[-0.08, 0], [0.08, 0.05], [0, -0.09]]) b.geo('fruitY', new THREE.SphereGeometry(0.09, 6, 5), w * 0.3 + fx, y0 + 0.22, 0.15 + fz);
+    b.geo('glassG', cyl(0.07, 0.09, 0.3, 8), w * 0.42, y0 + 0.15, -0.25);
+    b.geo('glassA', cyl(0.07, 0.09, 0.3, 8), w * 0.42, y0 + 0.15, 0.0);
+  },
+  sacks(b, it) {      // 곡식 자루 더미
+    const { w, d } = it;
+    const sack = (x, y, z, s = 1, tilt = 0) => {
+      b.geo('sack', cyl(0.3 * s, 0.4 * s, 0.7 * s, 8), x, y + 0.35 * s, z, 0, 0, tilt);
+      b.geo('sack', cyl(0.12 * s, 0.22 * s, 0.2 * s, 6), x, y + 0.78 * s, z);
+      b.geo('leather', cyl(0.14 * s, 0.14 * s, 0.05, 6), x, y + 0.66 * s, z);
+    };
+    sack(-w * 0.3, 0, -d * 0.1); sack(w * 0.08, 0, d * 0.12, 1.05); sack(w * 0.36, 0, -d * 0.15, 0.95);
+    sack(-w * 0.1, 0.7, 0, 0.9, 0.1); sack(w * 0.24, 0.7, -d * 0.05, 0.85, -0.1);
+  },
+  // ================= 판매소 =================
+  hideRack(b, it) {   // 가죽 말리는 틀 + 쌓아 둔 가죽·뼈
+    const { w, d } = it, H = 2.7, zr = -d * 0.15;
+    for (const sx of [-1, 1]) b.box('timber', 0.16, H, 0.16, sx * (w / 2 - 0.1), H / 2, zr);
+    b.box('timber', w, 0.14, 0.14, 0, H - 0.07, zr);
+    b.box('timber', w, 0.1, 0.1, 0, 0.7, zr);
+    const n = Math.max(2, Math.floor((w - 1.0) / 0.95));
+    for (let i = 0; i < n; i++) {
+      const x = -((n - 1) * 0.95) / 2 + i * 0.95, m = ['hide1', 'hide2', 'hide3'][i % 3], z = zr + 0.1;
+      b.box(m, 0.7, 1.35, 0.05, x, 1.75, z);
+      for (const [dx, dy] of [[-0.42, 2.3], [0.42, 2.3], [-0.4, 1.2], [0.4, 1.2]]) b.box(m, 0.16, 0.3, 0.05, x + dx, dy, z);
+      b.box('leather', 0.04, 0.2, 0.04, x - 0.3, 2.55, z); b.box('leather', 0.04, 0.2, 0.04, x + 0.3, 2.55, z);
+    }
+    b.box('hide1', 1.0, 0.16, 0.8, -w * 0.3, 0.08, d * 0.3);
+    b.box('hide2', 0.9, 0.14, 0.7, -w * 0.3 + 0.05, 0.23, d * 0.3);
+    b.box('hide3', 0.8, 0.12, 0.6, -w * 0.3, 0.36, d * 0.3);
+    for (const [bx, bz, br] of [[0.1, 0.3, 0.3], [0.5, 0.35, -0.5], [0.3, 0.2, 1.1]]) b.box('bone', 0.5, 0.08, 0.1, w * bx, 0.06, d * bz, br);
+  },
+  noticeBoard(b, it) {   // 벽에 거는 시세판
+    const { w } = it, y = it.y || 3.2, h = 2.5;
+    b.box('timber', w + 0.25, h + 0.25, 0.1, 0, y, 0.05);
+    b.geo('board', new THREE.PlaneGeometry(w, h), 0, y, 0.11);
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) b.box('iron', 0.1, 0.1, 0.06, sx * (w / 2 - 0.05), y + sy * (h / 2 - 0.05), 0.12);
+  },
+  herbRack(b, it) {   // 약초 묶음 거는 틀 + 약초 바구니
+    const { w, d } = it, H = 2.8, zr = -d * 0.15;
+    for (const sx of [-1, 1]) b.box('timber', 0.16, H, 0.16, sx * (w / 2 - 0.1), H / 2, zr);
+    b.box('timber', w, 0.14, 0.14, 0, H - 0.07, zr);
+    const n = Math.max(2, Math.floor((w - 0.8) / 0.55));
+    for (let i = 0; i < n; i++) {
+      const x = -((n - 1) * 0.55) / 2 + i * 0.55, m = i % 3 === 1 ? 'sack' : 'herb';
+      b.box('herb', 0.04, 0.35, 0.04, x, 2.5, zr);
+      b.geo(m, new THREE.ConeGeometry(0.17, 0.75, 6), x, 2.0, zr, 0, 0, Math.PI);
+      b.box('leather', 0.2, 0.05, 0.2, x, 2.35, zr);
+    }
+    for (const sx of [-1, 1]) {
+      b.geo('leather', cyl(0.32, 0.25, 0.3, 10), sx * w * 0.28, 0.15, d * 0.25);
+      b.geo('herb', new THREE.SphereGeometry(0.3, 7, 5), sx * w * 0.28, 0.34, d * 0.25);
+    }
+  },
+  scaleStand(b) {     // 세 발 저울대 + 매달린 접시 (광석과 추)
+    for (const [dx, dz] of [[-0.7, -0.5], [0.7, -0.5], [0, 0.7]]) {
+      b.box('timber', 0.1, 2.7, 0.1, dx / 2, 1.25, dz / 2, 0, Math.atan2(dx, 2.5), -Math.atan2(dz, 2.5));
+    }
+    b.box('iron', 0.2, 0.2, 0.2, 0, 2.55, 0);
+    b.box('iron', 0.06, 0.3, 0.06, 0, 2.35, 0);
+    b.box('iron', 1.6, 0.07, 0.07, 0, 2.2, 0);
+    for (const sx of [-1, 1]) {
+      b.box('iron', 0.02, 0.95, 0.02, sx * 0.75, 1.7, 0);
+      b.geo('steel', cyl(0.4, 0.3, 0.06, 14), sx * 0.75, 1.2, 0);
+    }
+    b.box('ore', 0.25, 0.2, 0.25, -0.75, 1.33, 0);
+    b.box('ore', 0.2, 0.15, 0.2, -0.65, 1.31, 0.12, 0.6);
+    b.geo('iron', cyl(0.12, 0.14, 0.14, 8), 0.7, 1.29, 0.0);
+    b.geo('iron', cyl(0.1, 0.12, 0.12, 8), 0.82, 1.28, 0.1);
+  },
+  // ================= 술집 =================
+  kegRack(b, it) {    // 술통 선반 (눕힌 술통 + 마개)
+    const { w, d } = it, n = Math.max(2, Math.floor(w / 1.1));
+    for (const sx of [-1, 1]) b.box('timber', 0.14, 2.4, d, sx * (w / 2 - 0.07), 1.2, 0);
+    b.box('timber', w, 0.14, d, 0, 0.12, 0);
+    b.box('timber', w, 0.12, d, 0, 1.2, 0);
+    b.box('timber', w, 0.12, d, 0, 2.38, 0);
+    for (let r = 0; r < 2; r++) for (let i = 0; i < n; i++) {
+      const x = -((n - 1) * 1.1) / 2 + i * 1.1, y = 0.7 + r * 1.1;
+      b.geo('timber', cyl(0.5, 0.5, d - 0.3, 10), x, y, 0, 0, 0, Math.PI / 2);
+      for (const z of [-d * 0.28, d * 0.28]) b.geo('iron', cyl(0.52, 0.52, 0.07, 10), x, y, z, 0, 0, Math.PI / 2);
+      b.box('iron', 0.1, 0.1, 0.2, x, y - 0.12, d / 2 - 0.1);
+    }
+  },
+  bench(b, it) {      // 등받이 있는 긴 의자 (등받이는 -z 쪽 = 벽쪽)
+    const { w, d } = it;
+    b.box('timberLight', w, 0.1, d, 0, 0.55, 0);
+    for (const sx of [-1, 1]) b.box('timber', 0.12, 0.55, d - 0.1, sx * (w / 2 - 0.15), 0.275, 0);
+    b.box('timberLight', w, 0.55, 0.07, 0, 1.0, -d / 2 + 0.04);
+    for (const sx of [-1, 1]) b.box('timber', 0.08, 0.9, 0.08, sx * (w / 2 - 0.1), 0.95, -d / 2 + 0.04);
+  },
+  dartboard(b, it) {  // 벽에 거는 다트판
+    const y = it.y || 2.4;
+    b.geo('timber', cyl(0.56, 0.56, 0.08, 24), 0, y, 0.04, 0, 0, Math.PI / 2);
+    b.geo('dart', new THREE.CircleGeometry(0.5, 24), 0, y, 0.09);
+    for (const [dx, dy] of [[0.12, 0.1], [-0.2, -0.05], [0.05, -0.22]]) b.box('iron', 0.03, 0.03, 0.22, dx, y + dy, 0.2);
   },
 };
 
@@ -971,7 +1367,73 @@ function buildInn(b, o) {
   b.box('timber', 1.0, 1.0, 1.0, -7.6, 0.5, fz + 2.2, -0.2);
 }
 
-const BUILD = { A: buildA, B: buildB, C: buildC, D: buildD, INN: buildInn };
+// ---------- 가게 4종: 기존 건물 겉모습 + 간판 기둥 + 가게별 소품 ----------
+// 소품은 안쪽 가구와 같은 부품(FURN)을 재활용. 건물 로컬 좌표(문 = (0, d/2)), 땅 높이 0.
+function props(b, R, list) {
+  for (const [k, x, z, ry = 0, w = 1, d = 1] of list) { b.push(x, 0, z, ry); FURN[k](b, { w, d }, R); b.pop(); }
+}
+// 문 앞 간판: 기둥 + 팔 + 매달린 판(앞뒤 모두 글씨) + 팔 끝에 가게를 나타내는 작은 물건. 판이 문 위 가운데에 오도록 서 있음
+function signPost(b, matKey, icon, fz) {
+  const bw = 2.6, bh = 1.3, cy = 4.6, armY = cy + bh / 2 + 0.5;
+  const px = -(0.35 + bw / 2), pz = fz + 1.7, ix = px + bw + 0.7;
+  b.box('stone', 0.8, 0.45, 0.8, px, 0.22, pz);
+  b.box('timber', 0.3, armY + 0.5, 0.3, px, (armY + 0.5) / 2, pz);
+  b.box('timber', bw + 0.9, 0.2, 0.2, px + (bw + 0.9) / 2, armY, pz);
+  b.box('timber', 0.14, 1.3, 0.14, px + 0.45, armY - 0.45, pz, 0, -0.78);
+  for (const sx of [-0.42, 0.42]) b.box('iron', 0.04, 0.55, 0.04, sx * bw, armY - 0.3, pz);
+  b.box('timber', bw + 0.15, bh + 0.15, 0.14, 0, cy, pz);
+  b.geo(matKey, new THREE.PlaneGeometry(bw, bh), 0, cy, pz + 0.08);
+  b.geo(matKey, new THREE.PlaneGeometry(bw, bh), 0, cy, pz - 0.08, Math.PI);
+  b.box('iron', 0.03, 0.4, 0.03, ix, armY - 0.3, pz);
+  if (icon === 'smith') { b.box('steel', 0.42, 0.1, 0.26, ix, armY - 0.55, pz); b.box('steel', 0.26, 0.14, 0.2, ix, armY - 0.67, pz); }
+  else if (icon === 'shop') { b.geo('sack', cyl(0.13, 0.24, 0.4, 8), ix, armY - 0.65, pz); b.geo('sack', cyl(0.05, 0.1, 0.12, 6), ix, armY - 0.4, pz); }
+  else if (icon === 'market') { b.box('iron', 0.7, 0.04, 0.04, ix, armY - 0.5, pz); for (const sx of [-1, 1]) { b.box('iron', 0.02, 0.3, 0.02, ix + sx * 0.3, armY - 0.65, pz); b.geo('steel', cyl(0.14, 0.1, 0.03, 10), ix + sx * 0.3, armY - 0.82, pz); } }
+  else if (icon === 'tavern') { b.geo('mug', cyl(0.16, 0.14, 0.34, 10), ix, armY - 0.65, pz); b.geo('linen', cyl(0.17, 0.17, 0.08, 10), ix, armY - 0.44, pz); b.geo('mug', new THREE.TorusGeometry(0.09, 0.03, 6, 10), ix + 0.2, armY - 0.65, pz); }
+}
+// 대장간: 오두막 + 문 앞 모루와 담금질 통, 철괴, 장작 상자
+function buildSmith(b, o) {
+  buildD(b, o);
+  const R = ROOM.D, fz = R.d / 2;
+  props(b, R, [['anvil', -3.2, fz + 1.6, 0.35], ['quench', -5.0, fz + 1.2, 0.2, 1.5, 0.8], ['barrel', 3.5, fz + 1.1, 0, 0.9, 0.9], ['crate', 4.6, fz + 1.4, 0.3, 0.9, 0.9], ['ingots', 3.9, fz + 2.7, 0.2, 1.6, 1.0]]);
+  signPost(b, 'signSmith', 'smith', fz);
+}
+// 상점: 튜더집 + 문 앞 자루·상자·통과 진열대
+function buildShop(b, o) {
+  buildA(b, o);
+  const R = ROOM.A, fz = R.d / 2;
+  props(b, R, [['sacks', -4.6, fz + 1.2, 0.15, 1.8, 1.1], ['crate', -3.3, fz + 2.6, 0.2, 0.9, 0.9], ['barrel', 3.6, fz + 1.1, 0, 0.9, 0.9], ['barrel', 4.5, fz + 1.4, 0, 0.9, 0.9], ['displayTable', 4.7, fz + 2.8, 0.1, 2.4, 1.1]]);
+  signPost(b, 'signShop', 'shop', fz);
+}
+// 판매소: 연립 건물 + 천막 가판 둘 + 가죽 틀 + 자루·통
+function stall(b, x, z, ry, cloth) {
+  b.push(x, 0, z, ry);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box('timber', 0.12, 2.6, 0.12, sx * 1.2, 1.3, sz * 0.8);
+  b.box(cloth, 2.8, 0.06, 2.0, 0, 2.65, 0, 0, 0, 0.18);
+  b.box('timberLight', 2.2, 0.1, 0.9, 0, 0.95, 0);
+  for (const sx of [-1, 1]) b.box('timber', 0.1, 0.9, 0.8, sx * 0.95, 0.45, 0);
+  b.box('hide1', 0.6, 0.1, 0.5, -0.6, 1.05, 0); b.box('hide2', 0.55, 0.1, 0.45, -0.6, 1.15, 0);
+  b.box('ore', 0.3, 0.2, 0.3, 0.45, 1.1, 0.05); b.box('ore', 0.22, 0.16, 0.22, 0.7, 1.08, -0.1, 0.5);
+  b.box('bone', 0.5, 0.08, 0.1, 0.1, 1.04, 0.2, 0.3);
+  b.pop();
+}
+function buildMarket(b, o) {
+  buildC(b, o);
+  const R = ROOM.C, fz = R.d / 2;
+  stall(b, -4.2, fz + 2.6, 0.08, 'clothR');
+  stall(b, 4.4, fz + 2.6, -0.06, 'clothB');
+  props(b, R, [['hideRack', -7.4, fz + 1.3, 0, 3.0, 1.0], ['sacks', 7.6, fz + 1.2, -0.2, 2.0, 1.2], ['barrel', -5.8, fz + 0.9, 0, 0.9, 0.9], ['barrel', 8.8, fz + 2.4, 0, 0.9, 0.9]]);
+  signPost(b, 'signMarket', 'market', fz);
+}
+// 술집: 튜더집 + 벽등 둘 + 야외 탁자·긴 의자 + 술통
+function buildTavern(b, o) {
+  buildA(b, o);
+  const R = ROOM.A, fz = R.d / 2;
+  for (const x of [-2.4, 2.4]) { b.push(x, 0, fz); wallLamp(b, 0, 3.0); b.pop(); }
+  props(b, R, [['table', -5.0, fz + 2.4, 0, 1.8, 0.9], ['bench', -5.0, fz + 1.6, 0, 1.8, 0.5], ['bench', -5.0, fz + 3.2, Math.PI, 1.8, 0.5], ['barrel', 4.3, fz + 1.1, 0, 0.9, 0.9], ['barrel', 5.2, fz + 1.2, 0, 0.9, 0.9], ['barrel', 4.7, fz + 2.1, 0, 0.9, 0.9]]);
+  signPost(b, 'signTavern', 'tavern', fz);
+}
+
+const BUILD = { A: buildA, B: buildB, C: buildC, D: buildD, INN: buildInn, SMITH: buildSmith, SHOP: buildShop, MARKET: buildMarket, TAVERN: buildTavern };
 
 // ---------- 방(집 안 공간): 땅 밑에 따로 있는 방. 처음 들어갈 때 만든다 ----------
 // 벽 한 면 (회반죽 + 창 구멍). 벽 면은 z=0 평면, 방 안쪽이 -z. 창 구멍에는 실시간 바깥 풍경 판(portal)을 끼움
