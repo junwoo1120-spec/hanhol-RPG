@@ -36,16 +36,14 @@ function wrapPitch(p) { return Math.min(PITCH_LIMIT, Math.max(-PITCH_LIMIT, p));
 const HELP_KEYBOARD = [
   [['W', 'A', 'S', 'D'], '이동'],
   [['Space'], '점프'],
-  [['E'], '문 열기 / 집 들어가기 / 밖으로 나가기'],
   [['Ctrl'], '달리기 켜기/끄기'],
-  [['Shift'], '시점 고정 켜기/끄기'],
+  [['Shift'], '시점 고정(쉬프트락) 켜기/끄기'],
+  [['1'], '칼 꺼내기/넣기'],
+  [['Enter', '마우스 클릭'], '공격 (칼을 꺼낸 상태)'],
+  [['Q'], '대쉬: 이동 방향으로 5m 돌진, 입력 없으면 앞으로 (쿨타임 1초)'],
+  [['E'], '문 열기/닫기, 집 들어가기/나가기 (근처에 문이 없으면 휩쓸기 스킬)'],
   [['←', '→', '↑', '↓'], '화면 회전'],
   [['마우스'], '화면 회전 (화면 클릭 후)'],
-  [['터치'], '화면 드래그로 회전, 짧게 톡 터치하면 검 공격'],
-  [['1'], '나무검 장착/해제 (테스트)'],
-  [['마우스 왼쪽', 'Enter'], '검 공격'],
-  [['Q'], '대쉬: 이동 방향(앞·옆·뒤)으로 5m 짧게 돌진, 입력 없으면 앞으로 (쿨타임 1초)'],
-  [['E'], '스킬: 휩쓸기 (문 근처에서는 문 열기). R, T는 빈 스킬 칸'],
   [['H'], '조작법 열기/닫기'],
   [['Esc'], '마우스 잠금 해제'],
 ];
@@ -1115,6 +1113,7 @@ function boot(socket, { id, seed }, nick, mode) {
   function setHelp(v) {
     helpOpen = v;
     helpPanel.style.display = helpOpen ? 'block' : 'none';
+    stack.style.zIndex = helpOpen ? '1000' : '';   // 열려 있는 동안 모든 창 위로 올림
   }
   function toggleHelp() {
     setHelp(!helpOpen);
@@ -1479,7 +1478,7 @@ function boot(socket, { id, seed }, nick, mode) {
     const hintbar = document.createElement('div');
     hintbar.className = 'hintbar';
     hintbar.textContent =
-      'WASD 이동 · Space 점프 · Ctrl 달리기 · Shift 시점고정 · 방향키/마우스/터치 시점';
+      'WASD 이동 · Space 점프 · Ctrl 달리기 · Shift 시점고정 · 1 칼 · Enter/클릭 공격 · Q 대쉬 · E 문 · H 조작법';
     document.body.appendChild(hintbar);
 
     const chips = document.createElement('div');
