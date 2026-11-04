@@ -1244,7 +1244,7 @@ function boot(socket, { id, seed }, nick, mode) {
     const d = doorInfo(di), open = isDoorOpen(di), pos = { x: d.x, y: d.y + (d.kind === 'room' ? 3.6 : 1.7), z: d.z };
     if (d.kind === 'inn') return { text: open ? '문 닫기' : '문 열기', ...pos, run: () => setDoor(di, !open) };
     if (!open) return { text: '문 열기', ...pos, run: () => { setDoor(di, true); openedDoor = di; } };
-    return { text: '집 들어가기', ...pos, run: () => enterRoom(d.room) };
+    return { text: (d.name ? d.name : '집') + ' 들어가기', ...pos, run: () => enterRoom(d.room) };   // 가게는 "대장간 들어가기"처럼 이름이 뜸
   }
   // 지금 할 수 있는 동작 (없으면 null). 안내 문구가 뜰 위치(x,y,z)도 같이 돌려줌
   function currentAction() {
