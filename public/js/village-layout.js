@@ -41,6 +41,10 @@ export const ROOM = {
   D: { w: 7.8, d: 6.8, h: 3.6, dw: 1.6, dh: 2.8 },
   INN: { w: 30, d: 18, h: 5.0, dw: 3.0, dh: 3.8 },
 };
+// 가게 4종: 겉모습은 기존 건물을 재활용 (대장간=D 오두막, 상점·술집=A 튜더집, 판매소=C 연립) + 간판·소품, 안쪽 가구는 따로 만듦
+export const SHOP_BASE = { SMITH: 'D', SHOP: 'A', MARKET: 'C', TAVERN: 'A' };
+export const SHOP_NAME = { SMITH: '대장간', SHOP: '상점', MARKET: '판매소', TAVERN: '술집' };
+for (const [t, b] of Object.entries(SHOP_BASE)) { FOOT[t] = FOOT[b]; ROOM[t] = ROOM[b]; }
 const WALL_T = 0.3;            // 벽 충돌 반두께
 export const FLOOR_Y = 0.05;   // 바닥 윗면 높이 (땅 기준)
 export const ROOM_Y = -400;    // 방은 땅 밑 이 높이부터 100칸씩 아래로 쌓여 있음 → 땅 위에서는 안 보임
@@ -54,6 +58,7 @@ export const INT = {};
 for (const [t, o] of [['A', ROOM.A], ['B', ROOM.B], ['C', ROOM.C], ['D', ROOM.D], ['GUEST', OLD_GUEST]]) {
   INT[t] = { w: o.w * SC, d: o.d * SC, h: o.h * SC, ew: 3.4, eh: 5.8, exitWall: 'f' };   // ew/eh = 나가는 문 크기
 }
+for (const [t, b] of Object.entries(SHOP_BASE)) INT[t] = { ...INT[b] };
 INT.CORR = { w: 59, d: 8, h: 8, ew: 3.4, eh: 5.8, exitWall: 'r' };   // 기존 복도(29.5 x 4 x 4)의 2배. 출구(계단 내려가기)는 동쪽 끝
 
 // 여관 1층 안: 계단은 서쪽(-x) 벽을 따라 있음. 계단 꼭대기는 벽 + 문(장식)이고, 계단 앞 안내로 복도 방에 이동
@@ -357,6 +362,120 @@ export const INTERIOR = {
   INN: BASE.INN,        // 여관 1층은 진짜 실내라서 크기를 키우지 않음
 };
 
+// ---------- 가게 4종 안쪽: 대장간 / 상점 / 판매소 / 술집 ----------
+// 각자 하는 일에 맞는 가구만 둠 (대장간에 책장·소파 같은 건 없음). 좌표는 방 중심 기준, 벽에 붙이는 가구는 안쪽 벽면(벽 중심에서 0.3 안쪽)에 맞춤.
+// 방 크기(대장간 19.5x17 / 상점·술집 21x18.5 / 판매소 29x22)는 겉모습 건물의 2.5배라서 기존 집과 같음. 출입구는 앞쪽(+z) 가운데라서 그 앞은 비워 둠.
+const hangLamps = pts => pts.map(([x, z]) => ({ k: 'hangLamp', x, z, solid: NS }));
+INTERIOR.SMITH = [
+  // 뒷벽: 화로(굴뚝) + 풀무 + 무기 걸이 + 숫돌
+  { k: 'forge', x: 5.0, z: -7.1, w: 4.0, d: 2.2 },
+  { k: 'bellows', x: 1.9, z: -7.4, ry: -PI / 2, w: 0.9, d: 1.6 },
+  { k: 'weaponRack', x: -4.2, z: -7.9, w: 5.0, d: 0.6 },
+  { k: 'grindstone', x: -7.9, z: -7.5, w: 1.6, d: 1.4 },
+  // 작업 구역 (바닥에 그을음)
+  { k: 'soot', x: 5.0, z: -3.9, w: 9.0, d: 6.6, solid: NS },
+  { k: 'anvil', x: 4.2, z: -3.9, w: 1.1, d: 0.7 },
+  { k: 'quench', x: 9.0, z: -2.7, ry: -PI / 2, w: 1.8, d: 0.9 },
+  { k: 'coalbin', x: 8.4, z: -7.55, w: 1.6, d: 1.3 },
+  { k: 'barrel', x: 9.0, z: -0.5, w: 0.9, d: 0.9 },
+  // 동쪽 벽: 완성한 무기 진열
+  { k: 'weaponRack', x: 9.15, z: 3.8, ry: -PI / 2, w: 4.4, d: 0.6 },
+  { k: 'crate', x: 9.0, z: 7.2, w: 0.9, d: 0.9 },
+  // 서쪽 벽: 작업대 + 연장 걸이 + 철괴
+  { k: 'workbench', x: -8.9, z: -2.6, ry: PI / 2, w: 5.0, d: 1.1 },
+  { k: 'toolWall', x: -9.2, z: 3.6, ry: PI / 2, w: 4.2, d: 0.5 },
+  { k: 'ingots', x: -8.95, z: 6.9, ry: PI / 2, w: 1.6, d: 1.0 },
+  { k: 'crate', x: -7.8, z: 7.3, w: 0.9, d: 0.9 },
+  { k: 'barrel', x: -4.6, z: -3.4, w: 0.9, d: 0.9 },
+  // 조명
+  ...hangLamps([[4.4, -3.9], [-4.5, 0.5], [0.5, -5.5], [-0.5, 4.5]]),
+  ...SCONCE_FRONT([-4.5, 4.5], 8.0),
+];
+
+INTERIOR.SHOP = [
+  // 뒷벽: 진열장 셋 (물약·항아리·천·상자)
+  { k: 'goodsShelf', x: -6.8, z: -8.6, w: 5.4, d: 0.7 },
+  { k: 'goodsShelf', x: 0, z: -8.6, w: 5.4, d: 0.7 },
+  { k: 'goodsShelf', x: 6.8, z: -8.6, w: 5.4, d: 0.7 },
+  // 계산대 + 점원 자리
+  { k: 'counter', x: 0, z: -3.4, w: 11.0, d: 1.4 },
+  { k: 'chair', x: 3.2, z: -5.6, w: 0.55, d: 0.55 },
+  { k: 'stool', x: -3.0, z: -5.4, w: 0.5, d: 0.5 },
+  { k: 'chest', x: -7.4, z: -5.4, w: 1.2, d: 0.7 },
+  // 양쪽 벽 진열장
+  { k: 'goodsShelf', x: -9.85, z: -3.2, ry: PI / 2, w: 5.0, d: 0.7 },
+  { k: 'goodsShelf', x: 9.85, z: -3.2, ry: -PI / 2, w: 5.0, d: 0.7 },
+  // 손님 쪽: 진열대 둘 + 입구 러그
+  { k: 'rug', x: 0, z: 2.6, w: 5.0, d: 8.0, solid: NS },
+  { k: 'displayTable', x: -6.4, z: 3.0, w: 3.6, d: 1.5 },
+  { k: 'displayTable', x: 6.4, z: 3.0, w: 3.6, d: 1.5 },
+  // 곡식 자루, 통, 상자
+  { k: 'sacks', x: -9.0, z: 6.9, w: 2.2, d: 1.4 },
+  { k: 'barrel', x: -9.7, z: 4.4, w: 0.9, d: 0.9 },
+  { k: 'barrel', x: -9.7, z: 5.5, w: 0.9, d: 0.9 },
+  { k: 'crate', x: 9.6, z: 4.4, w: 0.9, d: 0.9 },
+  { k: 'crate', x: 9.6, z: 5.5, w: 0.9, d: 0.9 },
+  { k: 'barrel', x: 9.5, z: 7.3, w: 0.9, d: 0.9 },
+  { k: 'lamp', x: -9.7, z: 8.0, w: 0.5, d: 0.5 },
+  // 조명
+  { k: 'chandelier', x: -6.4, z: 3.0, solid: NS }, { k: 'chandelier', x: 6.4, z: 3.0, solid: NS }, { k: 'chandelier', x: 0, z: -3.4, solid: NS },
+  ...SCONCE_FRONT([-5.5, 5.5], 9.0),
+];
+
+INTERIOR.MARKET = [
+  // 뒷벽: 시세판 + 가죽 말리는 틀 + 약초 걸이
+  { k: 'noticeBoard', x: 0, z: -10.6, w: 7.0, d: 0.2, y: 3.4, solid: NS },
+  { k: 'hideRack', x: -9.5, z: -10.1, w: 6.5, d: 1.2 },
+  { k: 'herbRack', x: 9.5, z: -10.1, w: 6.5, d: 1.2 },
+  // 매입 계산대 (저울) + 장부 책상 + 돈궤
+  { k: 'counter', x: 0, z: -5.5, w: 10.5, d: 1.5 },
+  { k: 'desk', x: 4.2, z: -7.6, w: 2.4, d: 1.0 },
+  { k: 'chair', x: 4.2, z: -8.8, w: 0.55, d: 0.55 },
+  { k: 'chest', x: -4.2, z: -8.7, w: 1.4, d: 0.8 },
+  { k: 'scaleStand', x: -8.0, z: -2.0, w: 1.8, d: 1.8 },
+  // 서쪽 벽: 가죽·뼈 상자와 자루
+  { k: 'crate', x: -13.6, z: -6.0, w: 0.9, d: 0.9 }, { k: 'crate', x: -13.6, z: -4.9, w: 0.9, d: 0.9 }, { k: 'crate', x: -13.6, z: -3.8, w: 0.9, d: 0.9 },
+  { k: 'crate', x: -12.6, z: -6.0, w: 0.9, d: 0.9 }, { k: 'crate', x: -12.6, z: -4.9, w: 0.9, d: 0.9 },
+  { k: 'sacks', x: -13.2, z: 0.6, ry: PI / 2, w: 2.4, d: 1.4 },
+  { k: 'barrel', x: -13.7, z: 4.6, w: 0.9, d: 0.9 }, { k: 'barrel', x: -13.7, z: 5.7, w: 0.9, d: 0.9 }, { k: 'barrel', x: -12.6, z: 5.1, w: 0.9, d: 0.9 },
+  // 동쪽 벽: 광석 상자와 자루
+  { k: 'crate', x: 13.6, z: -6.0, w: 0.9, d: 0.9 }, { k: 'crate', x: 13.6, z: -4.9, w: 0.9, d: 0.9 }, { k: 'crate', x: 12.6, z: -6.0, w: 0.9, d: 0.9 },
+  { k: 'sacks', x: 13.2, z: 0.6, ry: -PI / 2, w: 2.4, d: 1.4 },
+  { k: 'chest', x: 13.4, z: -1.8, ry: -PI / 2, w: 1.4, d: 0.8 },
+  { k: 'barrel', x: 13.7, z: 4.6, w: 0.9, d: 0.9 }, { k: 'barrel', x: 13.7, z: 5.7, w: 0.9, d: 0.9 },
+  // 손님 쪽: 견본 진열대 둘 + 러그
+  { k: 'rug', x: 0, z: 3.8, w: 5.5, d: 9.0, solid: NS },
+  { k: 'displayTable', x: -7.5, z: 4.8, w: 4.2, d: 1.6 },
+  { k: 'displayTable', x: 7.5, z: 4.8, w: 4.2, d: 1.6 },
+  // 조명
+  { k: 'chandelier', x: 0, z: 3.0, solid: NS }, { k: 'chandelier', x: -7.5, z: 4.8, solid: NS }, { k: 'chandelier', x: 7.5, z: 4.8, solid: NS }, { k: 'chandelier', x: 0, z: -5.5, solid: NS },
+  ...SCONCE_FRONT([-8.5, 8.5], 10.75),
+  { k: 'lamp', x: -13.2, z: -9.6, w: 0.5, d: 0.5 }, { k: 'lamp', x: 13.2, z: -9.6, w: 0.5, d: 0.5 },
+];
+
+INTERIOR.TAVERN = [
+  // 뒷벽: 술병 선반 + 바 + 스툴
+  { k: 'backbar', x: 2.5, z: -8.7, w: 12, d: 0.5 },
+  { k: 'bar', x: 2.5, z: -5.2, w: 12, d: 1.3 },
+  ...[-1.5, 0.5, 2.5, 4.5, 6.5].map(x => ({ k: 'stool', x, z: -3.4, w: 0.5, d: 0.5 })),
+  // 서쪽: 벽난로 + 둥근 탁자
+  { k: 'fireplace', x: -9.65, z: -4.0, ry: PI / 2, w: 3.6, d: 1.1 },
+  ...roundSet(-6.2, -1.9, 1.8),
+  // 동쪽: 술통 선반 + 다트
+  { k: 'kegRack', x: 9.5, z: -5.8, ry: -PI / 2, w: 3.8, d: 1.4 },
+  { k: 'dartboard', x: 10.15, z: 0.6, ry: -PI / 2, y: 2.5, solid: NS },
+  // 식탁 (탁자 + 의자 + 러그 + 샹들리에)
+  ...tableSet(-5.5, 2.4, 2.4, 1.3),
+  ...tableSet(5.5, 3.3, 2.4, 1.3),
+  // 벽 의자 (긴 의자)
+  { k: 'bench', x: -9.9, z: 6.0, ry: PI / 2, w: 3.4, d: 0.6 },
+  { k: 'bench', x: 9.9, z: 6.0, ry: -PI / 2, w: 3.4, d: 0.6 },
+  { k: 'barrel', x: -9.6, z: 8.35, w: 0.9, d: 0.9 },
+  { k: 'barrel', x: 9.6, z: 8.4, w: 0.9, d: 0.9 },
+  { k: 'chandelier', x: 2.5, z: -1.0, solid: NS },
+  ...SCONCE_FRONT([-5.0, 5.0], 9.0),
+];
+
 export const HOUSES = [];   // { type, x, z, rot, k, seed, roof }
 const OBBS = [];            // 겉모습 전체 상자 (자연 오브젝트 비우기용)
 export const DOORS = [];    // { id, kind: 'house'|'inn'|'room', house, x, z, y, nx, nz, reach, room }
@@ -370,7 +489,9 @@ const SOLID_EXTRA = { INN: [{ x: -19.1, z: 4.6, w: 7.2, d: 9 }, { x: 19.75, z: 4
 
 function place(type, x, z, k, seed, roof, yaw = 0) {
   // 로컬 +z 가 (sinθ, cosθ) 를 향함 → 기본은 광장 쪽을 보고, yaw 만큼 살짝 틀어서 자연스럽게
-  const rot = Math.atan2(VILLAGE.x - x, VILLAGE.z - z) + yaw;
+  placeAtRot(type, x, z, k, seed, roof, Math.atan2(VILLAGE.x - x, VILLAGE.z - z) + yaw);
+}
+function placeAtRot(type, x, z, k, seed, roof, rot) {
   HOUSES.push({ type, x, z, rot, k, seed, roof });
   const i = HOUSES.length - 1;
   const c = Math.cos(rot), s = Math.sin(rot);
@@ -385,7 +506,7 @@ function place(type, x, z, k, seed, roof, yaw = 0) {
   DOORS.push({
     id: DOORS.length, kind: type === 'INN' ? 'inn' : 'house', house: i,
     x: x + Math.sin(rot) * (R.d / 2) * k, z: z + Math.cos(rot) * (R.d / 2) * k, y: VILLAGE.h,
-    nx: Math.sin(rot), nz: Math.cos(rot), reach: type === 'INN' ? 4.8 : 3.3, room: -1,
+    nx: Math.sin(rot), nz: Math.cos(rot), reach: type === 'INN' ? 4.8 : 3.3, room: -1, name: SHOP_NAME[type],
   });
   DOOR_OPEN[DOORS.length - 1] = false;
 }
@@ -432,37 +553,51 @@ const VX = VILLAGE.x, VZ = VILLAGE.z;
 // 여관 (제일 큰 집) - 시작 지점 뒤편에 딱 하나
 place('INN', VX, VZ + INN_DIST, 1, 101, 'roofNavy');
 
-// 나머지 집: 일부러 대칭을 깨고 손으로 배치. 몇 채씩 붙어 있는 동네와 외따로 떨어진 집이 섞여 있다.
-// [종류, 중심에서 x, 중심에서 z, 크기, 지붕, 방향 틀기(라디안)]
-const SPOTS = [
-  // 광장 서쪽: 길가에 늘어선 세 채 (바짝 붙음)
-  ['C', -35, -9, 1.00, 'roofNavy', 0.10],
-  ['A', -33, -24, 0.95, 'roofRed', -0.15],
-  ['D', -46, -33, 1.05, 'roofBrown', 0.30],
-  // 광장 동쪽: 두 채가 어깨를 맞대고, 탑은 조금 떨어져 있음
-  ['D', 34, -12, 1.00, 'roofBrown', -0.12],
-  ['A', 36, 2, 1.05, 'roofNavy', 0.08],
-  ['B', 31, 24, 1.00, 'roofNavy', 0.0],
-  // 북쪽 멀리: 띄엄띄엄
-  ['A', 12, -49, 1.00, 'roofRed', 0.20],
-  ['C', -14, -66, 0.95, 'roofNavy', -0.25],
-  ['B', 52, -52, 0.90, 'roofNavy', 0.15],
-  // 동쪽 외곽: 서로 붙은 한 쌍 + 홀로 있는 오두막
-  ['C', 66, -26, 1.00, 'roofNavy', 0.05],
-  ['D', 79, -10, 1.00, 'roofRed', -0.35],
-  // 서쪽 외곽
-  ['A', -70, 6, 1.00, 'roofBrown', 0.20],
+// 나머지 집: 일부러 대칭을 깨고 손으로 배치. 처마가 닿을 만큼 바짝 붙은 줄(row)과 외따로 떨어진 집이 섞여 있다.
+// 줄(row) = 같은 방향으로 나란히 붙은 집들 (앞뒤 어긋남·지붕 색·방향 틀기는 집마다 다름)
+// 가게 4종(대장간·상점·판매소·술집)은 광장 둘레에 있음. 대장간은 불을 쓰니까 일부러 떨어뜨림.
+function placeRot(type, x, z, k, seed, roof, rot) { placeAtRot(type, x, z, k, seed, roof, rot); }
+// [종류, 크기, 지붕, 앞뒤 어긋남(m), 앞 집과의 틈(m), 방향 틀기(rad)]
+function row(cx, cz, items, seed0) {
+  const rot0 = Math.atan2(VX - cx, VZ - cz), c = Math.cos(rot0), s = Math.sin(rot0);
+  const ws = items.map(([t, k]) => FOOT[t][0].w * k);
+  let total = ws.reduce((a, b) => a + b, 0);
+  for (let i = 1; i < items.length; i++) total += items[i][4] ?? 0.5;
+  let lx = -total / 2;
+  items.forEach(([t, k, roof, dz = 0, gap = 0.5, yaw = 0], i) => {
+    if (i > 0) lx += gap;
+    const mid = lx + ws[i] / 2;
+    lx += ws[i];
+    placeRot(t, cx + mid * c + dz * s, cz - mid * s + dz * c, k, seed0 + i, roof, rot0 + yaw);
+  });
+}
+
+// 광장 서쪽 큰길: 상점 · 판매소 · 오두막이 처마를 맞대고 늘어섬
+row(VX - 41, VZ - 6, [['SHOP', 1.0, 'roofRed', 0, 0, 0.02], ['MARKET', 1.0, 'roofNavy', 0.9, 0.5, -0.03], ['D', 1.0, 'roofBrown', -0.7, 0.4, 0.04]], 300);
+// 광장 북동쪽: 술집과 옆집이 붙어 있음
+row(VX + 30, VZ - 33, [['TAVERN', 1.0, 'roofBrown', 0, 0, -0.02], ['D', 1.0, 'roofRed', 1.2, 0.6, 0.06]], 320);
+// 대장간: 불을 쓰니까 떨어져서 동쪽에 혼자
+place('SMITH', VX + 51, VZ + 12, 1.15, 330, 'roofBrown', -0.10);
+// 북쪽 마을: 세 채가 붙은 줄
+row(VX + 2, VZ - 56, [['A', 1.0, 'roofRed', 0, 0, 0.03], ['D', 1.0, 'roofBrown', 1.3, 0.5, -0.05], ['A', 1.0, 'roofNavy', -0.8, 0.7, 0.04]], 340);
+// 북서쪽: 붙은 한 쌍
+row(VX - 46, VZ - 39, [['C', 1.0, 'roofNavy', 0, 0, 0.0], ['A', 0.95, 'roofBrown', 1.1, 0.4, 0.07]], 360);
+// 동쪽 외곽: 붙은 한 쌍
+row(VX + 70, VZ - 22, [['C', 1.0, 'roofNavy', 0, 0, 0.0], ['D', 1.0, 'roofRed', 1.0, 0.5, -0.06]], 370);
+// 외따로 떨어진 집들
+[
+  ['C', -14, -76, 0.95, 'roofNavy', -0.25],
+  ['B', 54, -54, 0.90, 'roofNavy', 0.15],
   ['B', -66, 34, 0.92, 'roofNavy', -0.10],
-  // 여관 뒤쪽 멀리
-  ['D', 48, 66, 1.00, 'roofBrown', -0.2],
-];
-SPOTS.forEach(([t, x, z, k, roof, yaw], i) => place(t, VX + x, VZ + z, k, 200 + i, roof, yaw));
+  ['B', 31, 30, 1.00, 'roofNavy', 0.0],
+  ['A', -72, 4, 1.00, 'roofBrown', 0.20],
+].forEach(([t, x, z, k, roof, yaw], i) => place(t, VX + x, VZ + z, k, 400 + i, roof, yaw));
 
 
 // ---------- 방(집 안 공간) ----------
 // 장식 건물/객실 문 하나당 방 하나 + 복도 방 하나. 땅 밑에 100칸 간격으로 쌓여 있음 (위로 안 보임).
 // 방의 (x,z) 는 마을 바깥 둘레(RING_R)의 "유령 위치" 바로 아래. 창문은 그 유령 위치에서 본 실제 월드를 보여줌.
-const TALL = new Set(['shelf', 'wardrobe', 'fireplace', 'backbar', 'stove']);
+const TALL = new Set(['shelf', 'wardrobe', 'fireplace', 'backbar', 'stove', 'forge', 'weaponRack', 'toolWall', 'goodsShelf', 'hideRack', 'herbRack', 'kegRack', 'noticeBoard']);
 
 // 창문 위치 자동 배치: 키 큰 가구/촛대와 겹치지 않는 곳에만. t = 벽을 따라간 방 좌표(b/f 벽은 x, l/r 벽은 z)
 function genWindows(type) {
