@@ -72,7 +72,7 @@ let skyTimeParam = null;
 { const m = /[?&]skytime=([\d.]+)/.exec(Q); if (m) { skyTimeParam = parseFloat(m[1]); offset = skyTimeParam - phaseNow(); } }
 
 // ---------------- 화면에 직접 띄우는 진단 (태블릿/폰에서 콘솔 없이 에러 확인) ----------------
-const SKY_VERSION = 'sky.js v7 (날씨 효과·서버 공유 날씨/시간)';
+const SKY_VERSION = 'sky.js v8 (조작법 옆 하늘 설정 버튼)';
 const DEBUG = /[?&]skydebug=1/.test(Q);
 function say(text, bad) {
   try {
@@ -264,29 +264,48 @@ const SLIDERS = [
 
 function removeAdminPanel() {
   const el = document.getElementById('sky-admin');
-  if (el) { clearInterval(el._t); el.remove(); }
+  if (el) {
+    clearInterval(el._t);
+    if (el._refresh) { const i = stateListeners.indexOf(el._refresh); if (i >= 0) stateListeners.splice(i, 1); }
+    el.remove();
+  }
+  const b = document.getElementById('sky-btn'); if (b) b.remove();
+  window.removeEventListener('resize', removeAdminPanel._place || (() => {}));
 }
 function buildAdminPanel(perm) {
   removeAdminPanel();
   if (!document.getElementById('sky-admin-css')) {
     const st = document.createElement('style'); st.id = 'sky-admin-css';
     st.textContent =
-      '#sky-admin{position:fixed;left:50%;top:calc(8px + 54px * var(--ui,1) + 8px);transform:translateX(-50%);z-index:8;max-width:94vw;' +
-      'display:flex;flex-direction:column;gap:5px;align-items:center;padding:5px 8px;border-radius:12px;' +
-      'background:rgba(20,14,38,.84);border:1px solid rgba(217,178,92,.75);color:#f6e3a1;font:600 12px sans-serif;user-select:none;-webkit-user-select:none}' +
+      // 버튼: 게임의 '조작법' 버튼과 같은 모양
+      "#sky-btn{position:fixed;z-index:6;display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 12px 4px 8px;border-radius:8px;" +
+      "background:linear-gradient(#2a1f16,#150f0b);border:2px solid #8a6b3a;box-shadow:0 0 0 2px #0a0705,0 3px 10px rgba(0,0,0,.5);color:#f1dba4;" +
+      "font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-weight:700;font-size:13px;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000;" +
+      "user-select:none;-webkit-user-select:none;transform:scale(var(--ui,1));transform-origin:right top;white-space:nowrap}" +
+      '#sky-btn .ic{font-size:26px;line-height:38px;height:38px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.7))}' +
+      '#sky-btn:hover{filter:brightness(1.25)}' +
+      '#sky-btn.on{border-color:#d9b25c}' +
+      // 창: 버튼 아래에 열리는 하늘 설정 창
+      '#sky-admin{position:fixed;right:8px;top:70px;width:min(440px,calc(100vw - 16px));z-index:9;box-sizing:border-box;' +
+      'display:none;flex-direction:column;gap:6px;align-items:stretch;overflow:auto;padding:8px 10px;border-radius:12px;' +
+      'background:rgba(20,14,38,.92);border:1px solid rgba(217,178,92,.75);box-shadow:0 6px 18px rgba(0,0,0,.5);color:#f6e3a1;font:600 12px sans-serif;user-select:none;-webkit-user-select:none}' +
+      '#sky-admin.open{display:flex}' +
+      '#sky-admin .sk-h{display:flex;align-items:center;justify-content:space-between;font-size:14px;letter-spacing:1px}' +
+      '#sky-admin .sk-x{padding:2px 8px}' +
       '#sky-admin .sk-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center;justify-content:center}' +
       '#sky-admin .sk-l{min-width:170px;text-align:center}' +
       '#sky-admin button{cursor:pointer;padding:4px 9px;border-radius:7px;border:1px solid #d9b25c;background:#3a2d5c;color:#f6e3a1;font:700 12px sans-serif}' +
       '#sky-admin button.on{background:#d9b25c;color:#2a1a00}' +
       '#sky-admin button:active{filter:brightness(1.4)}' +
-      '#sky-admin .sk-box{display:none;flex-direction:column;gap:6px;align-items:stretch;width:min(440px,88vw);max-height:46vh;overflow:auto;padding:4px 2px}' +
+      '#sky-admin .sk-box{display:none;flex-direction:column;gap:6px;align-items:stretch;padding:4px 2px}' +
       '#sky-admin .sk-box.open{display:flex}' +
       '#sky-admin .sk-s{display:flex;align-items:center;gap:8px}' +
       '#sky-admin .sk-s span:first-child{width:62px}' +
       '#sky-admin .sk-s input{flex:1;min-width:90px}' +
       '#sky-admin .sk-s .v{width:62px;text-align:right}' +
       '#sky-admin .sk-n{font-weight:600;opacity:.9;text-align:center}' +
-      'body.uw-open #sky-admin{display:none}';
+      'body.uw-open #sky-admin,body.uw-open #sky-btn{display:none!important}';
+
     document.head.appendChild(st);
   }
   const el = document.createElement('div'); el.id = 'sky-admin'; el._perm = perm.key;
@@ -294,6 +313,11 @@ function buildAdminPanel(perm) {
   const S = () => window.Sky;
   let refreshTime = () => {}, syncSliders = () => {};
   const noteEl = mk('div', 'sk-n');
+  let setOpen = () => {};
+  const head = mk('div', 'sk-h'), xb = mk('button', 'sk-x', '✕'); xb.tabIndex = -1;
+  xb.addEventListener('pointerdown', (e) => e.stopPropagation());
+  xb.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); setOpen(false); xb.blur(); });
+  head.append(mk('span', '', '☀ 하늘 설정'), xb); el.appendChild(head);
 
   // ----- 시간 (박준우) -----
   if (perm.time) {
@@ -324,8 +348,8 @@ function buildAdminPanel(perm) {
 
   // ----- 날씨 (박준우, 19) -----
   if (perm.weather) {
-    const tog = mk('button', '', '☁ 날씨 설정 ▾'); tog.tabIndex = -1;
-    const box = mk('div', 'sk-box');
+    const tog = mk('button', '', '☁ 날씨 설정 ▴'); tog.tabIndex = -1;
+    const box = mk('div', 'sk-box open');
     tog.addEventListener('pointerdown', (e) => e.stopPropagation());
     tog.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); const o = box.classList.toggle('open'); tog.textContent = o ? '☁ 날씨 설정 ▴' : '☁ 날씨 설정 ▾'; tog.blur(); });
     const prow = mk('div', 'sk-row');
@@ -365,9 +389,34 @@ function buildAdminPanel(perm) {
     refreshTime(); syncSliders();
     noteEl.textContent = adminNote || (serverState ? '✔ 바꾸면 모든 접속자에게 적용돼요' : '⚠ 서버 공유 없음: 내 화면만 바뀌어요');
   };
+  // ----- '조작법' 버튼 바로 왼쪽에 놓이는 하늘 설정 버튼 + 그 아래에 열리는 창 -----
+  const btn = document.createElement('div'); btn.id = 'sky-btn';
+  const ic = mk('span', 'ic', '🌤️'); btn.append(ic, mk('span', '', '하늘 설정'));
+  el.classList.toggle('open', false);
+  setOpen = (o) => { el.classList.toggle('open', o); btn.classList.toggle('on', o); place(); };
+  btn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); setOpen(!el.classList.contains('open')); });
+  function place() {
+    const help = document.querySelector('.helpbtn'), stack = document.querySelector('.rt-stack');
+    const W = window.innerWidth, H = window.innerHeight;
+    const hr = help ? help.getBoundingClientRect() : null;
+    if (hr && hr.width > 0) { btn.style.top = hr.top + 'px'; btn.style.right = (W - hr.left + 8) + 'px'; }
+    else { btn.style.top = '8px'; btn.style.right = '220px'; }      // 게임 버튼을 못 찾으면 오른쪽 위 근처
+    const br = btn.getBoundingClientRect();
+    const sr = stack ? stack.getBoundingClientRect() : null;
+    const left = sr && sr.width > 0 ? sr.left : W;                    // 오른쪽 UI 묶음(속도/조작법)과 겹치지 않게 그 왼쪽에
+    const avail = left - 16;
+    let right, width;
+    if (avail >= 320) { right = W - left + 8; width = Math.min(440, avail); }
+    else { right = 8; width = Math.min(440, W - 16); }                // 좁은 화면(폰 세로)에서는 화면 폭에 맞춰 열림
+    const top = br.bottom + 6;
+    el.style.right = right + 'px'; el.style.width = width + 'px'; el.style.top = top + 'px'; el.style.maxHeight = Math.max(160, H - top - 12) + 'px';
+  }
+  removeAdminPanel._place = place;
+  window.addEventListener('resize', place);
+  el._refresh = refresh;
   stateListeners.push(refresh);
-  refresh(); el._t = setInterval(refresh, 250);
-  document.body.appendChild(el);
+  refresh(); place(); el._t = setInterval(() => { refresh(); place(); }, 250);
+  document.body.append(btn, el);
 }
 
 let lastNickSeen = null;
