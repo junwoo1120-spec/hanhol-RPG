@@ -17,6 +17,8 @@ export const GOBLIN = {
   ATTACK_COOLDOWN: 0.85,   // 공격 속도(초)
   DAMAGE: 1.5,             // 고블린 공격력
   RETURN_DIST: 100,        // 집에서 이만큼 멀어지면 사라지듯 순간이동으로 복귀 + 어그로 해제
+  DEATH_FALL: 0.7,         // 죽으면 쓰러지는 데 걸리는 시간(초)
+  DEATH_LIE: 2.0,          // 쓰러진 채로 누워 있다가 사라지기까지(초)
   RESPAWN_SEC: 60,         // 죽은 고블린이 다시 나타나는 시간(초). 0 이면 다시 안 나와요
   VIEW_DIST: 220,          // 플레이어에게 이 거리 안의 고블린만 전송
 };
@@ -147,11 +149,13 @@ export function createGoblinSim({ T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS }) 
     atkReady: 0, atkN: 0, dead: false, respawnAt: 0, wp: { x: c.x, z: c.z, heading: 0 },
   }));
   const swings = [];   // 플레이어가 휘두른 검 (맞는 순간 대기 중)
+  let lastNow = 0;     // 마지막 update 시각 (죽은 고블린을 얼마나 보여줄지 계산)
 
   const returnHome = (g) => { g.mode = 0; g.target = null; };   // 배회로 돌아가면 위치는 배회 위치로 순간이동
 
   function update(dtIn, nowMs, players, cb) {
     const dt = Math.min(dtIn, 0.2);
+    lastNow = nowMs;
     const tSec = nowMs / 1000;
     const A2 = GOBLIN.AGGRO_DIST * GOBLIN.AGGRO_DIST;
 
@@ -170,7 +174,7 @@ export function createGoblinSim({ T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS }) 
         if (d > 0.8 && (dx * fx + dz * fz) / d < cosArc) continue;
         g.hp -= s.dmg;
         if (g.hp <= 0) {
-          g.dead = true; g.mode = 0; g.target = null;
+          g.dead = true; g.mode = 0; g.target = null; g.deadAt = nowMs;
           g.respawnAt = GOBLIN.RESPAWN_SEC > 0 ? nowMs + GOBLIN.RESPAWN_SEC * 1000 : Infinity;
           if (cb.kill) cb.kill(s.pid, g);
         } else if (g.mode === 0) {   // 맞으면 때린 사람을 쫓아옴
@@ -250,13 +254,15 @@ export function createGoblinSim({ T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS }) 
     for (const g of goblins) if (g.target === pid) returnHome(g);
   }
 
-  // 플레이어 주변 고블린 목록: [id, x, z, 바라보는 방향, mode, hp, 공격횟수]
+  // 플레이어 주변 고블린 목록: [id, x, z, 바라보는 방향, mode(3 = 죽어서 쓰러짐), hp, 공격횟수]
   function snapshot(px, pz) {
     const v2 = GOBLIN.VIEW_DIST * GOBLIN.VIEW_DIST, out = [];
+    const linger = (GOBLIN.DEATH_FALL + GOBLIN.DEATH_LIE) * 1000;
     for (const g of goblins) {
-      if (g.dead) continue;
+      // 죽은 고블린은 쓰러졌다가 누워 있는 동안(mode 3)만 계속 보내요. 그 뒤엔 목록에서 빠져서 사라져요
+      if (g.dead && lastNow - g.deadAt > linger) continue;
       if ((g.x - px) ** 2 + (g.z - pz) ** 2 > v2) continue;
-      out.push([g.id, Math.round(g.x * 100) / 100, Math.round(g.z * 100) / 100, Math.round(g.ry * 100) / 100, g.mode, g.hp, g.atkN]);
+      out.push([g.id, Math.round(g.x * 100) / 100, Math.round(g.z * 100) / 100, Math.round(g.ry * 100) / 100, g.dead ? 3 : g.mode, g.hp, g.atkN]);
     }
     return out;
   }

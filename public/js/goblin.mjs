@@ -300,6 +300,21 @@ export function animateGoblin(g, dt, speed) {
   }
 }
 
+// 죽는 모션: 무릎이 꺾이며 뒤로 쓰러져 누움. f = 쓰러진 정도 (0 = 서 있음, 1 = 완전히 누움)
+function deathPose(g, f, side) {
+  const b = g.userData.rig.b;
+  b.legL.rotation.x = -0.3 * f; b.legR.rotation.x = -0.12 * f;
+  b.shinL.rotation.x = 0.5 * f; b.shinR.rotation.x = 0.25 * f;
+  b.armL.rotation.x = -0.2 * f; b.armR.rotation.x = 0.1 * f;
+  b.armL.rotation.z = 0.7 * f; b.armR.rotation.z = -0.5 * f;
+  b.foreL.rotation.x = -0.3 * f; b.foreR.rotation.x = -0.15 * f;
+  b.torso.rotation.set(0, 0, 0);
+  b.head.rotation.x = -0.2 * f;
+  b.head.rotation.y = 0.35 * side * f;
+}
+// 0 → 1 로 점점 빨라지며 쓰러지고, 땅에 닿을 때 살짝 튕김
+const fallCurve = (k) => k >= 1 ? 1 : k < 0.8 ? (k / 0.8) ** 2 : 1 - 0.06 * Math.sin(Math.PI * (k - 0.8) / 0.2);
+
 // ================= 서버가 보낸 고블린을 화면에 그리기 =================
 const angDiff = (a, b) => { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; };
 
@@ -331,12 +346,19 @@ export function createGoblinWorld({ scene, camera, T, WATER_LEVEL }) {
       if (!e) {
         const obj = buildGoblin();
         obj.scale.setScalar(GOBLIN.SCALE);
+        obj.rotation.order = 'YXZ';   // 방향(y)을 돌린 뒤 쓰러지는 기울기(x, z)를 적용
         const bar = makeBar();
         scene.add(obj, bar);
-        e = { obj, bar, x, z, ry, tx: x, tz: z, tr: ry, hp, atkN, sp: 0, far: false };
+        e = { obj, bar, x, z, ry, tx: x, tz: z, tr: ry, hp, atkN, sp: 0, far: false, dying: false, dd: 0, side: 1 };
         map.set(id, e);
       }
       e.tx = x; e.tz = z; e.tr = ry;
+      if (mode === 3) {   // 죽음: 쓰러지는 모션 시작 (누워 있는 동안 서버가 계속 보내줌)
+        if (!e.dying) { e.dying = true; e.dd = 0; e.side = Math.random() < 0.5 ? -1 : 1; e.obj.userData.rig.sw = -1; }
+      } else if (e.dying) {   // 다시 살아남(리스폰): 자세 되돌리기
+        e.dying = false; e.obj.rotation.x = 0; e.obj.rotation.z = 0;
+        const b = e.obj.userData.rig.b; b.armL.rotation.z = 0; b.armR.rotation.z = 0;
+      }
       if (hp < e.hp) { e.obj.userData.rig.flash = 0.15; }   // 맞음
       if (atkN !== e.atkN) { e.obj.userData.rig.sw = 0; e.atkN = atkN; }   // 공격 모션 시작
       e.hp = hp;
@@ -365,6 +387,17 @@ export function createGoblinWorld({ scene, camera, T, WATER_LEVEL }) {
       const cx = e.x - camera.position.x, cz = e.z - camera.position.z, d2 = cx * cx + cz * cz;
       const farNow = e.far ? d2 > LOD_NEAR * LOD_NEAR : d2 > LOD_FAR * LOD_FAR;
       if (farNow !== e.far) { e.far = farNow; setGoblinFar(e.obj, farNow); }
+      if (e.dying) {
+        // 쓰러지는 중 / 누워 있는 중: 뒤로 넘어지며 살짝 옆으로 기울고, 몸이 땅에 닿게 위로 조금 올림
+        e.dd += dt;
+        const f = fallCurve(e.dd / GOBLIN.DEATH_FALL);
+        if (!e.far) { animateGoblin(e.obj, dt, 0); deathPose(e.obj, f, e.side); }
+        e.obj.rotation.x = -(Math.PI / 2) * 0.97 * f;
+        e.obj.rotation.z = e.side * 0.25 * f;
+        e.obj.position.y = y + 0.1 * GOBLIN.SCALE * f;
+        e.bar.visible = false;
+        continue;
+      }
       if (!e.far) animateGoblin(e.obj, dt, e.sp);
 
       // 체력바: 맞아서 체력이 줄었을 때만 머리 위에 표시 (카메라를 향함)

@@ -106,47 +106,27 @@ function template() {
   const head = bone('head', 'body', [0, 0.2, 0.15]);
   const tail = bone('tail', 'body', [0, 0.2, -0.22]);
 
-  // ---------- 몸통: 웅크린 자세, 뒤가 큰 둥근 몸 ----------
+  // ---------- 몸통: 웅크린 자세, 뒤가 큰 둥근 몸 (뾰족한 털 없이 둥글고 폭신하게) ----------
   body
-    .add(blob([0, 0.16, -0.01], [0.105, 0.098, 0.175], 1), COL.fur, 0.003)         // 몸통
-    .add(blob([0, 0.155, 0.1], [0.088, 0.09, 0.1], 1), COL.furLight, 0.003)        // 가슴 (밝은 털)
-    .add(blob([0, 0.17, -0.12], [0.112, 0.11, 0.105], 1), COL.fur, 0.003)          // 엉덩이
-    .add(blob([0, 0.1, 0.0], [0.09, 0.05, 0.15], 0), COL.furLight, 0.002)          // 배
-    // 가슴 털 뭉치 (뾰족뾰족)
-    .add(spike([0, 0.14, 0.17], [0, -0.7, 1], 0.06, 0.028), COL.furLight, 0.001)
-    .add(spike([-0.04, 0.12, 0.165], [-0.4, -1, 0.7], 0.055, 0.024), COL.furLight, 0.001)
-    .add(spike([0.04, 0.12, 0.165], [0.4, -1, 0.7], 0.055, 0.024), COL.furLight, 0.001)
-    // 등 털 (뒤로 누운 뾰족 털)
-    .add(spike([0, 0.255, 0.08], [0, 0.6, -1], 0.07, 0.028), COL.furDark, 0.001)
-    .add(spike([0, 0.268, -0.02], [0, 0.6, -1], 0.07, 0.03), COL.furDark, 0.001)
-    .add(spike([0, 0.275, -0.12], [0, 0.5, -1], 0.065, 0.028), COL.furDark, 0.001);
-  for (const sx of [-1, 1]) {
-    body
-      .add(spike([sx * 0.095, 0.2, 0.0], [sx * 1, 0.1, -0.7], 0.06, 0.024), COL.furDark, 0.001)   // 옆구리 털
-      .add(spike([sx * 0.1, 0.16, -0.08], [sx * 1, 0, -0.8], 0.06, 0.024), COL.furDark, 0.001);
-  }
+    .add(blob([0, 0.16, -0.01], [0.105, 0.098, 0.175], 2), COL.fur, 0.002)          // 몸통
+    .add(blob([0, 0.155, 0.1], [0.09, 0.092, 0.1], 2), COL.furLight, 0.002)         // 가슴 (밝은 털)
+    .add(blob([0, 0.17, -0.12], [0.114, 0.112, 0.107], 2), COL.fur, 0.002)          // 엉덩이
+    .add(blob([0, 0.1, 0.0], [0.09, 0.05, 0.15], 1), COL.furLight, 0.002);          // 배
 
   // ---------- 머리 ----------
   head
-    .add(blob([0, 0.25, 0.22], [0.077, 0.07, 0.085], 1), COL.fur, 0.003)            // 머리통
-    .add(blob([0, 0.232, 0.288], [0.04, 0.036, 0.042], 0), COL.furLight, 0.002)     // 주둥이
+    .add(blob([0, 0.25, 0.22], [0.077, 0.07, 0.085], 2), COL.fur, 0.002)            // 머리통
+    .add(blob([0, 0.232, 0.288], [0.04, 0.036, 0.042], 1), COL.furLight, 0.002)     // 주둥이
     .add(blob([0, 0.243, 0.328], [0.013, 0.011, 0.01], 0), COL.nose, 0)             // 코
     .add(box([-0.008, 0.211, 0.316], [0.011, 0.02, 0.006]), COL.tooth, 0)           // 앞니
     .add(box([0.008, 0.211, 0.316], [0.011, 0.02, 0.006]), COL.tooth, 0)
-    .add(blob([0, 0.208, 0.29], [0.03, 0.016, 0.03], 0), COL.furShade, 0.001)       // 턱 그늘
-    // 이마 털 (뾰족하게 솟음)
-    .add(spike([0, 0.315, 0.2], [0, 1, -0.2], 0.05, 0.022), COL.furLight, 0.001)
-    .add(spike([-0.03, 0.305, 0.21], [-0.4, 1, -0.2], 0.04, 0.02), COL.furLight, 0.001)
-    .add(spike([0.03, 0.305, 0.21], [0.4, 1, -0.2], 0.04, 0.02), COL.furLight, 0.001);
+    .add(blob([0, 0.208, 0.29], [0.03, 0.016, 0.03], 0), COL.furShade, 0.001);      // 턱 그늘
   for (const sx of [-1, 1]) {
     head
-      .add(blob([sx * 0.052, 0.262, 0.272], [0.021, 0.026, 0.016], 0), COL.eye, 0)                    // 까만 눈
+      .add(blob([sx * 0.052, 0.262, 0.272], [0.021, 0.026, 0.016], 1), COL.eye, 0)                    // 까만 눈
       .add(blob([sx * 0.056, 0.27, 0.283], [0.006, 0.007, 0.004], 0), COL.glint, 0)                   // 눈 반짝임
       .add(box([sx * 0.052, 0.292, 0.268], [0.05, 0.011, 0.02], [0, 0, sx * 0.38]), COL.furShade, 0.001)   // 화난 눈썹
-      // 볼 털 (뒤쪽 바깥으로 뾰족)
-      .add(spike([sx * 0.068, 0.236, 0.2], [sx * 1, -0.1, -0.55], 0.065, 0.026), COL.furLight, 0.001)
-      .add(spike([sx * 0.062, 0.222, 0.215], [sx * 0.9, -0.5, -0.4], 0.055, 0.022), COL.furLight, 0.001)
-      .add(spike([sx * 0.045, 0.211, 0.245], [sx * 0.8, -0.6, 0.1], 0.04, 0.018), COL.furLight, 0.001);
+      .add(blob([sx * 0.06, 0.232, 0.225], [0.032, 0.03, 0.04], 1), COL.furLight, 0.002);            // 둥근 볼 털
   }
 
   // ---------- 귀 (길고 뾰족. 뿌리에서 회전) ----------
@@ -166,9 +146,7 @@ function template() {
     const fore = bone('fore' + nm, 'body', S);
     fore
       .add(limb(S, P, 0.03, 0.022, 6), COL.fur, 0.002)
-      .add(blob([P[0], 0.017, P[2] + 0.018], [0.03, 0.018, 0.04], 0), COL.furLight, 0.001)    // 발
-      .add(spike([P[0] - 0.012, 0.014, P[2] + 0.05], [0, -0.2, 1], 0.02, 0.006), COL.claw, 0)  // 발톱
-      .add(spike([P[0] + 0.012, 0.014, P[2] + 0.05], [0, -0.2, 1], 0.02, 0.006), COL.claw, 0);
+      .add(blob([P[0], 0.017, P[2] + 0.018], [0.03, 0.018, 0.04], 1), COL.furLight, 0.001);   // 발
   }
 
   // ---------- 뒷다리 (크고 튼튼한 허벅지 + 긴 발) ----------
@@ -177,22 +155,18 @@ function template() {
     const HIP = [sx * 0.1, 0.17, -0.1], ANK = [sx * 0.1, 0.05, -0.15];
     const hind = bone('hind' + nm, 'body', HIP);
     hind
-      .add(blob([sx * 0.108, 0.165, -0.1], [0.068, 0.088, 0.105], 1), COL.fur, 0.003)         // 허벅지
-      .add(blob([sx * 0.112, 0.19, -0.12], [0.05, 0.05, 0.06], 0), COL.furLight, 0.002);      // 허벅지 위 밝은 털
+      .add(blob([sx * 0.108, 0.165, -0.1], [0.068, 0.088, 0.105], 2), COL.fur, 0.002)         // 허벅지
+      .add(blob([sx * 0.112, 0.19, -0.12], [0.05, 0.05, 0.06], 1), COL.furLight, 0.002);      // 허벅지 위 밝은 털
     const foot = bone('foot' + nm, 'hind' + nm, ANK);
     foot
       .add(limb([sx * 0.104, 0.12, -0.1], ANK, 0.04, 0.026, 6), COL.fur, 0.002)               // 종아리
-      .add(blob([sx * 0.1, 0.028, -0.07], [0.032, 0.026, 0.115], 0), COL.furLight, 0.002)     // 긴 발바닥
-      .add(spike([sx * 0.1, 0.026, 0.04], [0, -0.1, 1], 0.025, 0.012), COL.claw, 0);          // 발톱
+      .add(blob([sx * 0.1, 0.028, -0.07], [0.032, 0.026, 0.115], 1), COL.furLight, 0.002);    // 긴 발바닥
   }
 
-  // ---------- 꼬리 (폭신폭신한 뭉치) ----------
+  // ---------- 꼬리 (폭신폭신한 둥근 뭉치) ----------
   tail
-    .add(blob([0, 0.225, -0.255], [0.058, 0.06, 0.06], 1), COL.furLight, 0.003)
-    .add(spike([0, 0.27, -0.26], [0, 1, -0.4], 0.05, 0.026), COL.furLight, 0.001)
-    .add(spike([0, 0.235, -0.3], [0, 0.3, -1], 0.05, 0.026), COL.furLight, 0.001)
-    .add(spike([-0.04, 0.25, -0.27], [-1, 0.5, -0.4], 0.045, 0.024), COL.furLight, 0.001)
-    .add(spike([0.04, 0.25, -0.27], [1, 0.5, -0.4], 0.045, 0.024), COL.furLight, 0.001);
+    .add(blob([0, 0.225, -0.255], [0.058, 0.06, 0.06], 2), COL.furLight, 0.002)
+    .add(blob([0, 0.245, -0.27], [0.04, 0.04, 0.04], 1), COL.furLight, 0.002);
 
   defs.forEach((d) => d.bake());
   // 멀리 있는 토끼용: 모든 부위를 기본 자세로 합친 메시 1개
@@ -371,6 +345,25 @@ export function animateRabbit(g, dt, speed) {
   }
 }
 
+// 죽는 모션: 옆으로 털썩 쓰러져 누움 (다리는 쭉 뻗고 귀는 축 늘어짐). f = 쓰러진 정도 (0 = 서 있음, 1 = 완전히 누움)
+function deathPose(g, f, side) {
+  const r = g.userData.rig, b = r.b;
+  r.jt = -1; r.ht = -1; r.nextJump = Infinity;
+  b.body.position.set(0, r.bodyY0, 0);
+  b.body.rotation.x = 0;
+  b.body.scale.set(1, 1, 1);
+  b.foreL.rotation.x = -0.6 * f; b.foreR.rotation.x = -0.45 * f;
+  b.hindL.rotation.x = 0.5 * f; b.hindR.rotation.x = 0.35 * f;
+  b.footL.rotation.x = 0.4 * f; b.footR.rotation.x = 0.3 * f;
+  b.earL.rotation.x = -1.1 * f; b.earR.rotation.x = -0.9 * f;
+  b.earL.rotation.z = -0.4 * f; b.earR.rotation.z = 0.4 * f;
+  b.head.rotation.x = 0.15 * f;
+  b.head.rotation.y = 0.3 * side * f;
+  b.tail.rotation.x = 0.2 * f;
+}
+// 0 → 1 로 점점 빨라지며 쓰러지고, 땅에 닿을 때 살짝 튕김
+const fallCurve = (k) => k >= 1 ? 1 : k < 0.8 ? (k / 0.8) ** 2 : 1 - 0.06 * Math.sin(Math.PI * (k - 0.8) / 0.2);
+
 // ================= 서버가 보낸 토끼를 화면에 그리기 =================
 const angDiff = (a, b) => { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; };
 
@@ -402,16 +395,22 @@ export function createRabbitWorld({ scene, camera, T, WATER_LEVEL }) {
       if (!e) {
         const obj = buildRabbit();
         obj.scale.setScalar(RABBIT.SCALE);
+        obj.rotation.order = 'YXZ';   // 방향(y)을 돌린 뒤 쓰러지는 기울기(z)를 적용
         const bar = makeBar();
         scene.add(obj, bar);
-        e = { obj, bar, x, z, ry, tx: x, tz: z, tr: ry, hp, atkN, mode, sp: 0, far: false };
+        e = { obj, bar, x, z, ry, tx: x, tz: z, tr: ry, hp, atkN, mode, sp: 0, far: false, dying: false, dd: 0, side: 1 };
         map.set(id, e);
       }
       const rig = e.obj.userData.rig;
       e.tx = x; e.tz = z; e.tr = ry;
-      if (hp < e.hp) { rig.flash = 0.18; rig.ht = 0; }                       // 맞음 → 붉게 + 움찔
+      if (mode === 3) {   // 죽음: 쓰러지는 모션 시작 (누워 있는 동안 서버가 계속 보내줌)
+        if (!e.dying) { e.dying = true; e.dd = 0; e.side = Math.random() < 0.5 ? -1 : 1; rig.sw = -1; rig.jt = -1; }
+      } else if (e.dying) {   // 다시 살아남(리스폰): 자세 되돌리기
+        e.dying = false; e.obj.rotation.z = 0; rig.nextJump = rig.t + 3;
+      }
+      if (hp < e.hp) { rig.flash = 0.18; if (mode !== 3) rig.ht = 0; }                       // 맞음 → 붉게 + 움찔
       if (atkN !== e.atkN) { rig.sw = 0; e.atkN = atkN; }                    // 공격 모션 시작
-      if (e.mode === 0 && mode !== 0 && rig.jt < 0 && rig.sw < 0) rig.jt = 0;   // 맞고 나서 덮쳐오기 시작할 때 폴짝
+      if (e.mode === 0 && (mode === 1 || mode === 2) && rig.jt < 0 && rig.sw < 0) rig.jt = 0;   // 맞고 나서 덮쳐오기 시작할 때 폴짝
       e.mode = mode;
       e.hp = hp;
     }
@@ -439,6 +438,16 @@ export function createRabbitWorld({ scene, camera, T, WATER_LEVEL }) {
       const cx = e.x - camera.position.x, cz = e.z - camera.position.z, d2 = cx * cx + cz * cz;
       const farNow = e.far ? d2 > LOD_NEAR * LOD_NEAR : d2 > LOD_FAR * LOD_FAR;
       if (farNow !== e.far) { e.far = farNow; setRabbitFar(e.obj, farNow); }
+      if (e.dying) {
+        // 쓰러지는 중 / 누워 있는 중: 옆으로 털썩 눕고, 몸이 땅에 닿게 위로 조금 올림
+        e.dd += dt;
+        const f = fallCurve(e.dd / RABBIT.DEATH_FALL);
+        if (!e.far) { animateRabbit(e.obj, dt, 0); deathPose(e.obj, f, e.side); }
+        e.obj.rotation.z = e.side * (Math.PI / 2) * 0.97 * f;
+        e.obj.position.y = y + 0.1 * RABBIT.SCALE * f;
+        e.bar.visible = false;
+        continue;
+      }
       if (!e.far) animateRabbit(e.obj, dt, e.sp);
 
       // 체력바: 맞아서 체력이 줄었을 때만 머리 위에 표시 (카메라를 향함)
