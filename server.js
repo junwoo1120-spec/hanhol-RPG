@@ -56,6 +56,30 @@ let rabSim = null;
   }
 })();
 
+// ---------- 지하 동굴 + 골렘 ----------
+// 평원 중반부에 동굴 입구가 있고, 동굴 안(아주 깊은 땅 밑)에 골렘 20마리가 살아요.
+// 지도·충돌은 public/js/cave-layout.mjs, 골렘 두뇌는 public/js/golem-ai.mjs. 입구 위치는 서버가 정해서 접속한 브라우저에 알려줘요.
+let golSim = null;
+let caveEnt = null;     // 동굴 입구 { x, z }
+let UNDER_Y = -100;     // 이보다 낮으면 지하 (땅 위 몬스터는 지하 플레이어를 못 봄)
+(async () => {
+  try {
+    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
+    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
+    const L = await import(pathToFileURL(path.join(__dirname, 'public/js/cave-layout.mjs')).href);
+    const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/golem-ai.mjs')).href);
+    const ent = L.findEntrance(terr.makeTerrain(SEED), SEED, terr.WATER_LEVEL, terr.VILLAGE);
+    if (!ent) throw new Error('동굴 입구로 쓸 평평한 평원을 못 찾음');
+    golSim = ai.createGolemSim({ layout: L.makeCaveLayout(ent, SEED), seed: SEED });
+    UNDER_Y = L.CAVE.UNDER_Y;
+    caveEnt = ent;
+    io.emit('cave', caveEnt);   // 이미 접속해 있는 사람에게도 알림
+    console.log('동굴 입구 (' + ent.x + ', ' + ent.z + '), 골렘 ' + golSim.golems.length + '마리 배치 완료');
+  } catch (e) {
+    console.error('동굴/골렘 시스템 로드 실패 (동굴 없이 계속 진행):', e);
+  }
+})();
+
 const PLAYER_HP_MAX = 100;
 const HP_REGEN_SEC = 2;      // 자연 회복: 이 시간(초)마다
 const HP_REGEN_AMOUNT = 1;   // 이만큼 회복
@@ -79,10 +103,14 @@ function hurtPlayer(pid, dmg) {
   p.hp = Math.max(0, p.hp - dmg);
   if (p.hp <= 0) {
     p.hp = p.hpMax;
+    const underground = p.y < UNDER_Y;   // 동굴 안에서 쓰러지면 땅 위 시작 마을로 올려 보냄
     Object.assign(p, { x: 0, z: 0, t: Date.now() });
+    if (underground) p.y = 10;
     if (sim) sim.dropTarget(pid);
     if (rabSim) rabSim.dropTarget(pid);
-    io.to(pid).emit('correct', { x: 0, y: p.y, z: 0 });
+    if (golSim) golSim.dropTarget(pid);
+    if (underground) io.to(pid).emit('surface', { x: 0, y: 10, z: 0 });
+    else io.to(pid).emit('correct', { x: 0, y: p.y, z: 0 });
     io.to(pid).emit('notice', '쓰러져서 시작 마을에서 다시 시작해요');
   }
   io.to(pid).emit('hp', { hp: p.hp, max: p.hpMax });
@@ -92,6 +120,7 @@ function hurtPlayer(pid, dmg) {
 function resolveAttack(attacker, now) {
   if (sim) sim.playerAttack(attacker, now);
   if (rabSim) rabSim.playerAttack(attacker, now);
+  if (golSim) golSim.playerAttack(attacker, now);
 }
 
 io.on('connection', (socket) => {
@@ -112,6 +141,7 @@ io.on('connection', (socket) => {
     });
     socket.emit('init', { id: socket.id, seed: SEED });
     socket.emit('hp', { hp: PLAYER_HP_MAX, max: PLAYER_HP_MAX });
+    if (caveEnt) socket.emit('cave', caveEnt);   // 동굴 입구 위치 (아직 계산 전이면 계산이 끝났을 때 전체에게 보냄)
   });
 
   socket.on('move', (m) => {
@@ -174,7 +204,7 @@ io.on('connection', (socket) => {
   socket.on('skill', (d) => {
     const p = players.get(socket.id);
     if (!p || !p.eq || !SKILLS || !d || d.id !== 'sweep') return;
-    if (!sim && !rabSim) return;
+    if (!sim && !rabSim && !golSim) return;
     const now = Date.now();
     p.skillCd = p.skillCd || {};
     if (now < (p.skillCd.sweep || 0) - 300) return;   // 쿨타임 중 (네트워크 지연 0.3초는 봐줌)
@@ -182,6 +212,7 @@ io.on('connection', (socket) => {
     socket.broadcast.emit('skillfx', { id: socket.id, skill: 'sweep' });
     if (sim) sim.playerSkill(p, 'sweep', now);
     if (rabSim) rabSim.playerSkill(p, 'sweep', now);
+    if (golSim) golSim.playerSkill(p, 'sweep', now);
   });
 
   // 대쉬 (Q): 이동 자체는 클라이언트가 하고(5m), 서버는 쿨타임(1초)만 확인해서 다른 플레이어에게 이펙트를 알려줌
@@ -218,7 +249,7 @@ setInterval(() => {
         kill: (pid) => io.to(pid).emit('kill', { msg: '고블린을 처치했습니다!' })
       });
       for (const p of players.values()) {
-        if (p.spawned) io.to(p.id).emit('gob', sim.snapshot(p.x, p.z));
+        if (p.spawned && p.y >= UNDER_Y) io.to(p.id).emit('gob', sim.snapshot(p.x, p.z));
       }
     } catch (e) {
       console.error('고블린 업데이트 오류:', e);
@@ -231,10 +262,23 @@ setInterval(() => {
         kill: (pid) => io.to(pid).emit('kill', { msg: '토끼를 처치했습니다!' })
       });
       for (const p of players.values()) {
-        if (p.spawned) io.to(p.id).emit('rab', rabSim.snapshot(p.x, p.z));
+        if (p.spawned && p.y >= UNDER_Y) io.to(p.id).emit('rab', rabSim.snapshot(p.x, p.z));
       }
     } catch (e) {
       console.error('토끼 업데이트 오류:', e);
+    }
+  }
+  if (golSim) {
+    try {
+      golSim.update(dt, now, players, {
+        hurt: hurtPlayer,
+        kill: (pid) => io.to(pid).emit('kill', { msg: '골렘을 처치했습니다!' })
+      });
+      for (const p of players.values()) {
+        if (p.spawned && p.y < UNDER_Y) io.to(p.id).emit('gol', golSim.snapshot(p.x, p.z));   // 동굴 안에 있는 사람에게만
+      }
+    } catch (e) {
+      console.error('골렘 업데이트 오류:', e);
     }
   }
 }, 50);
