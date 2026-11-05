@@ -41,6 +41,21 @@ let SKILLS = null;   // goblin-ai.mjs 의 스킬 설정 (쿨타임 등)
   }
 })();
 
+// ---------- 토끼 (평원 초반부 몬스터, 선공 없음) ----------
+// 고블린과 같은 방식이에요. 계산 코드는 public/js/rabbit-ai.mjs. 로드에 실패해도 고블린·게임은 그대로 돌아가요.
+let rabSim = null;
+(async () => {
+  try {
+    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
+    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
+    const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/rabbit-ai.mjs')).href);
+    rabSim = ai.createRabbitSim({ T: terr.makeTerrain(SEED), seed: SEED, WATER_LEVEL: terr.WATER_LEVEL, VILLAGE: terr.VILLAGE, PLAY_RADIUS: terr.PLAY_RADIUS });
+    console.log('토끼 ' + rabSim.rabbits.length + '마리 배치 완료');
+  } catch (e) {
+    console.error('토끼 시스템 로드 실패 (토끼 없이 계속 진행):', e);
+  }
+})();
+
 const PLAYER_HP_MAX = 100;
 const HP_REGEN_SEC = 2;      // 자연 회복: 이 시간(초)마다
 const HP_REGEN_AMOUNT = 1;   // 이만큼 회복
@@ -66,6 +81,7 @@ function hurtPlayer(pid, dmg) {
     p.hp = p.hpMax;
     Object.assign(p, { x: 0, z: 0, t: Date.now() });
     if (sim) sim.dropTarget(pid);
+    if (rabSim) rabSim.dropTarget(pid);
     io.to(pid).emit('correct', { x: 0, y: p.y, z: 0 });
     io.to(pid).emit('notice', '쓰러져서 시작 마을에서 다시 시작해요');
   }
@@ -73,7 +89,10 @@ function hurtPlayer(pid, dmg) {
 }
 
 // 평타 판정: 장착·쿨다운 검사를 통과한 공격만 여기로 와요. 실제 피해는 sim 이 위치·방향·사거리를 서버 기준으로 검사해서 확정
-function resolveAttack(attacker, now) { if (sim) sim.playerAttack(attacker, now); }
+function resolveAttack(attacker, now) {
+  if (sim) sim.playerAttack(attacker, now);
+  if (rabSim) rabSim.playerAttack(attacker, now);
+}
 
 io.on('connection', (socket) => {
   socket.on('join', ({ nick } = {}) => {
@@ -154,13 +173,15 @@ io.on('connection', (socket) => {
   // 스킬 사용 (E = 휩쓸기). 검을 든 상태에서만, 쿨타임은 서버가 다시 검사. 피해는 서버가 범위 안의 고블린 전부에게 확정
   socket.on('skill', (d) => {
     const p = players.get(socket.id);
-    if (!p || !p.eq || !sim || !SKILLS || !d || d.id !== 'sweep') return;
+    if (!p || !p.eq || !SKILLS || !d || d.id !== 'sweep') return;
+    if (!sim && !rabSim) return;
     const now = Date.now();
     p.skillCd = p.skillCd || {};
     if (now < (p.skillCd.sweep || 0) - 300) return;   // 쿨타임 중 (네트워크 지연 0.3초는 봐줌)
     p.skillCd.sweep = now + SKILLS.sweep.COOLDOWN * 1000;
     socket.broadcast.emit('skillfx', { id: socket.id, skill: 'sweep' });
-    sim.playerSkill(p, 'sweep', now);
+    if (sim) sim.playerSkill(p, 'sweep', now);
+    if (rabSim) rabSim.playerSkill(p, 'sweep', now);
   });
 
   // 대쉬 (Q): 이동 자체는 클라이언트가 하고(5m), 서버는 쿨타임(1초)만 확인해서 다른 플레이어에게 이펙트를 알려줌
@@ -183,24 +204,38 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => players.delete(socket.id));
 });
 
-// 20Hz 고블린 시뮬레이션 + 주변 고블린 목록 전송
+// 20Hz 고블린·토끼 시뮬레이션 + 주변 몬스터 목록 전송
 let lastTick = Date.now();
 setInterval(() => {
   const now = Date.now();
   const dt = (now - lastTick) / 1000;
   lastTick = now;
   regenPlayers(dt);
-  if (!sim) return;
-  try {
-    sim.update(dt, now, players, {
-      hurt: hurtPlayer,
-      kill: (pid) => io.to(pid).emit('kill', { name: '고블린' })
-    });
-    for (const p of players.values()) {
-      if (p.spawned) io.to(p.id).emit('gob', sim.snapshot(p.x, p.z));
+  if (sim) {
+    try {
+      sim.update(dt, now, players, {
+        hurt: hurtPlayer,
+        kill: (pid) => io.to(pid).emit('kill', { msg: '고블린을 처치했습니다!' })
+      });
+      for (const p of players.values()) {
+        if (p.spawned) io.to(p.id).emit('gob', sim.snapshot(p.x, p.z));
+      }
+    } catch (e) {
+      console.error('고블린 업데이트 오류:', e);
     }
-  } catch (e) {
-    console.error('고블린 업데이트 오류:', e);
+  }
+  if (rabSim) {
+    try {
+      rabSim.update(dt, now, players, {
+        hurt: hurtPlayer,
+        kill: (pid) => io.to(pid).emit('kill', { msg: '토끼를 처치했습니다!' })
+      });
+      for (const p of players.values()) {
+        if (p.spawned) io.to(p.id).emit('rab', rabSim.snapshot(p.x, p.z));
+      }
+    } catch (e) {
+      console.error('토끼 업데이트 오류:', e);
+    }
   }
 }, 50);
 
