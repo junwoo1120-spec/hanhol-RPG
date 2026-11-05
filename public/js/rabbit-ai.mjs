@@ -142,7 +142,7 @@ export function createRabbitSim({ T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS }) 
       if (nowMs < s.at) continue;
       swings.splice(i, 1);
       const pl = players.get(s.pid);
-      if (!pl || !pl.spawned || pl.hp <= 0) continue;
+      if (!pl || !pl.spawned || pl.hp <= 0 || pl.y < -100) continue;
       const fx = Math.sin(pl.ry), fz = Math.cos(pl.ry), cosArc = Math.cos((s.arc / 2) * Math.PI / 180);
       for (const g of rabbits) {
         if (g.dead) continue;
@@ -175,7 +175,7 @@ export function createRabbitSim({ T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS }) 
         continue;
       }
       const pl = players.get(g.target);
-      if (!pl || !pl.spawned || pl.hp <= 0) { returnHome(g); continue; }
+      if (!pl || !pl.spawned || pl.hp <= 0 || pl.y < -100) { returnHome(g); continue; }
       if (Math.hypot(g.x - g.hx, g.z - g.hz) > RABBIT.RETURN_DIST) { returnHome(g); continue; }   // 너무 멀리 끌려옴 → 복귀
       const dx = pl.x - g.x, dz = pl.z - g.z, d = Math.hypot(dx, dz);
       if (d > RABBIT.GIVEUP_DIST) { returnHome(g); continue; }                                   // 플레이어가 멀리 도망 → 포기

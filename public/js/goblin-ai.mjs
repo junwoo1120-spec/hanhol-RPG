@@ -165,7 +165,7 @@ export function createGoblinSim({ T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS }) 
       if (nowMs < s.at) continue;
       swings.splice(i, 1);
       const pl = players.get(s.pid);
-      if (!pl || !pl.spawned || pl.hp <= 0) continue;
+      if (!pl || !pl.spawned || pl.hp <= 0 || pl.y < -100) continue;
       const fx = Math.sin(pl.ry), fz = Math.cos(pl.ry), cosArc = Math.cos((s.arc / 2) * Math.PI / 180);
       for (const g of goblins) {
         if (g.dead) continue;
@@ -194,7 +194,7 @@ export function createGoblinSim({ T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS }) 
         g.x = p.x; g.z = p.z; g.ry = p.heading;
         let best = null, bd = A2;
         for (const pl of players.values()) {
-          if (!pl.spawned || pl.hp <= 0) continue;
+          if (!pl.spawned || pl.hp <= 0 || pl.y < -100) continue;
           const d2 = (pl.x - g.x) ** 2 + (pl.z - g.z) ** 2;
           if (d2 <= bd) { bd = d2; best = pl; }
         }
@@ -202,7 +202,7 @@ export function createGoblinSim({ T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS }) 
         continue;
       }
       const pl = players.get(g.target);
-      if (!pl || !pl.spawned || pl.hp <= 0) { returnHome(g); continue; }
+      if (!pl || !pl.spawned || pl.hp <= 0 || pl.y < -100) { returnHome(g); continue; }
       if (Math.hypot(g.x - g.hx, g.z - g.hz) > GOBLIN.RETURN_DIST) { returnHome(g); continue; }   // 너무 멀리 끌려옴 → 복귀 + 어그로 해제
       const dx = pl.x - g.x, dz = pl.z - g.z, d = Math.hypot(dx, dz);
       if (d > 0.01) g.ry = Math.atan2(dx, dz);
