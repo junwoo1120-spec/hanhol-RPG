@@ -2454,6 +2454,21 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (goblins) goblins.onSnapshot(lastGob);
   });
 
+  // ---------- 토끼 (평원 초반부, 먼저 건드리기 전엔 공격하지 않음) ----------
+  // rabbit.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
+  let rabbits = null;
+  let lastRab = [];
+  import('./rabbit.mjs')
+    .then((m) => {
+      rabbits = m.createRabbitWorld({ scene, camera, T, WATER_LEVEL });
+      rabbits.onSnapshot(lastRab);
+    })
+    .catch((err) => console.error('토끼 로드 실패:', err));
+  socket.on('rab', (list) => {
+    lastRab = Array.isArray(list) ? list : [];
+    if (rabbits) rabbits.onSnapshot(lastRab);
+  });
+
   // 내 체력 (서버가 정함)
   const hurtEl = document.createElement('div');
   hurtEl.style.cssText = 'position:fixed;inset:0;z-index:8;pointer-events:none;opacity:0;background:radial-gradient(ellipse at center,rgba(200,0,0,0) 45%,rgba(200,10,10,.55) 100%)';
@@ -2473,7 +2488,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (txt) txt.textContent = fmt(Math.ceil(d.hp)) + ' / ' + fmt(d.max);
     if (d.hp < before) flashHurt();
   });
-  socket.on('kill', () => toast('고블린을 처치했습니다!'));
+  socket.on('kill', (d) => toast(d && typeof d.msg === 'string' ? d.msg : '고블린을 처치했습니다!'));
   socket.on('notice', (t) => { if (typeof t === 'string') toast(t); });
 
   let sendTimer = 0;
@@ -2740,6 +2755,9 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (skillFx) { try { skillFx.update(dt); } catch (err) { console.error('스킬 이펙트 오류 (이펙트만 끕니다):', err); skillFx = null; } }
     if (goblins) {
       try { goblins.update(dt); } catch (err) { console.error('고블린 오류 (고블린만 끕니다):', err); goblins = null; }
+    }
+    if (rabbits) {
+      try { rabbits.update(dt); } catch (err) { console.error('토끼 오류 (토끼만 끕니다):', err); rabbits = null; }
     }
 
     // 서버로 이동 정보 전송
