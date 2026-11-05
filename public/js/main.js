@@ -1212,6 +1212,28 @@ function boot(socket, { id, seed }, nick, mode) {
   // 장식 건물: 문 열기 → (안쪽은 검음) → 집 들어가기 = 땅 밑 멀리 있는 방으로 이동. 방 안 출구: 밖으로 나가기.
   // 여관 정문: 문 열기/닫기 (그냥 걸어 들어감). 여관 2층 복도의 방문: 장식 건물과 같은 방식.
   let curRoom = -1;          // 지금 들어가 있는 방 (-1 = 땅 위)
+  let cave = null;           // 동굴 (서버가 입구 위치를 알려주면 만들어짐). cave.layout = 지도, cave.entrance = 땅 위 입구
+  let curCave = false;       // 지금 동굴 안(지하)에 있는지
+  const caveBg = new THREE.Color(0x03050a), caveFog = new THREE.Fog(0x03050a, 30, 170), caveAmb = [0.1, 0.12, 0.2];   // 동굴 안에서 그릴 때 쓰는 배경·안개·주변광
+  const fadeEl = document.createElement('div');   // 동굴 출입할 때 잠깐 어두워지는 막
+  fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:15;transition:opacity .25s';
+  document.body.appendChild(fadeEl);
+  function fadeBlink() { fadeEl.style.opacity = '1'; setTimeout(() => { fadeEl.style.opacity = '0'; }, 280); }
+  function enterCave() {
+    if (!cave) return;
+    const e = cave.layout.entry;
+    curCave = true;
+    openedDoor = -1;
+    fadeBlink();
+    teleportTo(e.x, e.y, e.z, e.yaw);
+  }
+  function leaveCave() {
+    if (!cave) return;
+    const o = cave.entrance.out;
+    curCave = false;
+    fadeBlink();
+    teleportTo(o.x, o.y, o.z, o.yaw);
+  }
   let openedDoor = -1;       // 내가 열어 둔 문 (멀어지면 자동으로 닫음)
   const doorHint = document.createElement('div');
   doorHint.style.cssText = 'position:fixed;left:0;top:0;transform:translate(-50%,-50%);padding:7px 16px;border-radius:12px;' +
@@ -1247,6 +1269,17 @@ function boot(socket, { id, seed }, nick, mode) {
   }
   // 지금 할 수 있는 동작 (없으면 null). 안내 문구가 뜰 위치(x,y,z)도 같이 돌려줌
   function currentAction() {
+    if (cave) {
+      if (curCave) {   // 동굴 안: 출구 빛기둥 앞에서만 "나가기"
+        const ex = cave.layout.exit;
+        if (Math.hypot(me.x - ex.x, me.z - ex.z) < ex.reach) return { text: '동굴 나가기', x: ex.x, y: ex.y + 3.0, z: ex.z, run: leaveCave };
+        return null;
+      }
+      const en = cave.entrance;   // 땅 위: 입구 구멍 가까이에서 "들어가기"
+      if (curRoom < 0 && Math.hypot(me.x - en.x, me.z - en.z) < en.reach && Math.abs(me.y - en.y) < 4) {
+        return { text: '동굴 들어가기', x: en.x, y: en.y + 1.5, z: en.z, run: enterCave };
+      }
+    }
     if (curRoom >= 0) {
       const ex = roomExit(curRoom);
       if (Math.hypot(me.x - ex.x, me.z - ex.z) < ex.reach) return { text: ex.text, x: ex.x, y: ex.y + 3.0, z: ex.z, run: leaveRoom };
@@ -2469,6 +2502,32 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (rabbits) rabbits.onSnapshot(lastRab);
   });
 
+  // ---------- 지하 동굴 + 골렘 ----------
+  // 서버가 동굴 입구 위치를 알려주면 입구(땅 위)와 동굴(땅 밑)을 만들어요. 못 불러와도 게임 자체는 그대로 돌아가요.
+  let golems = null;
+  let lastGol = [];
+  let caveLoading = false;
+  socket.on('cave', (ent) => {
+    if (cave || caveLoading || !ent || !Number.isFinite(ent.x) || !Number.isFinite(ent.z)) return;
+    caveLoading = true;
+    Promise.all([import('./cave.js'), import('./golem.mjs')])
+      .then(([cm, gm]) => {
+        cave = cm.createCave({ scene, T, ent, seed, WATER_LEVEL });
+        golems = gm.createGolemWorld({ scene, camera, layout: cave.layout });
+        golems.onSnapshot(lastGol);
+      })
+      .catch((err) => { console.error('동굴 로드 실패:', err); caveLoading = false; });
+  });
+  socket.on('gol', (list) => {
+    lastGol = Array.isArray(list) ? list : [];
+    if (golems && curCave) golems.onSnapshot(lastGol);
+  });
+  // 동굴 안에서 쓰러지면 서버가 땅 위 시작 마을로 보내줘요
+  socket.on('surface', (p) => {
+    curCave = false;
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.z)) { me.x = p.x; me.z = p.z; me.y = Number.isFinite(p.y) ? p.y : me.y; vy = 0; grounded = false; }
+  });
+
   // 내 체력 (서버가 정함)
   const hurtEl = document.createElement('div');
   hurtEl.style.cssText = 'position:fixed;inset:0;z-index:8;pointer-events:none;opacity:0;background:radial-gradient(ellipse at center,rgba(200,0,0,0) 45%,rgba(200,10,10,.55) 100%)';
@@ -2552,6 +2611,9 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
         if (curRoom >= 0) {
           const rc = collideRoom(curRoom, nx, nz, CRd);
           nx = rc.x; nz = rc.z;
+        } else if (curCave && cave) {
+          const cc2 = cave.layout.collide(nx, nz, CRd);   // 동굴: 벽·기둥
+          nx = cc2.x; nz = cc2.z;
         } else if (!fast) {
           const cc = nature.collide(nx, nz, CRd);
           const bc = collideBuildings(cc.x, cc.z, CRd, me.y);
@@ -2589,6 +2651,9 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       if (curRoom >= 0) {
         const rc = collideRoom(curRoom, px, pz, CR);
         px = rc.x; pz = rc.z;
+      } else if (curCave && cave) {
+        const cc2 = cave.layout.collide(px, pz, CR);   // 동굴: 벽·기둥
+        px = cc2.x; pz = cc2.z;
       } else if (!fast) {
         const cc = nature.collide(px, pz, CR);
         const bc = collideBuildings(cc.x, cc.z, CR, me.y);
@@ -2617,6 +2682,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     // 서 있는 바닥: 방 안 = 방 바닥, 여관 안 = 1층/계단/2층, 그 밖 = 땅
     let ground;
     if (curRoom >= 0) ground = roomFloorY(curRoom);
+    else if (curCave && cave) ground = cave.layout.floorAt(me.x, me.z);
     else {
       const fl = innFloor(me.x, me.z, me.y);
       ground = fl !== null ? fl : Math.max(T.height(me.x, me.z), WATER_LEVEL - 0.8);
@@ -2679,10 +2745,10 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     );
 
     const ty = me.y + 1.5 * CHAR_SCALE;
-    if (curRoom >= 0 || inHouse >= 0) {
+    if (curRoom >= 0 || inHouse >= 0 || (curCave && cave)) {
       // 방 안/여관 안: 시선 방향(위/아래)은 입력 그대로 두고, 벽/천장/바닥에 닿으면
       // 같은 방향 선상에서 캐릭터 쪽으로만 거리를 줄임 (방향이 바뀌지 않아 위아래가 뒤집히지 않음)
-      const fit = (x, y, z) => curRoom >= 0 ? clampCameraRoom(curRoom, x, y, z) : clampCameraInRoom(inHouse, x, y, z, me.y);
+      const fit = (x, y, z) => (curCave && cave) ? cave.layout.clampCamera(x, y, z) : curRoom >= 0 ? clampCameraRoom(curRoom, x, y, z) : clampCameraInRoom(inHouse, x, y, z, me.y);
       const ry0 = ty + Math.sin(me.pitch) * dist;   // 지형 보정 없는 원래 카메라 높이
       const ok = (m) => {
         const x = tx + (cx - tx) * m, y = ty + (ry0 - ty) * m, z = tz + (cz - tz) * m;
@@ -2759,6 +2825,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (rabbits) {
       try { rabbits.update(dt); } catch (err) { console.error('토끼 오류 (토끼만 끕니다):', err); rabbits = null; }
     }
+    if (cave) { try { cave.update(dt, curCave); } catch (err) { console.error('동굴 오류 (동굴만 끕니다):', err); cave = null; curCave = false; } }
+    if (golems) { try { golems.update(dt, curCave); } catch (err) { console.error('골렘 오류 (골렘만 끕니다):', err); golems = null; } }
 
     // 서버로 이동 정보 전송
     sendTimer += dt;
@@ -2776,7 +2844,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 
     // 자연 오브젝트: 배치 계산은 프레임 예산 안에서, 빠른 이동(×30 이상)에는 새 배치를 미룸
     if (curRoom >= 0) updatePortalCamera();        // 방 안에서는 유령 위치 기준으로 자연 오브젝트를 불러옴
-    nature.update(curRoom >= 0 ? vcam : camera, { fast: fast && fastMult >= 30 });
+    if (!curCave) nature.update(curRoom >= 0 ? vcam : camera, { fast: fast && fastMult >= 30 });   // 동굴 안에선 땅 위 자연물이 필요 없음
     const ns = nature.stats();
     const ri = renderer.info.render;   // 직전 프레임 값 (render 전에 읽음)
 
@@ -2798,6 +2866,30 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
         o.visible = false; hidden.push(o);
       }
       renderer.render(scene, camera);
+      for (const o of hidden) o.visible = true;
+    } else if (curCave && cave) {
+      // 동굴 안: 땅·하늘·자연·마을은 잠깐 숨기고(깊은 땅 밑이라 어차피 안 보임) 동굴만 어둡게 그림
+      const keep = new Set([myAvatar]);
+      for (const r of remotes.values()) keep.add(r.g);
+      const hidden = [];
+      for (const o of scene.children) {
+        if (o.isLight || o.userData.keepInRoom || o.userData.keepInCave || keep.has(o) || !o.visible) continue;
+        o.visible = false; hidden.push(o);
+      }
+      const bg0 = scene.background, fog0 = scene.fog;
+      scene.background = caveBg; scene.fog = caveFog;
+      const hemi = scene.children.find((o) => o.isHemisphereLight);
+      const h0 = hemi ? { c: hemi.color.getHex(), g: hemi.groundColor.getHex(), i: hemi.intensity } : null, s0 = sun.intensity;
+      if (hemi) {   // 캐릭터·골렘에 입히는 주변광: 가까운 수정 색으로 은은하게 물듦
+        cave.ambientAt(me.x, me.y, me.z, caveAmb);
+        hemi.color.setRGB(caveAmb[0], caveAmb[1], caveAmb[2]); hemi.groundColor.setRGB(caveAmb[0] * 0.4, caveAmb[1] * 0.4, caveAmb[2] * 0.5);
+        hemi.intensity = 1.0;
+      }
+      sun.intensity = 0.08;
+      renderer.render(scene, camera);
+      scene.background = bg0; scene.fog = fog0;
+      if (hemi) { hemi.color.setHex(h0.c); hemi.groundColor.setHex(h0.g); hemi.intensity = h0.i; }
+      sun.intensity = s0;
       for (const o of hidden) o.visible = true;
     } else renderer.render(scene, camera);
   }
