@@ -13,6 +13,11 @@
  * 날씨/바람 (구름이 여기에 따라 변해요. 값을 바꾸면 몇 초에 걸쳐 부드럽게 바뀌어요):
  *   Sky.setWeather({ cloudCover: 0~1(구름 양), storm: 0~1(먹구름/폭풍 정도), windDir: 도(구름이 가는 방향, 북0 동90 남180 서270), windSpeed: 0~(바람 세기, 보통 1) })
  *   또는 Sky.weather.cloudCover = 0.8 처럼 직접 바꿔도 돼요.
+ * 날씨 효과(Weather FX): 폭풍(storm)이 0.5 를 넘으면 햇빛(직사광)이 거의 0 으로 줄고 환경광이 어두운 쿨톤이 돼요.
+ *   번개(lightning 0~1): 폭풍일 때 주기적으로 화면 전체가 아주 짧게 번쩍여요. 번쩍이는 시각은 모든 접속자가 같아요. Sky.onLightning(함수) 로 천둥소리 등을 연결할 수 있어요.
+ *   바람(windSpeed)이 세면 물결/풀/나무 흔들림 같은 시간 애니메이션이 빨라져요 (windAffectsWorld). 외부 스크립트는 Sky.getWeather(), Sky.getWind() 로 값을 읽을 수 있어요.
+ * 서버 공유: 날씨 설정판(닉네임 박준우, 19)과 시간 배속(박준우)으로 바꾼 값은 게임 서버를 거쳐 "모든 접속자"에게 적용돼요.
+ *   (서버에 sky-server.cjs 가 설치돼 있어야 해요. 없으면 설정은 내 화면에만 적용돼요.)
  * 별똥별: 밤에 맑을 때 초당 확률 shootingStarChance(기본 0.01 = 100초에 한 번꼴). Sky.setShootingStarChance(0.05), Sky.shootStar() 로 바로 한 번 쏠 수도 있어요.
  *
  * 테스트용 주소 옵션:  ?skyspeed=60 (60배속)   ?skytime=0 (0=해뜸, 300=정오, 600=해짐, 900=한밤)
@@ -31,7 +36,11 @@ const OPT = Object.assign({
   starCount: 3600,
   sunRadius: 0.038,   // 해 알맹이 크기(라디안). 실제보다 일부러 크게
   moonRadius: 0.06,
-  adminNicks: ['박준우'],   // 이 닉네임으로 접속하면 화면 위쪽에 시간 배속 버튼이 나와요 (자기 화면만 바뀜)
+  weatherAdmins: ['박준우', '19'],  // 이 닉네임이면 날씨 설정판이 나와요
+  timeAdmins: ['박준우'],           // 이 닉네임이면 시간 배속/이동 버튼이 나와요
+  shareWithServer: true,            // 게임 서버와 날씨/시간을 공유 (서버에 sky-server.cjs 필요). 끄면 내 화면만.
+  windAffectsWorld: true,           // 바람이 세면 물결/풀/나무 흔들림이 빨라져요
+  flashStrength: 0.55,              // 번개가 번쩍이는 세기 (0~1). 눈부심이 부담되면 낮추세요
   epoch: '2026-10-28T12:00:00+09:00',  // 기준 시각 (한국시간). 이 순간의 하루 진행도가 epochTime
   epochTime: 0,       // 기준 시각의 하루 진행(초): 0 = 해 뜸, 300 = 정오(남중), 600 = 해 짐, 900 = 한밤
   syncClock: true,    // true 면 서버 시계에 맞춰요 (false 면 기기 시계)
@@ -44,24 +53,26 @@ const OPT = Object.assign({
 const qnum = (k) => { const m = new RegExp('[?&]' + k + '=(-?[\\d.]+)').exec(Q); return m ? parseFloat(m[1]) : null; };
 { const m = qnum('skymeteor'); if (m !== null) OPT.shootingStarChance = m; }
 // 날씨 값: 게임이 바꾸는 목표값(WX_T)과 화면에 보이는 현재값(WX). 현재값이 목표값으로 천천히 따라가요.
-const WX_T = Object.assign({ cloudCover: 0.35, storm: 0, windDir: 90, windSpeed: 1 }, OPT.weather);
-{ const a = qnum('skycloud'), b = qnum('skystorm'), c = qnum('skywind'), d = qnum('skywinddir');
-  if (a !== null) WX_T.cloudCover = a; if (b !== null) WX_T.storm = b; if (c !== null) WX_T.windSpeed = c; if (d !== null) WX_T.windDir = d; }
-const WX = { cloudCover: WX_T.cloudCover, storm: WX_T.storm, wx: 0, wz: 0, ox: 0, oz: 0 };
+const WX_T = Object.assign({ cloudCover: 0.35, storm: 0, lightning: 0, windDir: 90, windSpeed: 1 }, OPT.weather);
+{ const a = qnum('skycloud'), b = qnum('skystorm'), c = qnum('skywind'), d = qnum('skywinddir'), e = qnum('skylightning');
+  if (a !== null) WX_T.cloudCover = a; if (b !== null) WX_T.storm = b; if (c !== null) WX_T.windSpeed = c; if (d !== null) WX_T.windDir = d; if (e !== null) WX_T.lightning = e; }
+const WX = { cloudCover: WX_T.cloudCover, storm: WX_T.storm, lightning: WX_T.lightning, wx: 0, wz: 0, ox: 0, oz: 0 };
 { const a = WX_T.windDir * Math.PI / 180; WX.wx = Math.sin(a) * WX_T.windSpeed; WX.wz = -Math.cos(a) * WX_T.windSpeed; }
 let offset = 0;   // 테스트용 시간 이동(초)
 const CLOUD_SPEED = 0.02;   // 바람 1일 때 구름 무늬가 흐르는 속도 (하늘에서 초당 약 0.6도)
 
 // ---- 시계: 서버 시계에 맞추기 ----
 const EPOCH = Date.parse(OPT.epoch) / 1000;
-let clockOffsetMs = 0, clockSynced = false;
+let clockOffsetMs = 0, clockSynced = false, socketClock = false;
 const nowSec = () => (Date.now() + clockOffsetMs) / 1000;             // 모든 접속자가 같은 값을 갖는 "서버 기준 지금"
-const phaseNow = () => (nowSec() - EPOCH) * OPT.speed + OPT.epochTime;  // 기준 시각부터 흐른 하루 진행(초)
+// 하루 진행(초) = anchor.phase + (지금 - anchor.sec) * anchor.speed.  서버가 시간을 바꾸면(배속/이동) anchor 가 바뀌고, 모든 접속자가 같은 anchor 를 받아요.
+const ANCHOR = { sec: EPOCH, phase: OPT.epochTime, speed: OPT.speed };
+const phaseNow = () => ANCHOR.phase + (nowSec() - ANCHOR.sec) * ANCHOR.speed;
 let skyTimeParam = null;
 { const m = /[?&]skytime=([\d.]+)/.exec(Q); if (m) { skyTimeParam = parseFloat(m[1]); offset = skyTimeParam - phaseNow(); } }
 
 // ---------------- 화면에 직접 띄우는 진단 (태블릿/폰에서 콘솔 없이 에러 확인) ----------------
-const SKY_VERSION = 'sky.js v6 (구름 속도·패널 인식 개선)';
+const SKY_VERSION = 'sky.js v7 (날씨 효과·서버 공유 날씨/시간)';
 const DEBUG = /[?&]skydebug=1/.test(Q);
 function say(text, bad) {
   try {
@@ -93,6 +104,7 @@ function initClouds() {   // 구름 무늬 위치도 "서버 기준 시각"에�
   WX.ox = -WX.wx * CLOUD_SPEED * T; WX.oz = -WX.wz * CLOUD_SPEED * T;
 }
 async function syncClock() {
+  if (socketClock) return;   // 게임 서버와 직접 맞춘 시계가 더 정확해서 그걸 우선
   if (!OPT.syncClock || typeof fetch === 'undefined' || typeof location === 'undefined' || !/^https?:/.test(location.protocol)) return;
   const offs = [];
   for (let i = 0; i < 4; i++) {
@@ -121,71 +133,263 @@ initClouds();
 syncClock();
 if (typeof setInterval !== 'undefined') setInterval(syncClock, 5 * 60 * 1000);
 
-// ---------------- 시간 배속 패널 (지정한 닉네임 전용, 화면 위쪽) ----------------
-// 게임 화면의 닉네임 표시(.rpg-status)를 보고, adminNicks 에 있는 닉네임이면 버튼을 보여줘요.
-// 이 배속은 "내 화면의 하늘"만 바꿔요 (다른 사람 화면에는 영향 없음).
+// ---------------- 게임 서버와 공유 (날씨 / 시간 배속 / 정확한 시계) ----------------
+// 게임이 만든 socket.io 연결을 그대로 빌려 써요 (새 연결을 만들지 않아요). 서버 쪽은 sky-server.cjs 가 맡아요.
+let skySocket = null, serverState = false, lastSent = null, adminNote = '', adminPw = '', pwUsed = '';
+try { adminPw = (typeof localStorage !== 'undefined' && localStorage.getItem('skyAdminPw')) || ''; } catch (e) { /* 저장소를 못 쓰면 메모리에만 */ }
+const stateListeners = [];
 const normNick = (s) => String(s || '').normalize('NFC').trim();
-function buildSpeedPanel() {
-  if (document.getElementById('sky-speed')) return;
-  if (!document.getElementById('sky-speed-css')) {
-    const st = document.createElement('style'); st.id = 'sky-speed-css';
+const nickIn = (list, nick) => !!nick && (list || []).some((n) => normNick(n) === normNick(nick));
+
+// 서버가 보내준 하늘 상태(날씨 + 시간 기준점)를 적용
+function applyServerState(msg, first) {
+  if (!msg) return;
+  const w = msg.weather;
+  if (w) {
+    for (const k of ['cloudCover', 'storm', 'lightning', 'windDir', 'windSpeed']) if (typeof w[k] === 'number' && isFinite(w[k])) WX_T[k] = w[k];
+    if (first) {   // 처음 받을 때는 천천히 변하지 않고 바로 그 날씨로 시작
+      WX.cloudCover = clamp(WX_T.cloudCover, 0, 1); WX.storm = clamp(WX_T.storm, 0, 1); WX.lightning = clamp(WX_T.lightning, 0, 1);
+      const a = rad(WX_T.windDir); WX.wx = Math.sin(a) * WX_T.windSpeed; WX.wz = -Math.cos(a) * WX_T.windSpeed;
+      initClouds();
+    }
+  }
+  const an = msg.anchor;
+  if (an && isFinite(an.sec) && isFinite(an.phase) && isFinite(an.speed)) {
+    ANCHOR.sec = an.sec; ANCHOR.phase = an.phase; ANCHOR.speed = an.speed;
+    skyTimeParam = null; offset = 0;
+  }
+  serverState = true;
+  for (const f of stateListeners) { try { f(msg); } catch (e) { /* 패널 갱신 실패는 무시 */ } }
+}
+
+// 서버와 직접 시계 맞추기: 여러 번 물어보고 가장 빨리 돌아온 응답으로 계산 (오차 수십 ms)
+let pingBest = null;
+function pingServer() {
+  pingBest = null;
+  for (let i = 0; i < 4; i++) setTimeout(() => { if (skySocket && skySocket.connected) skySocket.emit('sky:ping', { c: Date.now() }); }, i * 200);
+}
+function onPong(m) {
+  if (!m || typeof m.c !== 'number' || typeof m.s !== 'number') return;
+  const t1 = Date.now(), rtt = t1 - m.c;
+  if (rtt < 0 || rtt > 5000) return;
+  if (pingBest && rtt >= pingBest.rtt) return;
+  pingBest = { rtt };
+  const off = m.s - (m.c + t1) / 2;
+  const first = !socketClock;
+  clockOffsetMs = first ? off : clockOffsetMs + (off - clockOffsetMs) * 0.5;
+  socketClock = true; clockSynced = true;
+  if (skyTimeParam !== null) offset = skyTimeParam - phaseNow();
+  if (first) initClouds();
+  if (DEBUG && first) say('서버와 직접 시계 맞춤: 오차 약 ±' + Math.round(rtt / 2) + 'ms', false);
+}
+
+function onDenied(m) {
+  const why = m && m.reason;
+  if (why === 'pw') {
+    if (adminPw && pwUsed === adminPw) {   // 보낸 비밀번호가 틀렸음 -> 다시 묻지 않고 멈춤 (무한 반복 방지)
+      adminPw = ''; try { localStorage.removeItem('skyAdminPw'); } catch (e) { /* 무시 */ }
+      adminNote = '비밀번호가 맞지 않아요 (다시 시도하면 다시 물어봐요)';
+      if (DEBUG) say('서버가 비밀번호를 거절했어요', true);
+      return;
+    }
+    if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+      const p = window.prompt('날씨/시간 설정 비밀번호를 입력하세요');
+      if (p) { adminPw = p; try { localStorage.setItem('skyAdminPw', p); } catch (e) { /* 메모리에는 있음 */ } if (lastSent) sendSet(lastSent); return; }
+    }
+  }
+  adminNote = why === 'nick' ? '서버가 이 닉네임의 설정을 허용하지 않아요' : '비밀번호가 필요해요';
+  if (DEBUG) say('서버가 설정을 거절했어요: ' + why, true);
+}
+
+function attachSocket(s) {
+  if (!OPT.shareWithServer || !s || skySocket === s) return;
+  skySocket = s;
+  let first = true;
+  s.on('sky:state', (m) => { applyServerState(m, first); if (DEBUG) say('서버 하늘 상태 받음' + (first ? ' (처음)' : '') + ': 구름 ' + Math.round(((m && m.weather && m.weather.cloudCover) || 0) * 100) + '% 폭풍 ' + Math.round(((m && m.weather && m.weather.storm) || 0) * 100) + '% 배속 x' + (m && m.anchor ? m.anchor.speed : '?'), false); first = false; });
+  s.on('sky:pong', onPong);
+  s.on('sky:denied', onDenied);
+  const hello = () => { s.emit('sky:hello'); pingServer(); };
+  s.on('connect', hello);
+  if (s.connected) hello();
+  if (typeof setInterval !== 'undefined') setInterval(() => { if (s.connected) pingServer(); }, 60000);
+}
+function hookSocketIO() {
+  if (typeof window === 'undefined') return;
+  if (typeof window.io !== 'function') { if (DEBUG) say('socket.io 를 찾지 못해서 서버 공유는 꺼져요 (내 화면만)', true); return; }
+  if (window.io.__skyHooked) return;
+  const orig = window.io;
+  const wrapped = function (...args) {
+    const s = orig.apply(this, args);
+    try { attachSocket(s); } catch (e) { if (DEBUG) say('소켓 연결 오류: ' + (e && e.message), true); }
+    return s;
+  };
+  Object.assign(wrapped, orig);
+  wrapped.__skyHooked = true;
+  window.io = wrapped;
+  if (DEBUG) say('서버 공유 준비됨 (게임이 접속하면 날씨/시간을 받아요)', false);
+}
+hookSocketIO();
+
+// 서버에 설정을 요청. 서버에 하늘 모듈이 있을 때만 true (모든 접속자에게 적용). false 면 호출한 쪽이 내 화면에만 적용
+function sendSet(msg) {
+  lastSent = msg;
+  if (skySocket && skySocket.connected && serverState) {
+    pwUsed = adminPw;
+    skySocket.emit('sky:set', adminPw ? Object.assign({ pw: adminPw }, msg) : msg);
+    adminNote = '';
+    return true;
+  }
+  return false;
+}
+
+// ---------------- 관리자 패널: 날씨 설정판 + 시간 배속 (지정한 닉네임 전용, 화면 위쪽) ----------------
+// 게임 화면의 닉네임 표시(.rpg-status)를 보고 weatherAdmins / timeAdmins 에 있는 닉네임이면 보여줘요.
+// 서버도 같은 규칙으로 한 번 더 확인해요 (패널을 억지로 열어도 서버가 거절).
+const DIRS8 = ['북', '북동', '동', '남동', '남', '남서', '서', '북서'];
+const dirName = (d) => DIRS8[Math.round((((d % 360) + 360) % 360) / 45) % 8] + ' ' + Math.round(d) + '°';
+const PRESETS = [
+  ['맑음', { cloudCover: 0.05, storm: 0, lightning: 0, windSpeed: 0.6 }],
+  ['구름 조금', { cloudCover: 0.35, storm: 0, lightning: 0, windSpeed: 1 }],
+  ['흐림', { cloudCover: 0.8, storm: 0.15, lightning: 0, windSpeed: 1.5 }],
+  ['폭풍', { cloudCover: 0.95, storm: 0.75, lightning: 0, windSpeed: 3.5 }],
+  ['폭풍+번개', { cloudCover: 1, storm: 0.9, lightning: 0.7, windSpeed: 4.5 }]
+];
+const SLIDERS = [
+  ['구름 양', 'cloudCover', 0, 1, 0.01, (v) => Math.round(v * 100) + '%'],
+  ['폭풍', 'storm', 0, 1, 0.01, (v) => Math.round(v * 100) + '%'],
+  ['번개', 'lightning', 0, 1, 0.01, (v) => Math.round(v * 100) + '%'],
+  ['바람 세기', 'windSpeed', 0, 6, 0.1, (v) => v.toFixed(1)],
+  ['바람 방향', 'windDir', 0, 345, 15, dirName]
+];
+
+function removeAdminPanel() {
+  const el = document.getElementById('sky-admin');
+  if (el) { clearInterval(el._t); el.remove(); }
+}
+function buildAdminPanel(perm) {
+  removeAdminPanel();
+  if (!document.getElementById('sky-admin-css')) {
+    const st = document.createElement('style'); st.id = 'sky-admin-css';
     st.textContent =
-      '#sky-speed{position:fixed;left:50%;top:calc(8px + 54px * var(--ui,1) + 8px);transform:translateX(-50%);z-index:8;max-width:94vw;' +
-      'display:flex;flex-wrap:wrap;gap:5px;align-items:center;justify-content:center;padding:5px 8px;border-radius:12px;' +
-      'background:rgba(20,14,38,.82);border:1px solid rgba(217,178,92,.75);color:#f6e3a1;font:600 12px sans-serif;user-select:none;-webkit-user-select:none}' +
-      '#sky-speed .sk-l{min-width:150px;text-align:center}' +
-      '#sky-speed button{cursor:pointer;padding:4px 9px;border-radius:7px;border:1px solid #d9b25c;background:#3a2d5c;color:#f6e3a1;font:700 12px sans-serif}' +
-      '#sky-speed button.on{background:#d9b25c;color:#2a1a00}' +
-      '#sky-speed button:active{filter:brightness(1.4)}' +
-      'body.uw-open #sky-speed{display:none}';
+      '#sky-admin{position:fixed;left:50%;top:calc(8px + 54px * var(--ui,1) + 8px);transform:translateX(-50%);z-index:8;max-width:94vw;' +
+      'display:flex;flex-direction:column;gap:5px;align-items:center;padding:5px 8px;border-radius:12px;' +
+      'background:rgba(20,14,38,.84);border:1px solid rgba(217,178,92,.75);color:#f6e3a1;font:600 12px sans-serif;user-select:none;-webkit-user-select:none}' +
+      '#sky-admin .sk-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center;justify-content:center}' +
+      '#sky-admin .sk-l{min-width:170px;text-align:center}' +
+      '#sky-admin button{cursor:pointer;padding:4px 9px;border-radius:7px;border:1px solid #d9b25c;background:#3a2d5c;color:#f6e3a1;font:700 12px sans-serif}' +
+      '#sky-admin button.on{background:#d9b25c;color:#2a1a00}' +
+      '#sky-admin button:active{filter:brightness(1.4)}' +
+      '#sky-admin .sk-box{display:none;flex-direction:column;gap:6px;align-items:stretch;width:min(440px,88vw);max-height:46vh;overflow:auto;padding:4px 2px}' +
+      '#sky-admin .sk-box.open{display:flex}' +
+      '#sky-admin .sk-s{display:flex;align-items:center;gap:8px}' +
+      '#sky-admin .sk-s span:first-child{width:62px}' +
+      '#sky-admin .sk-s input{flex:1;min-width:90px}' +
+      '#sky-admin .sk-s .v{width:62px;text-align:right}' +
+      '#sky-admin .sk-n{font-weight:600;opacity:.9;text-align:center}' +
+      'body.uw-open #sky-admin{display:none}';
     document.head.appendChild(st);
   }
-  const el = document.createElement('div'); el.id = 'sky-speed';
-  const lab = document.createElement('span'); lab.className = 'sk-l'; el.appendChild(lab);
+  const el = document.createElement('div'); el.id = 'sky-admin'; el._perm = perm.key;
+  const mk = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text) x.textContent = text; return x; };
   const S = () => window.Sky;
-  const BTN = [
-    ['실시간', 'real', () => S().reset()],
-    ['⏸', 0, () => S().setSpeed(0)], ['×10', 10, () => S().setSpeed(10)], ['×60', 60, () => S().setSpeed(60)], ['×300', 300, () => S().setSpeed(300)],
-    ['해뜸', 't0', () => S().setTime(0)], ['정오', 't300', () => S().setTime(300)], ['해짐', 't600', () => S().setTime(600)], ['한밤', 't900', () => S().setTime(900)]
-  ];
-  const btns = BTN.map(([txt, key, fn]) => {
-    const b = document.createElement('button'); b.textContent = txt; b.tabIndex = -1;
-    const go = (e) => { e.preventDefault(); e.stopPropagation(); fn(); b.blur(); refresh(); };
-    b.addEventListener('pointerdown', (e) => e.stopPropagation());
-    b.addEventListener('click', go);
-    el.appendChild(b); return { b, key };
-  });
-  const two = (n) => String(Math.floor(n)).padStart(2, '0');
-  function refresh() {
-    const st = computeState(nowSec());
-    lab.textContent = (st.isDay ? '☀️ 낮 ' : '🌙 밤 ') + two(st.time / 60) + ':' + two(st.time % 60) + ' / 20:00  ·  ×' + OPT.speed;
-    const real = OPT.speed === 1 && offset === 0;
-    for (const { b, key } of btns) b.classList.toggle('on', key === 'real' ? real : (typeof key === 'number' && !real && OPT.speed === key));
+  let refreshTime = () => {}, syncSliders = () => {};
+  const noteEl = mk('div', 'sk-n');
+
+  // ----- 시간 (박준우) -----
+  if (perm.time) {
+    const row = mk('div', 'sk-row'), lab = mk('span', 'sk-l');
+    row.appendChild(lab);
+    const timeSet = (kind, v) => {
+      const msg = { time: kind === 'speed' ? { mode: 'speed', speed: v } : kind === 'jump' ? { mode: 'jump', phase: v } : { mode: 'real' } };
+      if (!sendSet(msg)) { if (kind === 'speed') S().setSpeed(v); else if (kind === 'jump') S().setTime(v); else S().reset(); }
+      refreshTime();
+    };
+    const BTN = [['실시간', 'real', () => timeSet('real')], ['⏸', 0, () => timeSet('speed', 0)], ['×10', 10, () => timeSet('speed', 10)], ['×60', 60, () => timeSet('speed', 60)], ['×300', 300, () => timeSet('speed', 300)],
+      ['해뜸', 't0', () => timeSet('jump', 0)], ['정오', 't300', () => timeSet('jump', 300)], ['해짐', 't600', () => timeSet('jump', 600)], ['한밤', 't900', () => timeSet('jump', 900)]];
+    const btns = BTN.map(([txt, key, fn]) => {
+      const b = mk('button', '', txt); b.tabIndex = -1;
+      b.addEventListener('pointerdown', (e) => e.stopPropagation());
+      b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(); b.blur(); });
+      row.appendChild(b); return { b, key };
+    });
+    const two = (n) => String(Math.floor(n)).padStart(2, '0');
+    refreshTime = () => {
+      const st = computeState(nowSec());
+      lab.textContent = (st.isDay ? '☀️ 낮 ' : '🌙 밤 ') + two(st.time / 60) + ':' + two(st.time % 60) + ' / 20:00  ·  ×' + ANCHOR.speed;
+      const real = ANCHOR.sec === EPOCH && ANCHOR.speed === 1 && ANCHOR.phase === OPT.epochTime && offset === 0;
+      for (const { b, key } of btns) b.classList.toggle('on', key === 'real' ? real : (typeof key === 'number' && !real && ANCHOR.speed === key));
+    };
+    el.appendChild(row);
   }
+
+  // ----- 날씨 (박준우, 19) -----
+  if (perm.weather) {
+    const tog = mk('button', '', '☁ 날씨 설정 ▾'); tog.tabIndex = -1;
+    const box = mk('div', 'sk-box');
+    tog.addEventListener('pointerdown', (e) => e.stopPropagation());
+    tog.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); const o = box.classList.toggle('open'); tog.textContent = o ? '☁ 날씨 설정 ▴' : '☁ 날씨 설정 ▾'; tog.blur(); });
+    const prow = mk('div', 'sk-row');
+    const sl = {};
+    let pend = null, pendT = 0, lastTouch = 0;
+    const queue = (part) => {
+      pend = Object.assign(pend || {}, part); clearTimeout(pendT);
+      pendT = setTimeout(() => { const w = pend; pend = null; if (!sendSet({ weather: w })) S().setWeather(w); }, 150);
+    };
+    for (const [name, vals] of PRESETS) {
+      const b = mk('button', '', name); b.tabIndex = -1;
+      b.addEventListener('pointerdown', (e) => e.stopPropagation());
+      b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); queue(vals); for (const k in vals) if (sl[k]) { sl[k].input.value = vals[k]; sl[k].v.textContent = sl[k].fmt(vals[k]); } lastTouch = Date.now(); b.blur(); });
+      prow.appendChild(b);
+    }
+    box.appendChild(prow);
+    for (const [name, key, min, max, step, fmt] of SLIDERS) {
+      const r = mk('div', 'sk-s'), input = document.createElement('input'), v = mk('span', 'v');
+      input.type = 'range'; input.min = min; input.max = max; input.step = step; input.tabIndex = -1;
+      input.value = WX_T[key]; v.textContent = fmt(WX_T[key]);
+      input.addEventListener('pointerdown', (e) => { e.stopPropagation(); lastTouch = Date.now(); });
+      input.addEventListener('input', () => { const n = parseFloat(input.value); v.textContent = fmt(n); lastTouch = Date.now(); queue({ [key]: n }); });
+      input.addEventListener('change', () => input.blur());
+      r.append(mk('span', '', name), input, v); box.appendChild(r);
+      sl[key] = { input, v, fmt };
+    }
+    syncSliders = () => {   // 다른 관리자가 바꾼 값도 반영 (내가 만지는 중이면 건드리지 않음)
+      if (Date.now() - lastTouch < 800) return;
+      for (const k in sl) { const x = WX_T[k]; if (typeof x === 'number') { sl[k].input.value = x; sl[k].v.textContent = sl[k].fmt(x); } }
+    };
+    const wrow = mk('div', 'sk-row'); wrow.appendChild(tog);
+    el.append(wrow, box);
+  }
+  el.appendChild(noteEl);
+
+  const refresh = () => {
+    refreshTime(); syncSliders();
+    noteEl.textContent = adminNote || (serverState ? '✔ 바꾸면 모든 접속자에게 적용돼요' : '⚠ 서버 공유 없음: 내 화면만 바뀌어요');
+  };
+  stateListeners.push(refresh);
   refresh(); el._t = setInterval(refresh, 250);
   document.body.appendChild(el);
 }
-function removeSpeedPanel() {
-  const el = document.getElementById('sky-speed');
-  if (el) { clearInterval(el._t); el.remove(); }
-}
+
 let lastNickSeen = null;
 if (typeof document !== 'undefined' && typeof setInterval !== 'undefined') {
   setInterval(() => {
     try {
-      if (!document.body || !OPT.adminNicks || !OPT.adminNicks.length) return;
+      if (!document.body) return;
       // 1) 게임 화면의 닉네임 표시(.rpg-status)  2) 없으면 로그인 창이 닫힌 뒤 입력칸(#nick)의 값
       const s = document.querySelector('.rpg-status');
       const login = document.getElementById('login'), inp = document.getElementById('nick');
       const loggedIn = !!login && login.style.display === 'none';
       const nick = s ? s.textContent : (loggedIn && inp ? inp.value : '');
-      const ok = !!nick && OPT.adminNicks.some((n) => normNick(n) === normNick(nick));
-      const has = !!document.getElementById('sky-speed');
-      if (DEBUG && nick !== lastNickSeen) { lastNickSeen = nick; if (nick) say('닉네임 인식: "' + normNick(nick) + '" -> ' + (ok ? '배속 패널 켬' : '배속 패널 없음 (대상 닉네임 아님)'), !ok); }
-      if (ok && !has) buildSpeedPanel(); else if (!ok && has) removeSpeedPanel();
+      const perm = { time: nickIn(OPT.timeAdmins, nick), weather: nickIn(OPT.weatherAdmins, nick) };
+      perm.key = (perm.time ? 't' : '') + (perm.weather ? 'w' : '');
+      if (DEBUG && nick !== lastNickSeen) { lastNickSeen = nick; if (nick) say('닉네임 인식: "' + normNick(nick) + '" -> 시간 설정 ' + (perm.time ? 'O' : 'X') + ', 날씨 설정 ' + (perm.weather ? 'O' : 'X'), !perm.key); }
+      const cur = document.getElementById('sky-admin');
+      if (!perm.key) { if (cur) removeAdminPanel(); }
+      else if (!cur || cur._perm !== perm.key) buildAdminPanel(perm);
     } catch (e) { if (DEBUG) say('패널 오류: ' + (e && e.message), true); }
   }, 500);
 }
+
 
 // ---------------- 셰이더 (GLSL 주석은 영어로) ----------------
 const DOME_VS = `
@@ -224,6 +428,7 @@ uniform vec3 uMetA[3];
 uniform vec3 uMetB[3];
 uniform vec3 uMetP;
 uniform float uMetVis;
+uniform float uFlash;
 varying vec3 vDir;
 
 float hash21(vec2 p) {
@@ -353,7 +558,10 @@ void main() {
     col = mix(col, clamp(cc, 0.0, 1.0), ca);
   }
 
-  gl_FragColor = vec4(col, 1.0);
+  // lightning flash: brief brightening of the whole sky (clouds included)
+  col += vec3(0.62, 0.68, 0.85) * uFlash * (0.55 + 0.45 * clamp(h * 3.0 + 0.5, 0.0, 1.0));
+
+  gl_FragColor = vec4(min(col, vec3(1.0)), 1.0);
 }`;
 
 const STAR_VS = `
@@ -442,7 +650,7 @@ function dirOf(p) {
 
 function computeState(nowSec) {   // nowSec = 서버 기준 지금(초)
   const L = OPT.dayLength, half = L / 2;
-  const t = ((((nowSec - EPOCH) * OPT.speed + OPT.epochTime + offset) % L) + L) % L;
+  const t = (((ANCHOR.phase + (nowSec - ANCHOR.sec) * ANCHOR.speed + offset) % L) + L) % L;
   const H = 2 * Math.PI * (t - L / 4) / L;          // t=0 해 뜸(동), L/4 정오(남), L/2 해 짐(서)
   const lat = rad(OPT.latitude);
   const sun = altaz(H, 0, lat), moon = altaz(H + Math.PI, 0, lat);
@@ -455,12 +663,39 @@ function computeState(nowSec) {   // nowSec = 서버 기준 지금(초)
   };
 }
 
+// ---- 번개: 서버 기준 시각으로 정해서 모든 접속자가 같은 순간에 번쩍여요 ----
+const LIGHT_SLOT = 7;   // 7초 구간마다 번개가 칠지 정해요
+function ihash(k, salt) {   // 브라우저/기기와 상관없이 같은 값이 나오는 정수 해시 (0~1)
+  let h = (k | 0) ^ Math.imul(salt | 0, 0x9E3779B1);
+  h = Math.imul(h ^ (h >>> 16), 0x85EBCA6B); h = Math.imul(h ^ (h >>> 13), 0xC2B2AE35); h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function lightningAt(sec) {   // 0~1 (번쩍이는 정도). 번개 세기(lightning)와 폭풍(storm)이 모두 있어야 쳐요
+  const amt = clamp(WX.lightning, 0, 1) * ss((WX.storm - 0.25) / 0.5);
+  if (amt < 0.02) return 0;
+  const T = sec - EPOCH, k0 = Math.floor(T / LIGHT_SLOT);
+  let best = 0;
+  for (let k = k0 - 1; k <= k0; k++) {
+    if (ihash(k, 1) > amt * 0.6) continue;                     // 이 구간에 번개가 칠지
+    const t0 = k * LIGHT_SLOT + ihash(k, 2) * (LIGHT_SLOT - 1.5);
+    const tau = T - t0;
+    if (tau < 0 || tau > 1.2) continue;
+    const s = 0.55 + 0.45 * ihash(k, 3);                       // 번개마다 세기가 조금씩 달라요
+    const f1 = Math.min(1, tau / 0.04) * Math.exp(-Math.max(0, tau - 0.04) / 0.08);   // 첫 번쩍임 (0.04초에 걸쳐 켜져서 갑작스럽지 않아요)
+    const f2 = tau > 0.2 ? 0.75 * Math.min(1, (tau - 0.2) / 0.04) * Math.exp(-Math.max(0, tau - 0.24) / 0.10) : 0;   // 곧이어 한 번 더
+    best = Math.max(best, s * Math.max(f1, f2));
+  }
+  return best;
+}
+const lightningCbs = [];
+
 // ---- 날씨: 목표값(WX_T)을 향해 현재값(WX)이 부드럽게 따라가요 ----
 function stepWeather(dt) {
   if (!(dt > 0)) return;
   const kc = 1 - Math.exp(-dt / 6), kw = 1 - Math.exp(-dt / 3);
   WX.cloudCover += (clamp(WX_T.cloudCover, 0, 1) - WX.cloudCover) * kc;
   WX.storm += (clamp(WX_T.storm, 0, 1) - WX.storm) * kc;
+  WX.lightning += (clamp(WX_T.lightning, 0, 1) - WX.lightning) * kc;
   const a = rad(WX_T.windDir), sp = Math.max(0, WX_T.windSpeed);
   WX.wx += (Math.sin(a) * sp - WX.wx) * kw;
   WX.wz += (-Math.cos(a) * sp - WX.wz) * kw;
@@ -524,6 +759,7 @@ function buildUniforms(st) {
   const wl = Math.hypot(WX.wx, WX.wz);
   const wd = wl > 0.01 ? [WX.wx / wl, WX.wz / wl] : [Math.sin(rad(WX_T.windDir)), -Math.cos(rad(WX_T.windDir))];
   const metP = MET.map((m) => (m.age >= 0 ? m.age * 1.8 : -1));
+  const flash = lightningAt(nowSec()) * OPT.flashStrength;
 
   return {
     dome: {
@@ -538,10 +774,10 @@ function buildUniforms(st) {
       uLightCol: useSun ? [1, lerp(0.97, 0.62, k), lerp(0.9, 0.42, k)] : [0.62, 0.72, 1.0],
       uLightAmt: Math.max(sunAmt, moonAmt) * (1 - 0.25 * storm),
       uMetA: [].concat(MET[0].A, MET[1].A, MET[2].A), uMetB: [].concat(MET[0].B, MET[1].B, MET[2].B),
-      uMetP: metP, uMetVis: starVis
+      uMetP: metP, uMetVis: starVis, uFlash: flash
     },
     star: { uH: st.hourAngle, uAlpha: starVis },
-    k, hor, sunDir, moonDir, lvl,
+    k, hor, sunDir, moonDir, lvl, flash,
     shade: clamp(1 - 0.45 * cover - 0.35 * storm, 0.25, 1)   // 날씨에 따른 땅 밝기 배율
   };
 }
@@ -591,7 +827,7 @@ function install(scene) {
     uMoonReady: moonReady, uMoonTex: { value: moonTex },
     uCover: { value: 0 }, uStorm: { value: 0 }, uWindOff: { value: new THREE.Vector2() }, uWindDir: { value: new THREE.Vector2(1, 0) },
     uCT: { value: 0 }, uLightDir: { value: new THREE.Vector3(0, 1, 0) }, uLightCol: { value: new THREE.Vector3(1, 1, 1) }, uLightAmt: { value: 1 },
-    uMetA: { value: [V3(), V3(), V3()] }, uMetB: { value: [V3(), V3(), V3()] }, uMetP: { value: new THREE.Vector3(-1, -1, -1) }, uMetVis: { value: 0 }
+    uMetA: { value: [V3(), V3(), V3()] }, uMetB: { value: [V3(), V3(), V3()] }, uMetP: { value: new THREE.Vector3(-1, -1, -1) }, uMetVis: { value: 0 }, uFlash: { value: 0 }
   };
   const dome = new THREE.Mesh(
     new THREE.SphereGeometry(10, 48, 24),
@@ -629,7 +865,28 @@ function install(scene) {
   const nightHemi = new THREE.Color(0x7f90c8), nightGround = new THREE.Color(0x1a2036);
   const warmSun = new THREE.Color(0xff9a55), moonCol = new THREE.Color(0x9fb4ff);
   const fwdV = new THREE.Vector3();
-  let lastMs = performance.now();
+  let lastMs = performance.now(), prevFlash = 0, lastBoltCb = -99;
+  const stormHemi = new THREE.Color(0x6b7b9b), stormGround = new THREE.Color(0x1d2433), flashCol = new THREE.Color(0xdbe6ff);
+
+  // 바람 -> 월드 애니메이션 연동: main.js 의 물/풀/나무/용암 애니메이션은 uTime 하나를 같이 써요.
+  // 그 uniform 을 컴파일 순간에 붙잡아 두고, 바람이 세면 그 시간이 조금 더 빨리 흐르게 해요.
+  let timeU = null;
+  const hooked = new WeakSet();
+  const hookMat = (m) => {
+    if (!m || hooked.has(m) || !Object.prototype.hasOwnProperty.call(m, 'onBeforeCompile') || typeof m.onBeforeCompile !== 'function') return;
+    hooked.add(m);
+    const orig = m.onBeforeCompile, key = orig.toString();
+    m.onBeforeCompile = function (shader, rend) {
+      const r = orig.call(this, shader, rend);
+      try { if (!timeU && shader && shader.uniforms && shader.uniforms.uTime && typeof shader.uniforms.uTime.value === 'number') timeU = shader.uniforms.uTime; } catch (e) { /* 무시 */ }
+      return r;
+    };
+    // Three.js 는 onBeforeCompile 의 "글자"로 셰이더 캐시를 구분해서, 감싸도 원래 글자를 쓰게 해 둬요 (안 그러면 다른 재질과 섞일 수 있어요)
+    if (!Object.prototype.hasOwnProperty.call(m, 'customProgramCacheKey')) m.customProgramCacheKey = () => key;
+  };
+  if (OPT.windAffectsWorld) {
+    try { scene.traverse((o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(hookMat); }); } catch (e) { /* 연동 실패해도 하늘은 정상 */ }
+  }
 
   function restoreDay() {
     if (OPT.lights && hemi) { hemi.intensity = day.hi; hemi.color.copy(day.hc); hemi.groundColor.copy(day.hg); }
@@ -667,32 +924,55 @@ function install(scene) {
       uni.uMetA.value[i].set(d.uMetA[i * 3], d.uMetA[i * 3 + 1], d.uMetA[i * 3 + 2]);
       uni.uMetB.value[i].set(d.uMetB[i * 3], d.uMetB[i * 3 + 1], d.uMetB[i * 3 + 2]);
     }
-    uni.uMetP.value.set(...d.uMetP); uni.uMetVis.value = d.uMetVis;
+    uni.uMetP.value.set(...d.uMetP); uni.uMetVis.value = d.uMetVis; uni.uFlash.value = d.uFlash;
     su.uH.value = U.star.uH; su.uAlpha.value = U.star.uAlpha;
     su.uTime.value = nowMs / 1000; su.uPx.value = renderer.getPixelRatio();
     stars.visible = U.star.uAlpha > 0.01;
 
-    // 먼 땅이 하늘 지평선 색으로 자연스럽게 사라지게
-    if (scene.fog) scene.fog.color.setRGB(U.hor[0], U.hor[1], U.hor[2], THREE.SRGBColorSpace);
-    if (scene.background && scene.background.isColor) scene.background.setRGB(U.hor[0], U.hor[1], U.hor[2], THREE.SRGBColorSpace);
+    // 번개: 번쩍이는 순간 알림 (천둥소리 등을 연결할 수 있어요)
+    if (main) {
+      // 번개 한 번(연달아 두 번 번쩍여도)에 알림은 한 번만
+      if (U.flash >= 0.25 && prevFlash < 0.25 && nowSec() - lastBoltCb > 1.5) {
+        lastBoltCb = nowSec();
+        for (const f of lightningCbs) { try { f({ strength: U.flash / Math.max(0.01, OPT.flashStrength) }); } catch (e) { /* 콜백 오류는 무시 */ } }
+      }
+      prevFlash = U.flash;
+      // 바람이 세면 물결/풀/나무 흔들림이 빨라져요 (바람 1 = 평소 속도)
+      if (timeU && OPT.windAffectsWorld) timeU.value += dt * (clamp(0.7 + 0.3 * Math.hypot(WX.wx, WX.wz), 0.6, 3) - 1);
+    }
+
+    // 먼 땅이 하늘 지평선 색으로 자연스럽게 사라지게 (번개가 칠 땐 같이 밝아져요)
+    const fr = U.hor.map((v) => clamp(v + U.flash * 0.5, 0, 1));
+    if (scene.fog) scene.fog.color.setRGB(fr[0], fr[1], fr[2], THREE.SRGBColorSpace);
+    if (scene.background && scene.background.isColor) scene.background.setRGB(fr[0], fr[1], fr[2], THREE.SRGBColorSpace);
 
     if (!OPT.lights) return;
     const dk = st.darkness;
+    const stormK = ss((WX.storm - 0.2) / 0.6);   // 0.2 이하 = 영향 없음, 0.8 이상 = 완전한 폭풍
+    const sunStorm = lerp(1, 0.04, stormK);       // 폭풍: 햇빛(직사광)이 거의 0 으로
     if (hemi) {
       hemi.intensity = lerp(day.hi * lerp(0.78, 1.05, ss(U.lvl)), 0.32, dk) * lerp(1, U.shade, 0.6);
       hemi.color.lerpColors(day.hc, nightHemi, dk);
       hemi.groundColor.lerpColors(day.hg, nightGround, dk);
+      // 폭풍: 환경광이 어두운 쿨톤으로
+      if (stormK > 0) {
+        hemi.intensity *= lerp(1, 0.62, stormK);
+        hemi.color.lerp(stormHemi, stormK * 0.8); hemi.groundColor.lerp(stormGround, stormK * 0.8);
+      }
+      // 번개: 번쩍이는 순간 차갑고 하얀 빛이 땅을 비춰요
+      if (U.flash > 0) { hemi.intensity += U.flash * 2.2; hemi.color.lerp(flashCol, Math.min(1, U.flash * 1.5)); }
     }
     if (sunL) {
       if (st.sun.sin > -0.05) {            // 해가 떠 있을 때: 해가 빛을 줌 (질 때는 주황빛, 흐리면 약하게)
-        sunL.intensity = day.si * ss((st.sun.sin + 0.03) / 0.2) * lerp(0.55, 1.08, ss(U.lvl)) * U.shade;
+        sunL.intensity = day.si * ss((st.sun.sin + 0.03) / 0.2) * lerp(0.55, 1.08, ss(U.lvl)) * U.shade * sunStorm;
         sunL.color.lerpColors(day.sc, warmSun, U.k);
         sunL.position.set(U.sunDir[0] * 100, U.sunDir[1] * 100, U.sunDir[2] * 100);
       } else {                             // 밤: 달빛
-        sunL.intensity = 0.32 * ss(st.moon.sin / 0.25) * U.shade;
+        sunL.intensity = 0.32 * ss(st.moon.sin / 0.25) * U.shade * sunStorm;
         sunL.color.copy(moonCol);
         sunL.position.set(U.moonDir[0] * 100, U.moonDir[1] * 100, U.moonDir[2] * 100);
       }
+      if (U.flash > 0) { sunL.intensity += U.flash * 0.9; sunL.color.lerp(flashCol, Math.min(1, U.flash * 1.5)); }
     }
   }
   return { scene, before };
@@ -736,22 +1016,28 @@ if (typeof window !== 'undefined') {
     getState: () => computeState(nowSec()),
     serverNow: () => nowSec() * 1000,                    // 서버 기준 지금(ms)
     syncToServerTime: (serverMs) => { clockOffsetMs = serverMs - Date.now(); clockSynced = true; },   // 서버가 직접 시간을 알려줄 때
-    setTime: (sec) => { skyTimeParam = null; offset = sec - phaseNow(); },   // 테스트용. 0=해뜸 300=정오 600=해짐 900=한밤
-    setSpeed: (v) => { skyTimeParam = null; const t = computeState(nowSec()).time; OPT.speed = v; offset = t - phaseNow(); },
-    reset: () => { skyTimeParam = null; OPT.speed = 1; offset = 0; },   // 실시간(서버 시각)으로 되돌리기
-    // 날씨/바람: 목표값을 바꾸면 현재 하늘이 몇 초에 걸쳐 부드럽게 따라가요. instant 로 즉시 바꿀 수도 있어요.
+    setTime: (sec) => { skyTimeParam = null; offset = sec - phaseNow(); },   // 내 화면만(테스트용). 0=해뜸 300=정오 600=해짐 900=한밤
+    setSpeed: (v) => { skyTimeParam = null; const ph = phaseNow(); ANCHOR.sec = nowSec(); ANCHOR.phase = ph; ANCHOR.speed = v; },   // 내 화면만
+    reset: () => { skyTimeParam = null; ANCHOR.sec = EPOCH; ANCHOR.phase = OPT.epochTime; ANCHOR.speed = 1; offset = 0; },   // 실시간으로 되돌리기(내 화면만)
+    // 날씨/바람: 목표값을 바꾸면 현재 하늘이 몇 초에 걸쳐 부드럽게 따라가요. (서버 공유가 필요하면 날씨 설정판을 쓰세요)
     weather: WX_T,
     setWeather: (w, opts) => {
       Object.assign(WX_T, w || {});
       if (opts && opts.instant) {
-        WX.cloudCover = clamp(WX_T.cloudCover, 0, 1); WX.storm = clamp(WX_T.storm, 0, 1);
+        WX.cloudCover = clamp(WX_T.cloudCover, 0, 1); WX.storm = clamp(WX_T.storm, 0, 1); WX.lightning = clamp(WX_T.lightning, 0, 1);
         const a = rad(WX_T.windDir); WX.wx = Math.sin(a) * WX_T.windSpeed; WX.wz = -Math.cos(a) * WX_T.windSpeed;
       }
     },
-    getWeather: () => ({ ...WX_T }),
+    // 지금 화면에 적용 중인 날씨(부드럽게 변하는 값). 풀/나무/물 같은 다른 스크립트가 읽어 쓰면 돼요.
+    getWeather: () => ({ cloudCover: WX.cloudCover, storm: WX.storm, lightning: WX.lightning, windSpeed: Math.hypot(WX.wx, WX.wz), windDir: (deg(Math.atan2(WX.wx, -WX.wz)) + 360) % 360 }),
+    getWeatherTarget: () => ({ ...WX_T }),
+    getWind: () => ({ x: WX.wx, z: WX.wz, speed: Math.hypot(WX.wx, WX.wz) }),   // x: 동쪽(+) , z: 남쪽(+) 으로 부는 세기
+    getLightning: () => lightningAt(nowSec()) * OPT.flashStrength,
+    onLightning: (fn) => { if (typeof fn === 'function') lightningCbs.push(fn); },   // 번쩍이는 순간마다 fn({strength}) 호출
+    isShared: () => serverState,                                                    // 서버와 날씨/시간을 공유 중인지
     setShootingStarChance: (v) => { OPT.shootingStarChance = v; },   // 초당 확률 (0.01 = 100초에 한 번)
     shootStar: () => { const f = [0, 0.5, -0.85]; spawnMeteor(f); }  // 테스트용: 지금 바로 한 번 (카메라 방향은 무시)
   };
 }
 
-export const __sky = { computeState, buildUniforms, stepWeather, stepMeteors, spawnMeteor, makeStarData, DOME_VS, DOME_FS, STAR_VS, STAR_FS, OPT, WX, WX_T, MET };
+export const __sky = { computeState, buildUniforms, stepWeather, stepMeteors, spawnMeteor, makeStarData, lightningAt, applyServerState, attachSocket, onPong, ANCHOR, nowSec, DOME_VS, DOME_FS, STAR_VS, STAR_FS, OPT, WX, WX_T, MET };
