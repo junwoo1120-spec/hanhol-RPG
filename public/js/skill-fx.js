@@ -236,6 +236,7 @@ export function createSkillFx(scene) {
     for (const p of [dust, debris, sparks]) { p.pts.renderOrder = 9; group.add(p.pts); }
     sparks.pts.renderOrder = 20;
 
+    group.userData.keepInCave = true;   // 동굴 안에서 그릴 때도 이펙트는 남겨 둠 (main.js)
     scene.add(group);
     active.push({ group, layers, sparks, sp, debris, db, dust, du, t: 0 });
   }
@@ -289,6 +290,7 @@ export function createSkillFx(scene) {
     dp.renderOrder = 9;
     group.add(dp);
 
+    group.userData.keepInCave = true;   // 동굴 안에서 그릴 때도 이펙트는 남겨 둠 (main.js)
     scene.add(group);
     dashes.push({ group, streaks, ring, ringMat, dg, dm, du, arr, t: 0 });
   }
