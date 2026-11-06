@@ -295,5 +295,15 @@ export function makeTerrain(seed) {
     return [grass, dirt, vari, village, jungle, desert, volc, lavaRock, pool, snowW, rockPatch, ice];
   }
 
-  return { height, color, detail };
+  // 지금 서 있는 곳의 지형 이름 (지형 알림용): 'village' | 'plain' | 'desert' | 'forest' | 'volcano' | 'snow' | 'sea'
+  const BIOME_IDS = ['plain', 'desert', 'forest', 'volcano', 'snow', 'sea'];
+  function biome(x, z) {
+    if (Math.hypot(x - VILLAGE.x, z - VILLAGE.z) < VILLAGE.r) return 'village';
+    const w = weights(x * K, z * K);
+    let best = 0;
+    for (let t = 1; t < 6; t++) if (w[t] > w[best]) best = t;
+    return BIOME_IDS[best];
+  }
+
+  return { height, color, detail, biome };
 }
