@@ -126,6 +126,10 @@ const FP = {};
 for (const b of Object.values(RULES)) for (const arr of Object.values(b)) for (const e of arr) FP[e.id] = e.fp;
 const FLAT = new Set(['ash_mound']);
 
+// 동굴 입구 둘레(구멍 + 돌 테두리)에는 나무·바위·풀을 놓지 않아요. 서버가 입구 위치를 알려주면 cave.js 가 호출해요.
+let NO_ZONE = null;
+export function setNoNatureZone(x, z, r) { NO_ZONE = { x, z, r2: r * r }; }
+
 export function createPlacer(T, seedIn) {
   const seed = (Number(seedIn) | 0) || 1;
 
@@ -223,6 +227,7 @@ export function createPlacer(T, seedIn) {
 
   function decide(layer, x, z, prio, rBiome, rSpec, rAcc, rVar, r) {
     if (nearBuilding(x, z, 4)) return null;                           // 마을 건물 자리(+여유 4칸)는 비움
+    if (NO_ZONE && (x - NO_ZONE.x) ** 2 + (z - NO_ZONE.z) ** 2 < NO_ZONE.r2) return null;   // 동굴 입구 둘레는 비움
     if (coneRatio(x, z) < CONE_CLEAR) return null;                   // 화산 옆면/분화구 안쪽은 비움
     const s = site(x, z);
     if (s.h > 300) return null;
