@@ -1214,7 +1214,8 @@ function boot(socket, { id, seed }, nick, mode) {
   let curRoom = -1;          // 지금 들어가 있는 방 (-1 = 땅 위)
   let cave = null;           // 동굴 (서버가 입구 위치를 알려주면 만들어짐). cave.layout = 지도, cave.entrance = 땅 위 입구
   let curCave = false;       // 지금 동굴 안(지하)에 있는지
-  const caveBg = new THREE.Color(0x03050a), caveFog = new THREE.Fog(0x03050a, 30, 170), caveAmb = [0.1, 0.12, 0.2];   // 동굴 안에서 그릴 때 쓰는 배경·안개·주변광
+  const caveBg = new THREE.Color(0x010204), caveFog = new THREE.Fog(0x010204, 18, 120), caveAmb = [0.03, 0.035, 0.06];   // 동굴 안에서 그릴 때 쓰는 배경·안개·주변광 (아주 어둡게, 빛은 수정에서만)
+  let diving = false;        // 동굴 구멍에 뛰어든 뒤 화면이 어두워지는 중인지
   const fadeEl = document.createElement('div');   // 동굴 출입할 때 잠깐 어두워지는 막
   fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:15;transition:opacity .25s';
   document.body.appendChild(fadeEl);
@@ -1274,10 +1275,6 @@ function boot(socket, { id, seed }, nick, mode) {
         const ex = cave.layout.exit;
         if (Math.hypot(me.x - ex.x, me.z - ex.z) < ex.reach) return { text: '동굴 나가기', x: ex.x, y: ex.y + 3.0, z: ex.z, run: leaveCave };
         return null;
-      }
-      const en = cave.entrance;   // 땅 위: 입구 구멍 가까이에서 "들어가기"
-      if (curRoom < 0 && Math.hypot(me.x - en.x, me.z - en.z) < en.reach && Math.abs(me.y - en.y) < 4) {
-        return { text: '동굴 들어가기', x: en.x, y: en.y + 1.5, z: en.z, run: enterCave };
       }
     }
     if (curRoom >= 0) {
@@ -2825,6 +2822,14 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (rabbits) {
       try { rabbits.update(dt); } catch (err) { console.error('토끼 오류 (토끼만 끕니다):', err); rabbits = null; }
     }
+    if (cave && !curCave && !diving && curRoom < 0) {   // 땅 위에서 동굴 구멍(검은 원) 안으로 들어서면 떨어져 동굴로
+      const en = cave.entrance;
+      if (Math.abs(me.y - en.y) < 8 && Math.hypot(me.x - en.x, me.z - en.z) < en.dive) {
+        diving = true;
+        fadeEl.style.opacity = '1';
+        setTimeout(() => { diving = false; if (!curCave) enterCave(); }, 240);
+      }
+    }
     if (cave) { try { cave.update(dt, curCave); } catch (err) { console.error('동굴 오류 (동굴만 끕니다):', err); cave = null; curCave = false; } }
     if (golems) { try { golems.update(dt, curCave); } catch (err) { console.error('골렘 오류 (골렘만 끕니다):', err); golems = null; } }
 
@@ -2885,7 +2890,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
         hemi.color.setRGB(caveAmb[0], caveAmb[1], caveAmb[2]); hemi.groundColor.setRGB(caveAmb[0] * 0.4, caveAmb[1] * 0.4, caveAmb[2] * 0.5);
         hemi.intensity = 1.0;
       }
-      sun.intensity = 0.08;
+      sun.intensity = 0.02;
       renderer.render(scene, camera);
       scene.background = bg0; scene.fog = fog0;
       if (hemi) { hemi.color.setHex(h0.c); hemi.groundColor.setHex(h0.g); hemi.intensity = h0.i; }
