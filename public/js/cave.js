@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeCaveLayout, buildCaveArrays, bakeLight } from './cave-layout.mjs';
+import { makeCaveLayout, buildCaveArrays, bakeLight, PIT_R } from './cave-layout.mjs';
+import { setNoNatureZone } from './nature-placement.js';
 
 // ============================================================
 // 동굴 (화면에 그리는 부분)
@@ -10,10 +11,10 @@ import { makeCaveLayout, buildCaveArrays, bakeLight } from './cave-layout.mjs';
 //  - 모양·충돌·수정 위치는 cave-layout.mjs (서버와 같은 파일)에서 와요.
 // ============================================================
 
-const DARK_BG = 0x03050a;
+const DARK_BG = 0x010204;
 
-export function createCave({ scene, T, ent, seed, WATER_LEVEL }) {
-  const layout = makeCaveLayout(ent, seed);
+export function createCave({ scene, T, ent, seed, WATER_LEVEL, id = 0 }) {
+  const layout = makeCaveLayout(ent, seed, id);
   const tmp = [0, 0, 0];
 
   // ---------- 동굴 안 ----------
@@ -135,40 +136,36 @@ export function createCave({ scene, T, ent, seed, WATER_LEVEL }) {
     cave.add(s); sprites.push(s);
   }
 
-  // 출구 빛기둥 (위에서 내려오는 바깥 빛): 여기서 "동굴 나가기"
-  const ex = layout.exit, exTop = layout.ceilAt(ex.x, ex.z) + 2;
-  const beamMat = new THREE.MeshBasicMaterial({ color: 0xfff0c8, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false });
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.4, exTop - ex.y, 16, 1, true), beamMat);
-  beam.position.set(ex.x, (exTop + ex.y) / 2, ex.z);
-  cave.add(beam);
-  const ringMat = new THREE.MeshBasicMaterial({ color: 0xfff0c8, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false });
+  // 출구 자리: 바닥의 푸른 빛 고리 + 둘레 작은 수정 3덩어리(cave-layout.mjs). 여기서 "동굴 나가기"
+  const ex = layout.exit;
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0x8fdcff, transparent: true, opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false });
   const ring = new THREE.Mesh(new THREE.RingGeometry(1.5, 2.6, 24).rotateX(-Math.PI / 2), ringMat);
   ring.position.set(ex.x, ex.y + 0.08, ex.z);
   cave.add(ring);
-  const exSpr = new THREE.Sprite(sprMat(0xfff0c8)); exSpr.scale.set(14, 14, 1); exSpr.position.set(ex.x, ex.y + 1.2, ex.z); cave.add(exSpr);
+  const exSpr = new THREE.Sprite(sprMat(0x8fdcff)); exSpr.scale.set(9, 9, 1); exSpr.position.set(ex.x, ex.y + 1.2, ex.z); cave.add(exSpr);
   scene.add(cave);
 
-  // ---------- 땅 위 입구: 구멍 + 돌 테두리 + 수정 + 빛기둥 ----------
+  // ---------- 땅 위 입구: 큰 검은 구멍 + 돌 테두리 + 수정 (빛기둥 없음). 구멍 안으로 뛰어들면 동굴로 들어가요 ----------
+  setNoNatureZone(ent.x, ent.z, PIT_R + 14);   // 구멍 둘레엔 나무·바위·풀을 놓지 않음
   const surface = new THREE.Group();
-  let hMax = -1e9, hMin = 1e9;
-  for (let k = 0; k < 12; k++) {
-    const h = T.height(ent.x + Math.cos(k * Math.PI / 6) * 3, ent.z + Math.sin(k * Math.PI / 6) * 3);
-    hMax = Math.max(hMax, h); hMin = Math.min(hMin, h);
-  }
+  let hMax = -1e9;
+  for (let k = 0; k < 16; k++) hMax = Math.max(hMax, T.height(ent.x + Math.cos(k * Math.PI / 8) * PIT_R, ent.z + Math.sin(k * Math.PI / 8) * PIT_R));
+  hMax = Math.max(hMax, T.height(ent.x, ent.z));
   const ey = Math.max(hMax, WATER_LEVEL + 0.5);
-  const pit = new THREE.Mesh(new THREE.CircleGeometry(3.1, 28).rotateX(-Math.PI / 2),
+  const pit = new THREE.Mesh(new THREE.CircleGeometry(PIT_R, 36).rotateX(-Math.PI / 2),
     new THREE.MeshBasicMaterial({ color: 0x010207, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
   pit.position.set(ent.x, ey + 0.05, ent.z);
   surface.add(pit);
-  const glowRing = new THREE.Mesh(new THREE.RingGeometry(1.9, 3.1, 28).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0x3aa8d8, transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, fog: false }));
-  glowRing.position.set(ent.x, ey + 0.07, ent.z);
-  surface.add(glowRing);
-  // 돌 테두리 (울퉁불퉁한 바위 14개)
+  // 구멍 가장자리 아래로 내려가는 어두운 벽 (구멍이 땅보다 높이 떠 보이지 않고 푹 파인 것처럼 보이게)
+  const skirt = new THREE.Mesh(new THREE.CylinderGeometry(PIT_R, PIT_R * 0.97, 4.2, 36, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0x0b0c12, side: THREE.DoubleSide }));
+  skirt.position.set(ent.x, ey - 2.05, ent.z);
+  surface.add(skirt);
+  // 돌 테두리 (울퉁불퉁한 큰 바위 32개)
   const rocks = [];
-  for (let k = 0; k < 14; k++) {
-    const a = (k + hash(k, 1, 81) * 0.6) / 14 * Math.PI * 2, rr = 3.9 + hash(k, 2, 81) * 0.9;
-    const x = ent.x + Math.cos(a) * rr, z = ent.z + Math.sin(a) * rr, s = 0.8 + hash(k, 3, 81) * 0.9;
+  for (let k = 0; k < 32; k++) {
+    const a = (k + hash(k, 1, 81) * 0.6) / 32 * Math.PI * 2, rr = PIT_R + 0.8 + hash(k, 2, 81) * 1.8, s = 1.6 + hash(k, 3, 81) * 1.7;
+    const x = ent.x + Math.cos(a) * rr, z = ent.z + Math.sin(a) * rr;
     const g = new THREE.IcosahedronGeometry(1, 0).toNonIndexed();
     g.scale(s * (0.9 + hash(k, 4, 81) * 0.5), s * (0.55 + hash(k, 5, 81) * 0.4), s * (0.9 + hash(k, 6, 81) * 0.5));
     g.rotateY(hash(k, 7, 81) * 6.28);
@@ -181,28 +178,25 @@ export function createCave({ scene, T, ent, seed, WATER_LEVEL }) {
   }
   const rockMesh = new THREE.Mesh(mergeGeometries(rocks, false), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
   surface.add(rockMesh);
-  // 입구 수정 (테두리 사이사이에 4덩어리)
+  // 입구 수정 (테두리 사이사이에 8덩어리, 크게)
   const sCrystals = [];
-  for (let k = 0; k < 4; k++) {
-    const a = (k + 0.5) / 4 * Math.PI * 2 + 0.4, rr = 3.5, x = ent.x + Math.cos(a) * rr, z = ent.z + Math.sin(a) * rr, y = T.height(x, z);
-    for (let m = 0; m < 4; m++) {
-      sCrystals.push(prism(x + (hash(k, m, 83) - 0.5) * 0.8, y - 0.1, z + (hash(k, m, 84) - 0.5) * 0.8, [(hash(k, m, 85) - 0.5) * 0.6, (hash(k, m, 86) - 0.5) * 0.6], 0.8 + hash(k, m, 87) * 1.3, 0.14 + hash(k, m, 88) * 0.1, k % 2 ? 0x62d8ff : 0x7fb0ff, 1));
+  for (let k = 0; k < 8; k++) {
+    const a = (k + 0.5) / 8 * Math.PI * 2 + 0.4, rr = PIT_R + 1.4, x = ent.x + Math.cos(a) * rr, z = ent.z + Math.sin(a) * rr, y = T.height(x, z);
+    const col = k % 2 ? layout.crystals[0].color : 0x7fb0ff;
+    for (let m = 0; m < 5; m++) {
+      sCrystals.push(prism(x + (hash(k, m, 83) - 0.5) * 1.8, y - 0.1, z + (hash(k, m, 84) - 0.5) * 1.8, [(hash(k, m, 85) - 0.5) * 0.6, (hash(k, m, 86) - 0.5) * 0.6], 1.6 + hash(k, m, 87) * 2.6, 0.26 + hash(k, m, 88) * 0.2, col, 1));
     }
-    const sp = new THREE.Sprite(sprMat(k % 2 ? 0x62d8ff : 0x7fb0ff)); sp.scale.set(5, 5, 1); sp.position.set(x, y + 0.8, z); surface.add(sp); sprites.push(Object.assign(sp, { userData: { ph: k, base: 5 } }));
+    const sp = new THREE.Sprite(sprMat(col)); sp.scale.set(9, 9, 1); sp.position.set(x, y + 1.6, z); surface.add(sp); sprites.push(Object.assign(sp, { userData: { ph: k, base: 9 } }));
   }
   const sCrystalMesh = new THREE.Mesh(mergeGeometries(sCrystals, false), new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
   surface.add(sCrystalMesh);
-  // 하늘로 솟는 푸른 빛기둥 (멀리서도 찾을 수 있게)
-  const sBeamMat = new THREE.MeshBasicMaterial({ color: 0x6fd6ff, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
-  const sBeam = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.6, 46, 16, 1, true), sBeamMat);
-  sBeam.position.set(ent.x, ey + 23, ent.z);
-  surface.add(sBeam);
   scene.add(surface);
 
-  // 땅으로 나갈 때 서는 자리: 구멍에서 마을 쪽으로 6.5칸
+  // 땅으로 나갈 때 서는 자리: 구멍 가장자리에서 마을 쪽으로 6칸 더 (구멍 안으로 다시 안 들어가게)
   const dl = Math.hypot(ent.x, ent.z) || 1, dx = -ent.x / dl, dz = -ent.z / dl;
-  const ox = ent.x + dx * 6.5, oz = ent.z + dz * 6.5;
-  const entrance = { x: ent.x, y: ey, z: ent.z, reach: 6.5, out: { x: ox, y: T.height(ox, oz), z: oz, yaw: Math.atan2(-dx, -dz) } };
+  const ox = ent.x + dx * (PIT_R + 6), oz = ent.z + dz * (PIT_R + 6);
+  // dive = 이 거리 안(구멍 안쪽)으로 들어오면 동굴로 떨어짐
+  const entrance = { x: ent.x, y: ey, z: ent.z, r: PIT_R, dive: PIT_R * 0.85, out: { x: ox, y: T.height(ox, oz), z: oz, yaw: Math.atan2(-dx, -dz) } };
 
   let time = 0;
   // inCave: 동굴 안에 있는지. 안이면 동굴을 보이게, 밖이면 숨겨서 그리기 부담을 줄임
@@ -212,12 +206,8 @@ export function createCave({ scene, T, ent, seed, WATER_LEVEL }) {
     if (inCave) {
       const k = 0.92 + 0.08 * Math.sin(time * 1.3);
       crystalMat.color.setRGB(k, k, k);
-      beamMat.opacity = 0.13 + 0.04 * Math.sin(time * 1.7);
-      ringMat.opacity = 0.42 + 0.12 * Math.sin(time * 2.2);
-      exSpr.scale.setScalar(13 + 1.2 * Math.sin(time * 1.5));
-    } else {
-      sBeamMat.opacity = 0.14 + 0.05 * Math.sin(time * 1.4);
-      glowRing.material.opacity = 0.38 + 0.12 * Math.sin(time * 2.0);
+      ringMat.opacity = 0.34 + 0.1 * Math.sin(time * 2.2);
+      exSpr.scale.setScalar(8.5 + 0.8 * Math.sin(time * 1.5));
     }
     for (const s of sprites) {
       const k = 1 + 0.08 * Math.sin(time * 1.6 + s.userData.ph);
@@ -228,12 +218,12 @@ export function createCave({ scene, T, ent, seed, WATER_LEVEL }) {
   // 지금 서 있는 곳의 은은한 수정 빛 (캐릭터·골렘에 입힐 주변광 색)
   function ambientAt(x, y, z, out) {
     bakeLight(layout, x, y + 1.5, z, 0, 1, 0, tmp);
-    out[0] = Math.min(1, tmp[0] * 1.5 + 0.1); out[1] = Math.min(1, tmp[1] * 1.5 + 0.1); out[2] = Math.min(1, tmp[2] * 1.5 + 0.14);
+    out[0] = Math.min(1, tmp[0] * 1.3 + 0.02); out[1] = Math.min(1, tmp[1] * 1.3 + 0.02); out[2] = Math.min(1, tmp[2] * 1.3 + 0.035);
     return out;
   }
 
   return {
     layout, entrance, group: cave, surface, update, ambientAt,
-    fogColor: DARK_BG, fogNear: 30, fogFar: 170,
+    fogColor: DARK_BG, fogNear: 18, fogFar: 120,
   };
 }
