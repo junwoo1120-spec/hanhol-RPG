@@ -83,7 +83,7 @@ export function createGolemSim({ layout, seed }) {
   let lastNow = 0;
 
   // 지하(동굴 안)에 있는 플레이어만 상대해요
-  const eligible = (pl) => !!pl && pl.spawned && pl.hp > 0 && pl.y < CAVE.UNDER_Y && layout.inside(pl.x, pl.z);
+  const eligible = (pl) => !!pl && pl.spawned && pl.hp > 0 && pl.y < CAVE.UNDER_Y && Math.abs(pl.y - layout.Y) < 40 && layout.inside(pl.x, pl.z);
   const returnHome = (g) => { g.mode = 0; g.target = null; g.hp = GOLEM.HP; g.stunUntil = 0; g.hitAt = 0; };
 
   function update(dtIn, nowMs, players, cb) {

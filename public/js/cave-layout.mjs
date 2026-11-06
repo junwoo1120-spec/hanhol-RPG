@@ -29,52 +29,76 @@ function vnoise(x, z, s) {
   return top + (bot - top) * v;
 }
 
-// ---------- 입구 위치: 평원 중반부의 평평한 곳 ----------
+// ---------- 입구 위치: 시작 마을에서 여관 반대편(앞쪽)으로 평원을 걸어 나가면 나오는 평평한 곳 ----------
+// 여관은 시작 지점에서 +z(뒤편)에 있어요(village-layout.js INN_DIST). 그래서 동굴은 -z 쪽(앞)으로 약 330칸.
+// 그 방향이 막혀 있으면(물·산 등) 가장 가까운 각도·거리의 평평한 평원을 골라요.
+export const CAVE_DIR = { x: 0, z: -1 };      // 마을 중심에서 동굴 쪽 방향 (여관의 반대)
+export const PIT_R = 8.5;                       // 땅 위 구멍(검은 원) 반지름. 이 안으로 뛰어들면 동굴로 들어가요
 export function findEntrance(T, seed, WATER_LEVEL, VILLAGE) {
-  const sd = (Number(seed) | 0) || 1;
   const isPlain = (x, z) => {
     const h = T.height(x, z);
     if (h < WATER_LEVEL + 2.5) return false;
     const d = T.detail(x, z, h);
     return d[0] + d[1] > 0.9 && d[3] < 0.02;
   };
+  const base = Math.atan2(CAVE_DIR.z, CAVE_DIR.x);
   const cand = [];
-  for (let a = 0; a < 360; a += 4) {
-    for (let R = 430; R <= 560; R += 26) {
-      cand.push({ x: VILLAGE.x + Math.cos(a * Math.PI / 180) * R, z: VILLAGE.z + Math.sin(a * Math.PI / 180) * R, r: h32(a, R, sd + 777) });
+  for (let da = -40; da <= 40; da += 2) {
+    for (let R = 290; R <= 430; R += 10) {
+      const a = base + da * Math.PI / 180;
+      cand.push({ x: Math.round(VILLAGE.x + Math.cos(a) * R), z: Math.round(VILLAGE.z + Math.sin(a) * R), score: Math.abs(da) * 0.6 + Math.abs(R - 330) * 0.05 });
     }
   }
-  cand.sort((p, q) => p.r - q.r);
-  for (const c of cand) {
-    const x = Math.round(c.x), z = Math.round(c.z);
-    if (!isPlain(x, z)) continue;
-    let ok = true, lo = T.height(x, z), hi = lo;
-    for (let k = 0; k < 8 && ok; k++) {
-      const px = x + Math.cos(k * Math.PI / 4) * 14, pz = z + Math.sin(k * Math.PI / 4) * 14;
-      ok = isPlain(px, pz);
-      const h = T.height(px, pz); lo = Math.min(lo, h); hi = Math.max(hi, h);
+  cand.sort((p, q) => p.score - q.score);
+  for (const flat of [2.0, 3.2]) {      // 먼저 아주 평평한 곳, 없으면 조금 덜 평평한 곳
+    for (const c of cand) {
+      if (!isPlain(c.x, c.z)) continue;
+      let ok = true, lo = T.height(c.x, c.z), hi = lo;
+      for (let k = 0; k < 16 && ok; k++) {
+        const px = c.x + Math.cos(k * Math.PI / 8) * 15, pz = c.z + Math.sin(k * Math.PI / 8) * 15;
+        ok = isPlain(px, pz);
+        const h = T.height(px, pz); lo = Math.min(lo, h); hi = Math.max(hi, h);
+      }
+      if (ok && hi - lo <= flat) return { x: c.x, z: c.z };
     }
-    if (ok && hi - lo <= 2.0) return { x, z };
   }
   return null;
 }
 
+// ---------- 동굴 종류별 설정 ----------
+// makeCaveLayout(ent, seed, id) 가 id 번째 설정을 써요. 없는 id 는 0번(기본 동굴)으로 대신해요.
+// (이 블록은 한 번 실수로 지워졌어서 0번만 처음 값 그대로 다시 적어 둠. 다른 종류가 있었다면 여기에 다시 추가해야 해요.)
+const CAVE_VARIANTS = [
+  {
+    Y: CAVE.Y,
+    // 방들 (지역 좌표: 입구 밑 방이 (0,0))
+    rooms: [
+      { id: 'entry', x: 0, z: 0, r: 22 },
+      { id: 'hall', x: 62, z: 72, r: 50 },
+      { id: 'west', x: -70, z: 52, r: 30 },
+      { id: 'east', x: 128, z: 28, r: 28 },
+      { id: 'south', x: 18, z: 158, r: 30 },
+      { id: 'far', x: 124, z: 142, r: 26 },
+    ],
+    tunnels: [[0, 1], [0, 2], [1, 3], [1, 4], [1, 5], [2, 4]],
+    pillarCount: { hall: 8, west: 3, east: 3, south: 3, far: 2 },
+    perRoom: [4, 9, 4, 4, 4, 4],                                   // 방마다 수정 덩어리 수
+    spawnCount: { hall: 8, west: 4, east: 3, south: 3, far: 2 },   // 골렘 20마리
+    colors: [0x5fe3ff, 0x6a8cff, 0xb48cff, 0x62ffb8, 0x7fd0ff],    // 수정 색
+  },
+];
+
 // ---------- 동굴 지도 ----------
-export function makeCaveLayout(ent, seed) {
-  const sd = (Number(seed) | 0) || 1;
-  const ox = ent.x, oz = ent.z, Y = CAVE.Y;
+export function makeCaveLayout(ent, seed, id = 0) {
+  const V = CAVE_VARIANTS[id] || CAVE_VARIANTS[0];
+  const sd = ((Number(seed) | 0) || 1) + id * 1000;
+  const ox = ent.x, oz = ent.z, Y = V.Y;
   const TR = CAVE.TUNNEL_R;
 
-  // 방들 (지역 좌표: 입구 밑 방이 (0,0)). p1,p2 = 경계를 울퉁불퉁하게 만드는 값
-  const rooms = [
-    { id: 'entry', x: 0, z: 0, r: 22 },
-    { id: 'hall', x: 62, z: 72, r: 50 },
-    { id: 'west', x: -70, z: 52, r: 30 },
-    { id: 'east', x: 128, z: 28, r: 28 },
-    { id: 'south', x: 18, z: 158, r: 30 },
-    { id: 'far', x: 124, z: 142, r: 26 },
-  ].map((r, i) => ({ ...r, p1: h32(i, 1, sd + 11) * TAU, p2: h32(i, 2, sd + 11) * TAU }));
-  const tunnels = [[0, 1], [0, 2], [1, 3], [1, 4], [1, 5], [2, 4]];
+  // 방들 (경계를 울퉁불퉁하게 만드는 값 p1,p2 를 붙임)
+  const rooms = V.rooms.map((r, i) => ({ ...r, p1: h32(i, 1, sd + 11) * TAU, p2: h32(i, 2, sd + 11) * TAU }));
+  const tunnels = V.tunnels;
+  const hallRoom = rooms.find((r) => r.id === 'hall');
 
   const roomR = (d, th) => d.r * (1 + 0.11 * Math.sin(3 * th + d.p1) + 0.07 * Math.sin(5 * th + d.p2));
   function sdfL(x, z) {   // 경계까지의 거리 (음수 = 동굴 안쪽)
@@ -119,7 +143,7 @@ export function makeCaveLayout(ent, seed) {
 
   // ---- 기둥 (돌기둥) + 큰 수정 덩어리: 걸을 때 부딪힘 ----
   const pillars = [];
-  const pillarCount = { hall: 8, west: 3, east: 3, south: 3, far: 2 };
+  const pillarCount = V.pillarCount;
   rooms.forEach((d, ri) => {
     const n = pillarCount[d.id] || 0;
     let tries = 0;
@@ -132,12 +156,13 @@ export function makeCaveLayout(ent, seed) {
     }
   });
   // 큰 수정 덩어리 (큰 방 가운데): 빛도 내고 길도 막음
-  pillars.push({ x: ox + 70, z: oz + 66, r: 2.2, big: true });
+  const bigX = ox + hallRoom.x + 8, bigZ = oz + hallRoom.z - 6;
+  pillars.push({ x: bigX, z: bigZ, r: 2.2, big: true });
 
   // ---- 빛나는 수정 클러스터 ----
-  const COLORS = [0x5fe3ff, 0x6a8cff, 0xb48cff, 0x62ffb8, 0x7fd0ff];
+  const COLORS = V.colors;
   const crystals = [];
-  const perRoom = [4, 9, 4, 4, 4, 4];
+  const perRoom = V.perRoom;
   rooms.forEach((d, ri) => {
     for (let k = 0; k < perRoom[ri]; k++) {
       const th = (k + h32(ri, k, sd + 31) * 0.8) / perRoom[ri] * TAU;
@@ -152,19 +177,19 @@ export function makeCaveLayout(ent, seed) {
     const nx = -(b.z - a.z) / len, nz = (b.x - a.x) / len, side = h32(ti, 5, sd + 35) < 0.5 ? -1 : 1;
     crystals.push({ x: ox + mx + nx * side * (TR - 1.6), z: oz + mz + nz * side * (TR - 1.6), ci: Math.floor(h32(ti, 6, sd + 36) * COLORS.length), size: 0.7 });
   });
-  crystals.push({ x: ox + 70, z: oz + 66, ci: 0, size: 2.3, big: true });   // 큰 수정 (위 기둥과 같은 자리)
+  crystals.push({ x: bigX, z: bigZ, ci: 0, size: 2.3, big: true });   // 큰 수정 (위 기둥과 같은 자리)
+  for (const [ex_, ez_] of [[-4.2, 3.4], [4.6, -2.6], [0.6, -5.2]]) crystals.push({ x: ox + ex_, z: oz + ez_, ci: 4, size: 0.9, exitMark: true });   // 출구 표시 수정
   for (const c of crystals) { c.y = floorAt(c.x, c.z); c.color = COLORS[c.ci]; }
   // 빛 목록 (수정 + 출구 기둥의 햇빛)
-  const lights = crystals.map((c) => ({ x: c.x, y: c.y + 1.2 * c.size, z: c.z, color: c.color, rad: 20 + 9 * c.size, k: c.big ? 1.9 : 1.15 }));
+  const lights = crystals.map((c) => ({ x: c.x, y: c.y + 1.2 * c.size, z: c.z, color: c.color, rad: 15 + 7 * c.size, k: c.big ? 2.4 : 1.5 }));   // 동굴은 어둡고 빛은 수정에서만
 
   // ---- 입구/출구 ----
   const entryPos = { x: ox + 5, z: oz + 8 };
-  const entry = { x: entryPos.x, y: floorAt(entryPos.x, entryPos.z), z: entryPos.z, yaw: Math.atan2(-(62 - 5), -(72 - 8)) };
+  const entry = { x: entryPos.x, y: floorAt(entryPos.x, entryPos.z), z: entryPos.z, yaw: Math.atan2(-(hallRoom.x - 5), -(hallRoom.z - 8)) };
   const exit = { x: ox, z: oz, y: floorAt(ox, oz), reach: 3.8 };
-  lights.push({ x: ox, y: exit.y + 4, z: oz, color: 0xfff0d0, rad: 30, k: 1.3 });
 
   // ---- 골렘 시작 위치 20곳 ----
-  const spawnCount = { hall: 8, west: 4, east: 3, south: 3, far: 2 };
+  const spawnCount = V.spawnCount;
   const spawns = [];
   rooms.forEach((d, ri) => {
     const n = spawnCount[d.id] || 0;
@@ -205,13 +230,13 @@ export function makeCaveLayout(ent, seed) {
   for (const d of rooms) { x0 = Math.min(x0, d.x - d.r * 1.2); x1 = Math.max(x1, d.x + d.r * 1.2); z0 = Math.min(z0, d.z - d.r * 1.2); z1 = Math.max(z1, d.z + d.r * 1.2); }
   const bounds = { x0: ox + x0 - 8, x1: ox + x1 + 8, z0: oz + z0 - 8, z1: oz + z1 + 8 };
 
-  return { Y, origin: { x: ox, z: oz }, seed: sd, rooms, tunnels, sdf, floorAt, rockF, rockC, ceilAt, pillars, crystals, lights, entry, exit, spawns, collide, clampCamera, bounds, vnoise: (x, z, s) => vnoise(x, z, sd + s), inside: (x, z) => sdf(x, z) < 4 };
+  return { id, Y, origin: { x: ox, z: oz }, seed: sd, rooms, tunnels, sdf, floorAt, rockF, rockC, ceilAt, pillars, crystals, lights, entry, exit, spawns, collide, clampCamera, bounds, vnoise: (x, z, s) => vnoise(x, z, sd + s), inside: (x, z) => sdf(x, z) < 4 };
 }
 
 // ---------- 빛 계산 (바닥/벽/천장 색에 미리 구워 넣음) ----------
 // n = 면이 향한 방향. 가까운 수정일수록 밝고, 수정 쪽을 향한 면일수록 밝아요.
 export function bakeLight(layout, x, y, z, nx, ny, nz, out) {
-  let r = 0.075, g = 0.085, b = 0.13;   // 아주 약한 푸른 기본 밝기 (완전히 까맣진 않게)
+  let r = 0.03, g = 0.035, b = 0.06;   // 아주 약한 푸른 기본 밝기 (수정에서 먼 곳은 거의 깜깜)
   for (const L of layout.lights) {
     const dx = L.x - x, dy = L.y - y, dz = L.z - z, d = Math.hypot(dx, dy, dz);
     if (d > L.rad * 2.2) continue;
