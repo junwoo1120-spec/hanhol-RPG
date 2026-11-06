@@ -10,6 +10,7 @@ import { makeHumanoid, animateHumanoid, humanReady } from './character.js';
 import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSweep, setWeaponHandlers, isWeaponEquipped } from './weapon.js';
 import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
+import { createZoneBanner } from './zone-banner.js';
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
@@ -430,6 +431,7 @@ function boot(socket, { id, seed }, nick, mode) {
   $('login').style.display = 'none';
 
   const T = makeTerrain(seed);
+  const zoneBanner = createZoneBanner((x, z) => T.biome(x, z));   // 지형 진입 알림
 
   // 렌더러
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -2711,6 +2713,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     }
 
     const inHouse = updateHouses(dt, me.x, me.y, me.z, curRoom);   // 문 열림 애니메이션 + 방 보이기 + 실내 조명
+    zoneBanner.update(me.x, me.z, curCave && !!cave, curRoom >= 0);   // 지형 이름 알림
     myAvatar.position.set(me.x, me.y, me.z);
     myAvatar.rotation.y = me.ry;
     // 대쉬 모션: 달리기 동작을 빠르게 + 몸을 이동 방향으로 기울임 (끝나면 부드럽게 원래대로)
