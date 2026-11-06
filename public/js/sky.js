@@ -911,7 +911,7 @@ function install(scene) {
     bg: scene.background && scene.background.isColor ? scene.background.clone() : null,
     fog: scene.fog ? scene.fog.color.clone() : null
   };
-  const nightHemi = new THREE.Color(0x7f90c8), nightGround = new THREE.Color(0x1a2036);
+  const nightHemi = new THREE.Color(0x93a6dc), nightGround = new THREE.Color(0x2a3454);
   const warmSun = new THREE.Color(0xff9a55), moonCol = new THREE.Color(0x9fb4ff);
   const fwdV = new THREE.Vector3();
   let lastMs = performance.now(), prevFlash = 0, lastBoltCb = -99;
@@ -1000,7 +1000,7 @@ function install(scene) {
     const stormK = ss((WX.storm - 0.2) / 0.6);   // 0.2 이하 = 영향 없음, 0.8 이상 = 완전한 폭풍
     const sunStorm = lerp(1, 0.04, stormK);       // 폭풍: 햇빛(직사광)이 거의 0 으로
     if (hemi) {
-      hemi.intensity = lerp(day.hi * lerp(0.78, 1.05, ss(U.lvl)), 0.32, dk) * lerp(1, U.shade, 0.6);
+      hemi.intensity = lerp(day.hi * lerp(0.78, 1.05, ss(U.lvl)), 0.5, dk) * lerp(1, U.shade, 0.6);
       hemi.color.lerpColors(day.hc, nightHemi, dk);
       hemi.groundColor.lerpColors(day.hg, nightGround, dk);
       // 폭풍: 환경광이 어두운 쿨톤으로
@@ -1017,7 +1017,7 @@ function install(scene) {
         sunL.color.lerpColors(day.sc, warmSun, U.k);
         sunL.position.set(U.sunDir[0] * 100, U.sunDir[1] * 100, U.sunDir[2] * 100);
       } else {                             // 밤: 달빛
-        sunL.intensity = 0.32 * ss(st.moon.sin / 0.25) * U.shade * sunStorm;
+        sunL.intensity = 0.5 * ss(st.moon.sin / 0.25) * U.shade * sunStorm;
         sunL.color.copy(moonCol);
         sunL.position.set(U.moonDir[0] * 100, U.moonDir[1] * 100, U.moonDir[2] * 100);
       }
