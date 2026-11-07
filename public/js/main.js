@@ -2518,6 +2518,21 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (rabbits) rabbits.onSnapshot(lastRab);
   });
 
+  // ---------- 슬라임 (슬라임 고원, 먼저 다가가면 쫓아옴) ----------
+  // slime.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
+  let slimes = null;
+  let lastSli = [];
+  import('./slime.mjs')
+    .then((m) => {
+      slimes = m.createSlimeWorld({ scene, camera, T, WATER_LEVEL });
+      slimes.onSnapshot(lastSli);
+    })
+    .catch((err) => console.error('슬라임 로드 실패:', err));
+  socket.on('sli', (list) => {
+    lastSli = Array.isArray(list) ? list : [];
+    if (slimes) slimes.onSnapshot(lastSli);
+  });
+
   // ---------- 지하 동굴 + 골렘 ----------
   // 서버가 동굴 입구 위치를 알려주면 입구(땅 위)와 동굴(땅 밑)을 만들어요. 못 불러와도 게임 자체는 그대로 돌아가요.
   let golems = null;
@@ -2898,6 +2913,9 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     }
     if (rabbits) {
       try { rabbits.update(dt); } catch (err) { console.error('토끼 오류 (토끼만 끕니다):', err); rabbits = null; }
+    }
+    if (slimes) {
+      try { slimes.update(dt); } catch (err) { console.error('슬라임 오류 (슬라임만 끕니다):', err); slimes = null; }
     }
     if (cave && !curCave && !diving && curRoom < 0) {   // 땅 위에서 동굴 구멍(검은 원) 안으로 들어서면 떨어져 동굴로
       const en = cave.entrance;
