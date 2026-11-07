@@ -14,9 +14,13 @@ export const VILLAGE = { x: 0, z: 0, r: 150, blend: 110, h: 10 };
 
 // 나침반에 표시할 지형 (설계 좌표를 실제 좌표로 자동 변환)
 const lm = (name, vx, vz) => ({ name, x: Math.round(vx / K), z: Math.round(vz / K) });
+// 바다 해구: 동서로 길게 갈라진 깊은 골짜기 (실제 좌표). 중심선은 구불구불, 양 끝으로 갈수록 얕아짐
+export const TRENCH = { x: -140, z: -1010, half: 230, w: 46, depth: 78 };
+
 export const LANDMARKS = [
   lm('시작마을', 0, 0),
   lm('바다', -380, -2850),
+  lm('해구', -448, -3232),
   lm('정글', -3060, -880),
   lm('화산', -2500, 900),
   lm('설원', -1000, 2750),
@@ -41,6 +45,7 @@ const PAL = [
   [0.80, 0.74, 0.50],
 ];
 const SAND = [0.80, 0.74, 0.50], FLOOR = [0.10, 0.22, 0.32];
+const SEA_MID = [0.42, 0.62, 0.58], TRENCH_COL = [0.03, 0.06, 0.10];
 const ROCK = [0.50, 0.50, 0.52], SNOW = [0.95, 0.97, 1.0], LAVA = [1.0, 0.65, 0.10];
 const DIRT = [0.45, 0.33, 0.20];
 
@@ -191,6 +196,18 @@ export function makeTerrain(seed) {
     return h * (1 - lake) + LAKE_LEVEL * lake;
   };
 
+  // 해구 깊이 (x, z = 실제 좌표). 중심선에서 멀어질수록 벽이 가파르게 올라옴
+  const trenchCut = (x, z) => {
+    const dx = Math.abs(x - TRENCH.x);
+    if (dx >= TRENCH.half) return 0;
+    const zc = TRENCH.z + 30 * Math.sin(x * 0.014) + 12 * Math.sin(x * 0.037 + 1.3);
+    const d = Math.abs(z - zc) + (fbm(x * 0.045 + 31, z * 0.045 - 31, 2) - 0.5) * 12;
+    if (d >= TRENCH.w) return 0;
+    const along = smooth(TRENCH.half, TRENCH.half * 0.45, dx);
+    const wall = 1 - smooth(TRENCH.w * 0.22, TRENCH.w, Math.max(0, d));
+    return TRENCH.depth * along * wall;
+  };
+
   const seaH = (x, z) => -45 + (fbm(x * 0.004 + 500, z * 0.004 - 500, 3) - 0.5) * 20;
 
   const FN = [plainH, desertH, jungleH, volcanoH, snowH, seaH];
@@ -203,6 +220,7 @@ export function makeTerrain(seed) {
       if (w[t] > 0.01) { h += w[t] * FN[t](u, v); sum += w[t]; }
     }
     h = (h / sum) * HEIGHT_SCALE;
+    h -= trenchCut(x, z);                              // 바다 해구
 
     // 외곽 산맥: 다른 지형 없이 매끈한 높은 벽 한 겹
     const rr = Math.hypot(x, z);
@@ -225,7 +243,9 @@ export function makeTerrain(seed) {
       c[0] += w[t] * PAL[t][0]; c[1] += w[t] * PAL[t][1]; c[2] += w[t] * PAL[t][2];
     }
     c = mix(c, SAND, 1 - smooth(1, 4, h));       // 해안은 모래
-    c = mix(c, FLOOR, smooth(-1, -6, h));        // 물속은 어둡게
+    c = mix(c, SEA_MID, smooth(-1, -8, h));      // 얕은 바다: 모래 -> 청록빛 바닥
+    c = mix(c, FLOOR, smooth(-9, -34, h));       // 깊어질수록 어둡게
+    c = mix(c, TRENCH_COL, smooth(-40, -85, h)); // 해구 바닥
 
     // 화산 분화구 바닥 용암색 (텍스처가 없을 때를 위한 기본색)
     const vw = w[3];
@@ -295,13 +315,15 @@ export function makeTerrain(seed) {
     return [grass, dirt, vari, village, jungle, desert, volc, lavaRock, pool, snowW, rockPatch, ice];
   }
 
-  // 지금 서 있는 곳의 지형 이름 (지형 알림용): 'village' | 'plain' | 'desert' | 'forest' | 'volcano' | 'snow' | 'sea'
+  // 지금 서 있는 곳의 지형 이름 (지형 알림용): 'village' | 'plain' | 'desert' | 'forest' | 'volcano' | 'snow' | 'icelake' | 'sea' | 'coast'
   const BIOME_IDS = ['plain', 'desert', 'forest', 'volcano', 'snow', 'sea'];
   function biome(x, z) {
     if (Math.hypot(x - VILLAGE.x, z - VILLAGE.z) < VILLAGE.r) return 'village';
     const w = weights(x * K, z * K);
     let best = 0;
     for (let t = 1; t < 6; t++) if (w[t] > w[best]) best = t;
+    if (best === 4 && lakeMask(x * K, z * K) > 0.3) return 'icelake';          // 설원 안의 얼어붙은 호수
+    if (best === 5) return height(x, z) < WATER_LEVEL - 0.6 ? 'sea' : 'coast'; // 물에 들어가야 '바다', 해변은 알림 없음
     return BIOME_IDS[best];
   }
 
