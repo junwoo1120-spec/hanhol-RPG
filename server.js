@@ -56,6 +56,21 @@ let rabSim = null;
   }
 })();
 
+// ---------- 슬라임 (슬라임 고원 = 평원 동쪽~남동쪽, 선공) ----------
+// 고블린·토끼와 같은 방식이에요. 계산 코드는 public/js/slime-ai.mjs. 로드에 실패해도 다른 몬스터·게임은 그대로 돌아가요.
+let sliSim = null;
+(async () => {
+  try {
+    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
+    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
+    const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/slime-ai.mjs')).href);
+    sliSim = ai.createSlimeSim({ T: terr.makeTerrain(SEED), seed: SEED, WATER_LEVEL: terr.WATER_LEVEL, VILLAGE: terr.VILLAGE, PLAY_RADIUS: terr.PLAY_RADIUS });
+    console.log('슬라임 ' + sliSim.slimes.length + '마리 배치 완료');
+  } catch (e) {
+    console.error('슬라임 시스템 로드 실패 (슬라임 없이 계속 진행):', e);
+  }
+})();
+
 // ---------- 지하 동굴 + 골렘 ----------
 // 평원 중반부에 동굴 입구가 있고, 동굴 안(아주 깊은 땅 밑)에 골렘 20마리가 살아요.
 // 지도·충돌은 public/js/cave-layout.mjs, 골렘 두뇌는 public/js/golem-ai.mjs. 입구 위치는 서버가 정해서 접속한 브라우저에 알려줘요.
@@ -108,6 +123,7 @@ function hurtPlayer(pid, dmg) {
     if (underground) p.y = 10;
     if (sim) sim.dropTarget(pid);
     if (rabSim) rabSim.dropTarget(pid);
+    if (sliSim) sliSim.dropTarget(pid);
     if (golSim) golSim.dropTarget(pid);
     if (underground) io.to(pid).emit('surface', { x: 0, y: 10, z: 0 });
     else io.to(pid).emit('correct', { x: 0, y: p.y, z: 0 });
@@ -120,6 +136,7 @@ function hurtPlayer(pid, dmg) {
 function resolveAttack(attacker, now) {
   if (sim) sim.playerAttack(attacker, now);
   if (rabSim) rabSim.playerAttack(attacker, now);
+  if (sliSim) sliSim.playerAttack(attacker, now);
   if (golSim) golSim.playerAttack(attacker, now);
 }
 
@@ -204,7 +221,7 @@ io.on('connection', (socket) => {
   socket.on('skill', (d) => {
     const p = players.get(socket.id);
     if (!p || !p.eq || !SKILLS || !d || d.id !== 'sweep') return;
-    if (!sim && !rabSim && !golSim) return;
+    if (!sim && !rabSim && !sliSim && !golSim) return;
     const now = Date.now();
     p.skillCd = p.skillCd || {};
     if (now < (p.skillCd.sweep || 0) - 300) return;   // 쿨타임 중 (네트워크 지연 0.3초는 봐줌)
@@ -212,6 +229,7 @@ io.on('connection', (socket) => {
     socket.broadcast.emit('skillfx', { id: socket.id, skill: 'sweep' });
     if (sim) sim.playerSkill(p, 'sweep', now);
     if (rabSim) rabSim.playerSkill(p, 'sweep', now);
+    if (sliSim) sliSim.playerSkill(p, 'sweep', now);
     if (golSim) golSim.playerSkill(p, 'sweep', now);
   });
 
@@ -266,6 +284,19 @@ setInterval(() => {
       }
     } catch (e) {
       console.error('토끼 업데이트 오류:', e);
+    }
+  }
+  if (sliSim) {
+    try {
+      sliSim.update(dt, now, players, {
+        hurt: hurtPlayer,
+        kill: (pid) => io.to(pid).emit('kill', { msg: '슬라임을 처치했습니다!' })
+      });
+      for (const p of players.values()) {
+        if (p.spawned && p.y >= UNDER_Y) io.to(p.id).emit('sli', sliSim.snapshot(p.x, p.z));
+      }
+    } catch (e) {
+      console.error('슬라임 업데이트 오류:', e);
     }
   }
   if (golSim) {
