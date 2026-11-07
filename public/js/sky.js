@@ -994,6 +994,16 @@ function install(scene) {
     const fr = U.hor.map((v) => clamp(v + U.flash * 0.5, 0, 1));
     if (scene.fog) scene.fog.color.setRGB(fr[0], fr[1], fr[2], THREE.SRGBColorSpace);
     if (scene.background && scene.background.isColor) scene.background.setRGB(fr[0], fr[1], fr[2], THREE.SRGBColorSpace);
+    {   // 물속 (main.js 가 window.__uw 에 0~1 로 알려 줌): 안개와 배경을 물빛으로, 밤엔 어둡게
+      const uw = (typeof window !== 'undefined' && window.__uw) || 0;
+      if (uw > 0.001) {
+        const lit = 0.2 + 0.8 * (1 - st.darkness);
+        window.__uwLit = lit;
+        const r = fr[0] + (0.04 * lit + 0.01 - fr[0]) * uw, g = fr[1] + (0.34 * lit + 0.02 - fr[1]) * uw, b = fr[2] + (0.50 * lit + 0.04 - fr[2]) * uw;
+        if (scene.fog) scene.fog.color.setRGB(r, g, b, THREE.SRGBColorSpace);
+        if (scene.background && scene.background.isColor) scene.background.setRGB(r, g, b, THREE.SRGBColorSpace);
+      }
+    }
 
     if (!OPT.lights) return;
     const dk = st.darkness;
