@@ -423,6 +423,11 @@ function makeGlbHumanoid(color) {
     hand: root.getObjectByName('hand_R'),
     spine: root.getObjectByName('spine_02')
   };
+  // 수영 자세에 쓰는 뼈 (rest 자세가 전부 회전 0이라서 이름으로 바로 잡아 쓰면 됨)
+  rig.sw = {};
+  for (const n of ['pelvis', 'spine_01', 'spine_02', 'chest', 'neck', 'head', 'clavicle_L', 'clavicle_R',
+    'upper_arm_L', 'forearm_L', 'hand_L', 'upper_arm_R', 'forearm_R', 'hand_R',
+    'thigh_L', 'shin_L', 'foot_L', 'thigh_R', 'shin_R', 'foot_R']) rig.sw[n] = root.getObjectByName(n);
   root.userData.rig = rig;
   enterState(rig, 'idle', 0);
   return root;
@@ -507,20 +512,131 @@ function animateGlb(avatar, dt, speed, grounded, vy) {
 }
 
 // ============================================================
+// 수영 (평영): 몸을 눕히고, 팔로 물을 크게 가르고, 개구리처럼 발차기
+// 몸 기준 축: x = 왼쪽, y = 머리 쪽(나아가는 방향), z = 가슴 쪽(물 아래)
+// ============================================================
+const SWIM_PERIOD = 1.7;   // 한 번 헤엄치는 데 걸리는 시간(초)
+const TAU = Math.PI * 2;
+const AX = new THREE.Vector3(1, 0, 0);
+// [위상, 방향들] — 왼쪽 기준이고 오른쪽은 x 를 뒤집음. 위팔(u)·아래팔(f)·허벅지(th)·종아리(sh)
+const ARM_KEYS = [
+  { t: 0.00, u: [0.12, 1, -0.10], f: [0.08, 1, -0.12] },    // 두 팔을 앞으로 모아 쭉 뻗음
+  { t: 0.25, u: [0.45, 0.85, -0.05], f: [0.30, 0.90, 0.05] },
+  { t: 0.50, u: [0.95, 0.30, 0.05], f: [0.65, 0.55, 0.50] }, // 양옆으로 크게 벌림
+  { t: 0.75, u: [0.35, -0.25, 0.85], f: [-0.25, 0.80, 0.55] }, // 가슴 아래로 당김
+  { t: 1.00, u: [0.12, 1, -0.10], f: [0.08, 1, -0.12] },    // 다시 앞으로 쭉
+];
+const LEG_KEYS = [
+  { t: 0.00, th: [0.05, -1, 0.02], sh: [0.03, -1, 0] },
+  { t: 0.55, th: [0.05, -1, 0.02], sh: [0.03, -1, 0] },
+  { t: 0.78, th: [0.45, -0.80, 0.40], sh: [0.45, -0.40, -0.80] }, // 무릎을 끌어당김
+  { t: 0.90, th: [0.55, -0.95, 0.00], sh: [0.80, -0.55, -0.10] }, // 양옆으로 힘껏 참
+  { t: 1.00, th: [0.05, -1, 0.02], sh: [0.03, -1, 0] },
+];
+// 서 있는 자세에서 뼈가 향한 방향 (왼쪽 기준)
+const R_UA = new THREE.Vector3(0.166, -0.238, 0).normalize();
+const R_FA = new THREE.Vector3(0.149, -0.213, 0).normalize();
+const R_LEG = new THREE.Vector3(0, -1, 0);
+const _v = new THREE.Vector3(), _r = new THREE.Vector3();
+const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
+
+function sampleKeys(keys, ph, f, side, out) {
+  let i = 0;
+  while (i < keys.length - 2 && ph > keys[i + 1].t) i++;
+  const a = keys[i], b = keys[i + 1];
+  const u = clamp((ph - a.t) / (b.t - a.t), 0, 1), e = u * u * (3 - 2 * u);
+  out.set(lerp(a[f][0], b[f][0], e) * side, lerp(a[f][1], b[f][1], e), lerp(a[f][2], b[f][2], e));
+  return out.normalize();
+}
+
+function swimGlb(rig, w) {
+  const b = rig.sw;
+  if (!b || !b.pelvis) return;
+  const Q = rig.swimQ || (rig.swimQ = {});
+  const q = (n) => Q[n] || (Q[n] = new THREE.Quaternion());
+  const ph = rig.swimPh, th = rig.swimPitch;
+  const lift = Math.max(0, Math.sin(((ph - 0.35) / 0.45) * Math.PI));   // 당길 때 고개를 듦
+
+  q('pelvis').setFromAxisAngle(AX, th);                                  // 엉덩이를 중심으로 몸을 눕힘
+  q('spine_01').setFromAxisAngle(AX, 0.12 * Math.sin(ph * TAU));
+  q('spine_02').identity(); q('chest').identity(); q('clavicle_L').identity(); q('clavicle_R').identity();
+  q('neck').setFromAxisAngle(AX, -0.5 - 0.25 * lift);                    // 고개를 들어 앞을 봄
+  q('head').setFromAxisAngle(AX, -0.4 - 0.2 * lift);
+
+  for (const side of [1, -1]) {
+    const S = side > 0 ? 'L' : 'R';
+    sampleKeys(ARM_KEYS, ph, 'u', side, _v);
+    _r.copy(R_UA); _r.x *= side;
+    _qa.setFromUnitVectors(_r, _v);
+    q('upper_arm_' + S).copy(q('spine_01')).invert().multiply(_qa);
+    sampleKeys(ARM_KEYS, ph, 'f', side, _v);
+    _r.copy(R_FA); _r.x *= side;
+    _qb.setFromUnitVectors(_r, _v);
+    q('forearm_' + S).copy(_qa).invert().multiply(_qb);
+    q('hand_' + S).identity();
+
+    sampleKeys(LEG_KEYS, ph, 'th', side, _v);
+    _qa.setFromUnitVectors(R_LEG, _v);
+    q('thigh_' + S).copy(_qa);
+    sampleKeys(LEG_KEYS, ph, 'sh', side, _v);
+    _qb.setFromUnitVectors(R_LEG, _v);
+    q('shin_' + S).copy(_qa).invert().multiply(_qb);
+    q('foot_' + S).setFromAxisAngle(AX, 0.9);                            // 발끝을 뒤로 쭉
+  }
+  for (const n in Q) if (b[n]) b[n].quaternion.slerp(Q[n], w);
+}
+
+function swimProc(rig, w) {   // 코드로 만든 캐릭터용 간단 버전
+  const ph = rig.swimPh, c = 0.5 - 0.5 * Math.cos(ph * TAU);
+  rig.hips.rotation.x = rig.swimPitch * w;
+  for (const side of [1, -1]) {
+    const j = side > 0 ? rig.L : rig.R;
+    j.shoulder.rotation.x = lerp(j.shoulder.rotation.x, -3.0 + 1.5 * c, w);
+    j.shoulder.rotation.z = lerp(j.shoulder.rotation.z, side * (0.15 + 1.0 * Math.sin(ph * Math.PI) ** 2), w);
+    j.elbow.rotation.x = lerp(j.elbow.rotation.x, -0.2 - 0.9 * Math.sin(ph * Math.PI), w);
+    const kick = Math.max(0, Math.sin((ph - 0.55) * Math.PI / 0.4));
+    j.hip.rotation.x = lerp(j.hip.rotation.x, -0.1 - 0.6 * kick, w);
+    j.knee.rotation.x = lerp(j.knee.rotation.x, 1.3 * kick, w);
+    j.ankle.rotation.x = lerp(j.ankle.rotation.x, 0.5, w);
+  }
+}
+
+// swim = null(수영 아님) 또는 { sp: 수평 속도, vy: 수직 속도 }
+function swimLayer(rig, dt, swim) {
+  dt = Math.min(Math.max(dt, 0), 0.1);
+  rig.swimW = damp(rig.swimW || 0, swim ? 1 : 0, swim ? 9 : 7, dt);
+  if (rig.swimW < 0.003 && !swim) {
+    if (rig.swimW > 0) { rig.swimW = 0; if (rig.kind !== 'glb') rig.hips.rotation.x = 0; }
+    return;
+  }
+  const w = rig.swimW;
+  const sp = swim ? swim.sp : 0, vy = swim ? swim.vy : 0;
+  const move = clamp(sp / 4, 0, 1);
+  rig.swimPh = ((rig.swimPh || 0) + (dt * (0.5 + 0.7 * move)) / SWIM_PERIOD) % 1;   // 가만히 있으면 천천히
+  // 위로 가면 몸을 세우고, 아래로 가면 머리를 숙임
+  const tilt = clamp(Math.PI / 2 - Math.atan2(vy, Math.max(sp, 2)), 0.3, 2.9);
+  rig.swimPitch = damp(rig.swimPitch ?? Math.PI / 2, tilt, 6, dt);
+  if (rig.kind === 'glb') swimGlb(rig, w); else swimProc(rig, w);
+}
+
+// ============================================================
 // 공개 API
 // ============================================================
 export function makeHumanoid(color = 0xffffff) {
   return glb ? makeGlbHumanoid(color) : makeProceduralHumanoid(color);
 }
 
-export function animateHumanoid(avatar, dt, speed, grounded = true, vy = 0) {
+export function animateHumanoid(avatar, dt, speed, grounded = true, vy = 0, swim = null) {
   const rig = avatar.userData.rig;
   if (!rig) return;
   if (rig.kind === 'glb') animateGlb(avatar, dt, speed, grounded, vy);
   else animateProcedural(avatar, dt, speed, grounded, vy);
 
   // 무기를 한 번이라도 만진 캐릭터만 (기존 애니메이션 직후에 팔 포즈를 덮어씀)
-  if (rig.wp) updateWeapon(rig, dt, weaponLoco(rig));
+  swimLayer(rig, dt, swim);   // 물속이면 위 동작을 수영 자세로 덮어씀
+
+  // 수영 중에는 팔을 쓰므로 무기 팔 자세는 건너뜀
+  if (rig.wp && !(rig.swimW > 0.5)) updateWeapon(rig, dt, weaponLoco(rig));
 }
 
 // 무기 팔 포즈가 걷기/달리기 박자에 맞도록 현재 이동 상태를 알려 줌 (객체 재사용)
