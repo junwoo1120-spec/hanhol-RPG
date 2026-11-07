@@ -1,5 +1,9 @@
 // 지형에 들어갈 때마다 화면 위쪽에 지형 이름이 떨어져서 튕기고, 잠시 뒤 그라데이션으로 사라지는 알림
 // 사용: const zb = createZoneBanner(T.biome);  매 프레임 zb.update(x, z, 동굴안인지, 방안인지)
+// 평원은 3등분(plain-zones.mjs)되어 있어서, 시작마을 근처는 '평원', 그 바깥은 토끼 평원 / 고블린 서식지 / 슬라임 고원 알림이 떠요.
+
+import { VILLAGE } from './terrain.js';
+import { plainZoneAt } from './plain-zones.mjs';
 
 const ZONES = {
   village: { title: '프론트 마을', sub: '모든것이 시작되는 마을입니다.',
@@ -10,6 +14,12 @@ const ZONES = {
              grad: ['#fff0b0', '#ffc94a', '#e8892a'], glow: '255,190,70', edge: '#5a2e0a' },
   plain:   { title: '평원', sub: '푸른 초원이 펼쳐집니다.',
              grad: ['#f2ffc0', '#a8ec6a', '#5cc24a'], glow: '150,240,110', edge: '#17401a' },
+  rabbit:  { title: '토끼 평원', sub: '토끼가 사는 평화로운 평원 입니다.',
+             grad: ['#ffffff', '#ffd6e6', '#ff9fc4'], glow: '255,170,205', edge: '#5a1a38' },
+  goblin:  { title: '고블린 서식지', sub: '영악한 고블린이 모여사는 곳입니다.',
+             grad: ['#a8d890', '#2e8b3e', '#0f5a28'], glow: '40,150,70', edge: '#04200c' },
+  slime:   { title: '슬라임 고원', sub: '산성 슬라임이 즐비합니다',
+             grad: ['#f6ffa8', '#b6f21e', '#4fbf12'], glow: '175,240,40', edge: '#243d05' },
   volcano: { title: '불타는 화산지대', sub: '끓어오르는 용암과 뜨거운 열기가 가득합니다.',
              grad: ['#fff2a8', '#ff9a2e', '#ff3b1f'], glow: '255,90,40', edge: '#4a0e08' },
   snow:    { title: '설원', sub: '매우 춥습니다!',
@@ -106,7 +116,8 @@ export function createZoneBanner(biomeAt) {
     const now = performance.now();
     const dt = Math.min(250, now - last); last = now;
     if (skip) return;               // 방 안에서는 판정하지 않음
-    const id = inCave ? 'cave' : biomeAt(x, zPos);
+    let id = inCave ? 'cave' : biomeAt(x, zPos);
+    if (id === 'plain') id = plainZoneAt(x, zPos, VILLAGE) || 'plain';   // 평원은 3구역으로 나눠서
     if (id === shown || !ZONES[id]) { cand = null; candT = 0; return; }   // 같은 지형 / 알림이 없는 지형(바다 등)
     if (id !== cand) { cand = id; candT = 0; }
     candT += dt;
