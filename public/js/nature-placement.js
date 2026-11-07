@@ -262,7 +262,7 @@ export function createPlacer(T, seedIn) {
       else if (bn === 'snow') { p = iceHere ? 0.1 : 0.3 * (0.4 + 0.9 * grove(40, 24)) * (1 + 1.5 * s.rockPatch); mult = iceHere ? (e) => (e.id === 'ice_crystal' ? 1 : 0) : (e) => (e.id === 'ice_crystal' ? 0 : e.id === 'rock_snowy' ? 1 + 3 * s.rockPatch : 1); }
       else if (bn === 'volcano') { p = 0.6 * (0.4 + 0.9 * grove(40, 25)); mult = (e) => (e.id === 'rock_lava' ? 0.4 + 1.8 * s.lavaRock : e.id === 'ash_mound' ? 0.6 + s.lavaRock : 1); }
       else if (bn === 'coast') p = 0.11 * (0.3 + 1.2 * grove(30, 26));
-      else if (bn === 'shallow') p = 0.12 * grove(26, 27) * (s.h > -6 ? 1 : 0);        // 산호는 덩어리로
+      else if (bn === 'shallow') p = 0.06 * grove(26, 27) * (s.h > -6 ? 1 : 0);        // 산호는 덩어리로
       entry = chooseEntry(table, rSpec, mult);
     } else {
       // 땅 덮개(잔디/꽃/버섯/작은 눈더미/갈대/해초): 지면 재질 + 무늬 필드로 분포. 버섯은 나무 근처 판정이 필요해서 아래 expand()에서 한 번 더 조정.
@@ -271,7 +271,7 @@ export function createPlacer(T, seedIn) {
       else if (bn === 'desert') p = 0.11 * (0.4 + 0.9 * grove(30, 33));
       else if (bn === 'snow') p = iceHere ? 0 : 0.06 * (0.3 + 0.9 * grove(30, 34));
       else if (bn === 'coast') p = s.h < 2.4 ? 0.3 * grove(16, 35) : 0;                // 갈대는 물가 얼룩
-      else if (bn === 'shallow') p = 0.2 * grove(14, 36);
+      else if (bn === 'shallow') p = 0.1 * grove(14, 36);
       else p = 0;
       entry = chooseEntry(table, rSpec);
     }
