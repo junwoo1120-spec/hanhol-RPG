@@ -14,6 +14,10 @@ const ZONES = {
              grad: ['#fff2a8', '#ff9a2e', '#ff3b1f'], glow: '255,90,40', edge: '#4a0e08' },
   snow:    { title: '설원', sub: '매우 춥습니다!',
              grad: ['#ffffff', '#bfe8ff', '#6fbfff'], glow: '140,210,255', edge: '#0f2f55' },
+  icelake: { title: '얼음 호수', sub: '꽁꽁 얼어붙은 호수 위를 지나갑니다.',
+             grad: ['#f4ffff', '#8ff3ff', '#3aa6ff'], glow: '110,225,255', edge: '#0a2a55' },
+  sea:     { title: '바다', sub: '푸른빛 드넓은 바다가 펼쳐집니다.',
+             grad: ['#d8fbff', '#4fd0ff', '#1c6fe0'], glow: '60,170,255', edge: '#06224a' },
   cave:    { title: '수정동굴', sub: '반짝이는 수정으로 형성된 동굴입니다.',
              grad: ['#f3e2ff', '#c79bff', '#6fd8ff'], glow: '170,130,255', edge: '#25104a' },
 };
