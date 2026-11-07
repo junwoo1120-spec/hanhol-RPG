@@ -11,6 +11,7 @@ import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSwe
 import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
 import { createZoneBanner } from './zone-banner.js';
+import { createSeaLife } from './sea-life.js';
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
@@ -36,7 +37,8 @@ function wrapPitch(p) { return Math.min(PITCH_LIMIT, Math.max(-PITCH_LIMIT, p));
 // 조작법 창에 표시할 내용 [키 목록, 설명]
 const HELP_KEYBOARD = [
   [['W', 'A', 'S', 'D'], '이동'],
-  [['Space'], '점프'],
+  [['Space'], '점프 (물속에서는 위로 헤엄)'],
+  [['C'], '물속에서 아래로 잠수'],
   [['Ctrl'], '달리기 켜기/끄기'],
   [['Shift'], '시점 고정(쉬프트락) 켜기/끄기'],
   [['1'], '칼 꺼내기/넣기'],
@@ -586,6 +588,21 @@ function boot(socket, { id, seed }, nick, mode) {
 
   water.position.y = WATER_LEVEL;
   scene.add(water);
+
+  // ---------- 바닷속 ----------
+  // 푸른 화면 덮개 + 수면 밑면(위를 올려다보면 보이는 물 천장) + 해초·산호
+  const uwEl = document.createElement('div');
+  uwEl.style.cssText = 'position:fixed;inset:0;z-index:2;pointer-events:none;opacity:0;background:radial-gradient(ellipse at 50% 45%,rgba(60,170,210,.10) 25%,rgba(4,58,98,.58) 100%)';
+  document.body.appendChild(uwEl);
+  const ceilMat = new THREE.MeshBasicMaterial({ color: 0x2b9bc4, side: THREE.BackSide, transparent: true, opacity: 0, depthWrite: false });
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(500, 500).rotateX(-Math.PI / 2), ceilMat);
+  ceil.visible = false;
+  ceil.renderOrder = 5;
+  scene.add(ceil);
+  const fog0 = { near: scene.fog.near, far: scene.fog.far };
+  let uwK = 0, uwOn = false;                    // 물속 시야 정도(0~1) / 카메라가 물속인지
+  let swimming = false, swimVy = 0, waterDepth = 0;   // 수영 중인지 / 수직 속도 / 지금 위치의 물 깊이
+  const seaLife = createSeaLife({ scene, T, WATER_LEVEL, seed });
 
   // 시작마을 터 (선으로만 표시)
   buildVillage(scene);
@@ -2582,6 +2599,15 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (uiOpen) { inF = 0; inR = 0; }
     const mag = Math.min(1, Math.hypot(inF, inR));
 
+    // 물속: 허리~가슴 깊이까지는 걸어 들어가고, 머리까지 잠기면 수영 시작
+    {
+      const inWorld = curRoom < 0 && !(curCave && cave) && innFloor(me.x, me.z, me.y) === null;
+      waterDepth = inWorld ? Math.max(0, WATER_LEVEL - T.height(me.x, me.z)) : 0;
+      if (!swimming) {
+        if (waterDepth > 2.0 && me.y < WATER_LEVEL - 0.9) { swimming = true; swimVy = vy * 0.35; grounded = false; }
+      } else if (!inWorld || waterDepth < 1.6) { swimming = false; vy = 0; }
+    }
+
     const fx = -Math.sin(me.yaw);
     const fz = -Math.cos(me.yaw);
     const rx = Math.cos(me.yaw);
@@ -2629,8 +2655,10 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       idleTime = 0;
     } else if (len > 0.01) {
       const running = RUN_TOGGLE ? runOn : (keys.ControlLeft || keys.ControlRight);
-      const speed =
+      let speed =
         7 * SPEED_SCALE * (running ? RUN_MULT : 1) * (fast ? fastMult : 1) * mag;
+      if (swimming) speed = 7 * SPEED_SCALE * (running ? 0.8 : 0.58) * (fast ? fastMult : 1) * mag;   // 헤엄은 걷기보다 느림
+      else if (waterDepth > 0.3) speed *= 1 - 0.35 * Math.min(1, waterDepth / 2);                        // 물에 잠길수록 느려짐
 
       const dirX = mx / len;
       const dirZ = mz / len;
@@ -2684,22 +2712,39 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     else if (curCave && cave) ground = cave.layout.floorAt(me.x, me.z);
     else {
       const fl = innFloor(me.x, me.z, me.y);
-      ground = fl !== null ? fl : Math.max(T.height(me.x, me.z), WATER_LEVEL - 0.8);
+      ground = fl !== null ? fl : T.height(me.x, me.z);   // 바다는 해저까지 내려감
     }
     const stepTol = 0.6 + moved * 2.0;
 
-    if (grounded) {
+    if (swimming) {
+      // 수영: 스페이스 = 위로, C = 아래로, 화면을 많이 내려다보고 앞으로 가면 잠수, 올려다보면 상승
+      grounded = false;
+      let up = (keys.Space || jumpHeld ? 1 : 0) - (keys.KeyC ? 1 : 0);
+      const dz = me.pitch - 0.45;
+      if (inF > 0.1 && Math.abs(dz) > 0.3) up -= Math.sign(dz) * Math.min(1, (Math.abs(dz) - 0.3) / 0.5) * Math.min(1, inF);
+      up = Math.max(-1, Math.min(1, up));
+      swimVy += ((up !== 0 ? up * 3.6 : 0.6) - swimVy) * (1 - Math.exp(-5 * dt));   // 아무것도 안 하면 천천히 떠오름
+      me.y += swimVy * dt;
+      const top = WATER_LEVEL - 1.5;                                                  // 수면에 엎드려 뜨는 높이
+      if (me.y > top) { me.y = top; if (swimVy > 0) swimVy = 0; }
+      const hx = Math.sin(me.ry), hz = Math.cos(me.ry);                               // 해저에 몸이 파묻히지 않게
+      const floorY = Math.max(T.height(me.x, me.z), T.height(me.x + hx, me.z + hz), T.height(me.x - hx, me.z - hz)) - 0.9;
+      if (me.y < floorY) { me.y = floorY; if (swimVy < 0) swimVy = 0; }
+      vy = swimVy;
+    }
+
+    if (!swimming && grounded) {
       if (me.y - ground > stepTol) grounded = false; // 절벽 끝에서 떨어짐
       else me.y = ground;
     }
 
-    if (grounded && jumpBuffer > 0) {
+    if (!swimming && grounded && jumpBuffer > 0) {
       vy = JUMP_V;
       grounded = false;
       jumpBuffer = 0;
     }
 
-    if (!grounded) {
+    if (!swimming && !grounded) {
       vy -= GRAVITY * dt;
       me.y += vy * dt;
 
@@ -2720,7 +2765,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     dashLean += ((dashT > 0 ? 1 : 0) - dashLean) * (1 - Math.exp(-(dashT > 0 ? 22 : 12) * dt));
     myAvatar.rotation.x = dashPitch * dashLean;
     myAvatar.rotation.z = dashRoll * dashLean;
-    animateHumanoid(myAvatar, dt, dashFrame ? 13 : moved / Math.max(dt, 1e-4), grounded, vy);
+    animateHumanoid(myAvatar, dt, dashFrame ? 13 : moved / Math.max(dt, 1e-4), swimming ? true : grounded, swimming ? 0 : vy,
+      swimming ? { sp: moved / Math.max(dt, 1e-4), vy: swimVy } : null);
     fovKick += ((dashT > 0 ? 9 : 0) - fovKick) * (1 - Math.exp(-14 * dt));
     if (Math.abs(fovKick) > 0.02 || camera.fov !== baseFov) {
       camera.fov = baseFov + (Math.abs(fovKick) > 0.02 ? fovKick : 0);
@@ -2739,12 +2785,17 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const cx = tx + Math.sin(me.yaw) * Math.cos(me.pitch) * dist;
     const cz = tz + Math.cos(me.yaw) * Math.cos(me.pitch) * dist;
 
-    const cy = Math.max(
-      me.y + Math.sin(me.pitch) * dist + 1.5 * CHAR_SCALE,
-      T.height(cx, cz) + 1.5 * CHAR_SCALE
+    const eyeH = swimming ? 0.95 * CHAR_SCALE : 1.5 * CHAR_SCALE;   // 수영 중엔 엎드린 몸(엉덩이 높이)을 바라봄
+    let cy = Math.max(
+      me.y + Math.sin(me.pitch) * dist + eyeH,
+      T.height(cx, cz) + (swimming ? 0.8 : 1.5 * CHAR_SCALE)
     );
+    if (swimming) {   // 몸이 물속으로 들어가면 카메라도 같이 물속으로 (수면에 가려 안 보이지 않게)
+      const sub = Math.min(1, Math.max(0, (WATER_LEVEL - 1.5 - me.y) / 1.2));
+      cy += (Math.min(cy, WATER_LEVEL - 0.4) - cy) * sub;
+    }
 
-    const ty = me.y + 1.5 * CHAR_SCALE;
+    const ty = me.y + eyeH;
     if (curRoom >= 0 || inHouse >= 0 || (curCave && cave)) {
       // 방 안/여관 안: 시선 방향(위/아래)은 입력 그대로 두고, 벽/천장/바닥에 닿으면
       // 같은 방향 선상에서 캐릭터 쪽으로만 거리를 줄임 (방향이 바뀌지 않아 위아래가 뒤집히지 않음)
@@ -2770,11 +2821,32 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     camera.up.set(0, 1, 0);
     myAvatar.visible = !fp;
     if (fp) {   // 1인칭: 캐릭터 눈 위치에서 바라보는 방향으로 봄
-      const hy = me.y + 1.6 * CHAR_SCALE, cp = Math.cos(me.pitch);
-      camera.position.set(me.x, hy, me.z);
-      camera.lookAt(me.x - Math.sin(me.yaw) * cp, hy - Math.sin(me.pitch), me.z - Math.cos(me.yaw) * cp);
+      const hy = swimming ? me.y + 1.5 : me.y + 1.6 * CHAR_SCALE, cp = Math.cos(me.pitch);
+      const ex = swimming ? me.x + Math.sin(me.ry) * 0.9 : me.x, ez = swimming ? me.z + Math.cos(me.ry) * 0.9 : me.z;
+      camera.position.set(ex, hy, ez);
+      camera.lookAt(ex - Math.sin(me.yaw) * cp, hy - Math.sin(me.pitch), ez - Math.cos(me.yaw) * cp);
     } else camera.lookAt(tx, ty, tz);
     updateDoorHint();   // 문 옆에 뜨는 반투명 안내 (카메라 위치가 정해진 뒤에 화면 좌표로 바꿈)
+
+    // 물속 효과: 카메라가 수면 아래로 내려가면 시야가 푸르러지고 멀리는 뿌옇게 보임
+    {
+      const inWorld = curRoom < 0 && inHouse < 0 && !(curCave && cave);
+      const cyc = camera.position.y;
+      if (!uwOn && cyc < WATER_LEVEL - 0.05) uwOn = true; else if (uwOn && cyc > WATER_LEVEL + 0.25) uwOn = false;
+      const want = inWorld && uwOn ? 1 : 0;
+      uwK += (want - uwK) * (1 - Math.exp(-9 * dt));
+      if (!want && uwK < 0.004) uwK = 0;
+      window.__uw = uwK;   // sky.js 가 안개·배경색을 물빛으로 바꿈
+      uwEl.style.opacity = uwK.toFixed(3);
+      scene.fog.near = fog0.near + (1.5 - fog0.near) * uwK;
+      scene.fog.far = fog0.far + (70 - fog0.far) * uwK;
+      ceil.visible = uwK > 0.01;
+      if (ceil.visible) {
+        ceilMat.opacity = 0.9 * uwK;
+        ceilMat.color.setRGB(0.17, 0.6, 0.78).multiplyScalar(0.2 + 0.8 * (window.__uwLit ?? 1));
+        ceil.position.set(me.x, WATER_LEVEL + 0.04, me.z);
+      }
+    }
 
     // 물: 격자에 맞춰 움직여서 파도가 떨리지 않게 하고, 시간을 흘려보냄 (용암도 같은 시간 사용)
     water.position.x = Math.round(me.x / WATER_STEP) * WATER_STEP;
@@ -2782,6 +2854,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     waterUniforms.uTime.value += dt;
 
     updateChunks(me.x, me.z);
+    seaLife.update(me.x, me.z, dt, curRoom < 0 && !(curCave && cave));   // 해초·산호
 
     // 나침반 (0.1초마다)
     compassTimer += dt;
@@ -2813,9 +2886,10 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       remote.sp = (remote.sp ?? 0) + (Math.hypot(remote.g.position.x - ox, remote.g.position.z - oz) / idt - (remote.sp ?? 0)) * kk;
       remote.vy = (remote.vy ?? 0) + ((remote.g.position.y - oy) / idt - (remote.vy ?? 0)) * kk;
 
-      const rGround = Math.max(T.height(remote.g.position.x, remote.g.position.z), WATER_LEVEL - 0.8);
+      const rGround = T.height(remote.g.position.x, remote.g.position.z);
+      const rSwim = WATER_LEVEL - rGround > 1.8 && remote.g.position.y < WATER_LEVEL - 0.6 && remote.g.position.y > rGround - 1.2;   // 헤엄치는 다른 플레이어
       const rAir = remote.g.position.y - rGround > 0.5;
-      animateHumanoid(remote.g, dt, remote.sp, !rAir, remote.vy);
+      animateHumanoid(remote.g, dt, remote.sp, rSwim ? true : !rAir, rSwim ? 0 : remote.vy, rSwim ? { sp: remote.sp, vy: remote.vy } : null);
     }
 
     if (skillFx) { try { skillFx.update(dt); } catch (err) { console.error('스킬 이펙트 오류 (이펙트만 끕니다):', err); skillFx = null; } }
