@@ -769,6 +769,9 @@ function boot(socket, { id, seed }, nick, mode) {
           vec3 a3 = texture2D(uDirt, p * 0.2).rgb;
           float l3 = dot(texture2D(uDirt, p * 0.033).rgb, vec3(0.333));
           vec3 dirtCol = a3 * (0.6 + 1.1 * l3);
+          // 보스 터: terrain.js 가 vDetail.z(=vari)를 1 위로 올려 표시함 → 흙을 어둡고 칙칙하게
+          float arenaA = clamp(vDetail.z - 1.0, 0.0, 1.0);
+          dirtCol = mix(dirtCol, dirtCol * vec3(0.36, 0.31, 0.29), arenaA);
 
           // 마을 흙바닥
           vec3 a5 = texture2D(uVillage, p * 0.15).rgb;
@@ -2533,6 +2536,21 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (slimes) slimes.onSnapshot(lastSli);
   });
 
+  // ---------- 보스 오크 대전사 + 보스 터(어두운 흙, 뼈) + 화면 위 체력바 ----------
+  // boss.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
+  let boss = null;
+  let lastBoss = [];
+  import('./boss.mjs')
+    .then((m) => {
+      boss = m.createBossWorld({ scene, camera, T, WATER_LEVEL });
+      boss.onSnapshot(lastBoss);
+    })
+    .catch((err) => console.error('보스 로드 실패:', err));
+  socket.on('boss', (list) => {
+    lastBoss = Array.isArray(list) ? list : [];
+    if (boss) boss.onSnapshot(lastBoss);
+  });
+
   // ---------- 지하 동굴 + 골렘 ----------
   // 서버가 동굴 입구 위치를 알려주면 입구(땅 위)와 동굴(땅 밑)을 만들어요. 못 불러와도 게임 자체는 그대로 돌아가요.
   let golems = null;
@@ -2916,6 +2934,9 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     }
     if (slimes) {
       try { slimes.update(dt); } catch (err) { console.error('슬라임 오류 (슬라임만 끕니다):', err); slimes = null; }
+    }
+    if (boss) {
+      try { boss.update(dt, me); } catch (err) { console.error('보스 오류 (보스만 끕니다):', err); boss = null; }
     }
     if (cave && !curCave && !diving && curRoom < 0) {   // 땅 위에서 동굴 구멍(검은 원) 안으로 들어서면 떨어져 동굴로
       const en = cave.entrance;
