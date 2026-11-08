@@ -228,6 +228,7 @@ export function createPlacer(T, seedIn) {
   function decide(layer, x, z, prio, rBiome, rSpec, rAcc, rVar, r) {
     if (nearBuilding(x, z, 4)) return null;                           // 마을 건물 자리(+여유 4칸)는 비움
     if (NO_ZONE && (x - NO_ZONE.x) ** 2 + (z - NO_ZONE.z) ** 2 < NO_ZONE.r2) return null;   // 동굴 입구 둘레는 비움
+    if (T.arena && (x - T.arena.x) ** 2 + (z - T.arena.z) ** 2 < (T.arena.r + 2) ** 2) return null;   // 보스 터(어두운 흙 빈터)는 나무·풀·바위 없이 비움
     if (coneRatio(x, z) < CONE_CLEAR) return null;                   // 화산 옆면/분화구 안쪽은 비움
     const s = site(x, z);
     if (s.h > 300) return null;
