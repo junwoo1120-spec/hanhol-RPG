@@ -71,6 +71,26 @@ let sliSim = null;
   }
 })();
 
+// ---------- 보스 오크 대전사 (고블린 구역 한가운데의 어두운 흙 터) ----------
+// 계산 코드는 public/js/boss-ai.mjs, 터 위치는 terrain.js 가 시드마다 정해요. 로드에 실패해도 다른 몬스터·게임은 그대로 돌아가요.
+let bossSim = null;
+(async () => {
+  try {
+    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
+    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
+    const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/boss-ai.mjs')).href);
+    const zones = await import(pathToFileURL(path.join(__dirname, 'public/js/plain-zones.mjs')).href);
+    bossSim = ai.createBossSim({ T: terr.makeTerrain(SEED) });
+    if (bossSim) {
+      const a = bossSim.arena;
+      console.log('보스 오크 대전사 배치 완료 (터 중심 ' + a.x + ', ' + a.z + ')');
+      if (zones.plainZoneAt(a.x, a.z, terr.VILLAGE) !== 'goblin') console.warn('경고: 보스 터가 고블린 구역 밖이에요. terrain.js 의 findArena 각도(145/300)를 plain-zones.mjs 와 맞춰 주세요.');
+    } else console.warn('보스 터로 쓸 알맞은 평원을 못 찾아서 보스 없이 진행해요.');
+  } catch (e) {
+    console.error('보스 시스템 로드 실패 (보스 없이 계속 진행):', e);
+  }
+})();
+
 // ---------- 지하 동굴 + 골렘 ----------
 // 평원 중반부에 동굴 입구가 있고, 동굴 안(아주 깊은 땅 밑)에 골렘 20마리가 살아요.
 // 지도·충돌은 public/js/cave-layout.mjs, 골렘 두뇌는 public/js/golem-ai.mjs. 입구 위치는 서버가 정해서 접속한 브라우저에 알려줘요.
@@ -124,6 +144,7 @@ function hurtPlayer(pid, dmg) {
     if (sim) sim.dropTarget(pid);
     if (rabSim) rabSim.dropTarget(pid);
     if (sliSim) sliSim.dropTarget(pid);
+    if (bossSim) bossSim.dropTarget(pid);
     if (golSim) golSim.dropTarget(pid);
     if (underground) io.to(pid).emit('surface', { x: 0, y: 10, z: 0 });
     else io.to(pid).emit('correct', { x: 0, y: p.y, z: 0 });
@@ -137,6 +158,7 @@ function resolveAttack(attacker, now) {
   if (sim) sim.playerAttack(attacker, now);
   if (rabSim) rabSim.playerAttack(attacker, now);
   if (sliSim) sliSim.playerAttack(attacker, now);
+  if (bossSim) bossSim.playerAttack(attacker, now);
   if (golSim) golSim.playerAttack(attacker, now);
 }
 
@@ -221,7 +243,7 @@ io.on('connection', (socket) => {
   socket.on('skill', (d) => {
     const p = players.get(socket.id);
     if (!p || !p.eq || !SKILLS || !d || d.id !== 'sweep') return;
-    if (!sim && !rabSim && !sliSim && !golSim) return;
+    if (!sim && !rabSim && !sliSim && !bossSim && !golSim) return;
     const now = Date.now();
     p.skillCd = p.skillCd || {};
     if (now < (p.skillCd.sweep || 0) - 300) return;   // 쿨타임 중 (네트워크 지연 0.3초는 봐줌)
@@ -230,6 +252,7 @@ io.on('connection', (socket) => {
     if (sim) sim.playerSkill(p, 'sweep', now);
     if (rabSim) rabSim.playerSkill(p, 'sweep', now);
     if (sliSim) sliSim.playerSkill(p, 'sweep', now);
+    if (bossSim) bossSim.playerSkill(p, 'sweep', now);
     if (golSim) golSim.playerSkill(p, 'sweep', now);
   });
 
@@ -297,6 +320,22 @@ setInterval(() => {
       }
     } catch (e) {
       console.error('슬라임 업데이트 오류:', e);
+    }
+  }
+  if (bossSim) {
+    try {
+      bossSim.update(dt, now, players, {
+        hurt: hurtPlayer,
+        kill: (pid) => io.to(pid).emit('kill', { msg: '오크 대전사를 처치했습니다!' })
+      });
+      for (const p of players.values()) {
+        if (!p.spawned || p.y < UNDER_Y) continue;
+        const snap = bossSim.snapshot(p.x, p.z);
+        if (snap.length || p.bossOn) io.to(p.id).emit('boss', snap);   // 멀어지면 빈 목록을 한 번만 보내서 화면에서 지움
+        p.bossOn = snap.length > 0;
+      }
+    } catch (e) {
+      console.error('보스 업데이트 오류:', e);
     }
   }
   if (golSim) {
