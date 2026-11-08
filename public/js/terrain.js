@@ -87,6 +87,11 @@ export function coneRatio(x, z) {
   return m;
 }
 
+// 시드마다 한 번만 찾는 보스 터 위치 (같은 시드면 서버·브라우저가 항상 같은 자리)
+const arenaCache = new Map();
+const ARENA_R = 30, ARENA_BLEND = 9;                // 어두운 흙 터 반지름(가장자리 9는 서서히 풀밭으로)
+const ARENA_COL = [0.16, 0.115, 0.095];             // 터의 어두운 흙색 (텍스처가 없을 때의 기본색)
+
 export function makeTerrain(seed) {
   const s = (Number(seed) | 0) || 1;
 
@@ -261,6 +266,10 @@ export function makeTerrain(seed) {
     const vdist = Math.hypot(x - VILLAGE.x, z - VILLAGE.z);
     c = mix(c, DIRT, 1 - smooth(VILLAGE.r * 0.9, VILLAGE.r + VILLAGE.blend * 0.6, vdist));
 
+    // 보스 터: 어두운 흙
+    const am = arenaMask(x, z);
+    if (am > 0) c = mix(c, ARENA_COL, am);
+
     // 외곽 산맥: 바위색 + 꼭대기 눈
     const ring = smooth(RING_START - 50, RING_START + 100, Math.hypot(x, z));
     if (ring > 0) {
@@ -274,6 +283,14 @@ export function makeTerrain(seed) {
   // [평원 잔디, 평원 흙 얼룩, 잔디 색 변화, 마을 흙, 정글 잔디, 사막 모래,
   //  화산 일반 돌, 용암 섞인 돌, 분출구 용암,
   //  설원 눈, 눈 덮힌 바위 덩어리, 얼음 호수]
+  // ---------- 보스 터 (고블린 구역 한가운데의 어두운 흙 빈터) ----------
+  // arena = { x, z, r } 또는 null(알맞은 자리가 없으면). 아래 findArena() 가 시작할 때 정해요.
+  let arena = null;
+  function arenaMask(x, z) {   // 터 안쪽 1 → 가장자리 0
+    if (!arena) return 0;
+    return 1 - smooth(ARENA_R - ARENA_BLEND, ARENA_R, Math.hypot(x - arena.x, z - arena.z));
+  }
+
   function detail(x, z, h) {
     const u = x * K, v = z * K;
     const w = weights(u, v);
@@ -286,9 +303,12 @@ export function makeTerrain(seed) {
     const village = 1 - smooth(VILLAGE.r * 0.9, VILLAGE.r + VILLAGE.blend * 0.6, vdist);
 
     const patch = smooth(0.60, 0.70, fbm(x * 0.05 + 300, z * 0.05 - 300, 3)) * 0.85;
-    const dirt = Math.min(1, patch * plain) * (1 - village);
+    const ar = arenaMask(x, z);                                    // 보스 터 안쪽은 잔디 없이 흙만
+    const dirt0 = Math.min(1, patch * plain) * (1 - village);
+    const dirt = dirt0 + (plain - dirt0) * ar;
     const grass = plain * (1 - dirt);
-    const vari = fbm(x * 0.02 + 77, z * 0.02 - 77, 2);
+    // vari(잔디 색 변화, 0~1) 가 1 을 넘으면 '보스 터' 표시 (main.js 의 땅 셰이더가 흙을 더 어둡게 칠함)
+    const vari = ar > 0.001 ? 1 + ar : fbm(x * 0.02 + 77, z * 0.02 - 77, 2);
 
     // 화산: 일반 돌 + 군데군데 용암 섞인 돌 + 분화구 용암
     const volc = w[3] * land;
@@ -327,5 +347,47 @@ export function makeTerrain(seed) {
     return BIOME_IDS[best];
   }
 
-  return { height, color, detail, biome };
+  // 보스 터 자리 찾기: 고블린 구역(plain-zones.mjs 와 같은 범위: 마을에서 반지름 260 이상, 북쪽 기준 시계 방향 145°~300°)의
+  // 평원 무게중심에 가장 가깝고, 반지름 34 안이 전부 평원이며 비교적 평평한 곳.
+  // ※ plain-zones.mjs 의 고블린 구역 각도(SLIME_END_DEG 등)를 바꾸면 아래 145 / 300 도 같이 바꿔 주세요.
+  function findArena() {
+    const inZone = (x, z) => {
+      const dx = x - VILLAGE.x, dz = z - VILLAGE.z;
+      if (Math.hypot(dx, dz) < 260) return false;
+      let a = Math.atan2(dx, -dz) * 180 / Math.PI; if (a < 0) a += 360;
+      return a >= 145 && a < 300;
+    };
+    const okPt = (x, z) => {
+      if (!inZone(x, z)) return false;
+      const h = height(x, z);
+      if (h < WATER_LEVEL + 3) return false;
+      const d = detail(x, z, h);
+      return d[0] + d[1] > 0.9 && d[3] < 0.02;
+    };
+    let sx = 0, sz = 0, n = 0;
+    for (let x = -1400; x <= 1400; x += 24) for (let z = -1400; z <= 1400; z += 24) if (okPt(x, z)) { sx += x; sz += z; n++; }
+    if (n < 20) return null;
+    const cx = sx / n, cz = sz / n, R = ARENA_R + 4;
+    let best = null;
+    for (let x = cx - 320; x <= cx + 320; x += 10) for (let z = cz - 320; z <= cz + 320; z += 10) {
+      const d0 = Math.hypot(x - cx, z - cz);
+      if (best && d0 >= best.d) continue;
+      if (!okPt(x, z)) continue;
+      let good = true, hmin = Infinity, hmax = -Infinity;
+      for (let a = 0; a < 12 && good; a++) for (const rr of [R * 0.5, R]) {
+        const px = x + Math.cos(a * Math.PI / 6) * rr, pz = z + Math.sin(a * Math.PI / 6) * rr;
+        if (!okPt(px, pz)) { good = false; break; }
+        const hh = height(px, pz); if (hh < hmin) hmin = hh; if (hh > hmax) hmax = hh;
+      }
+      if (!good) continue;
+      const d = d0 + (hmax - hmin) * 6;   // 무게중심에 가깝고 평평할수록 좋음
+      if (!best || d < best.d) best = { x: Math.round(x), z: Math.round(z), d };
+    }
+    return best ? { x: best.x, z: best.z, r: ARENA_R } : null;
+  }
+  const sKey = (Number(seed) | 0) || 1;
+  if (!arenaCache.has(sKey)) arenaCache.set(sKey, findArena());
+  arena = arenaCache.get(sKey);
+
+  return { height, color, detail, biome, arena };
 }
