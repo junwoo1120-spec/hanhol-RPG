@@ -89,7 +89,7 @@ export function coneRatio(x, z) {
 
 // 시드마다 한 번만 찾는 보스 터 위치 (같은 시드면 서버·브라우저가 항상 같은 자리)
 const arenaCache = new Map();
-const ARENA_R = 30, ARENA_BLEND = 9;                // 어두운 흙 터 반지름(가장자리 9는 서서히 풀밭으로)
+const ARENA_R = 42, ARENA_BLEND = 11;               // 어두운 흙 터 반지름(가장자리 11은 서서히 풀밭으로)
 const ARENA_COL = [0.16, 0.115, 0.095];             // 터의 어두운 흙색 (텍스처가 없을 때의 기본색)
 
 export function makeTerrain(seed) {
