@@ -2551,6 +2551,11 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (boss) boss.onSnapshot(lastBoss);
   });
 
+  // ---------- 개발자 도구 (닉네임이 서버에 등록된 개발자 이름일 때만 화면 위에 패널이 떠요) ----------
+  import('./dev-panel.mjs')
+    .then((m) => m.createDevPanel({ socket }))
+    .catch((err) => console.error('개발자 도구 로드 실패:', err));
+
   // ---------- 지하 동굴 + 골렘 ----------
   // 서버가 동굴 입구 위치를 알려주면 입구(땅 위)와 동굴(땅 밑)을 만들어요. 못 불러와도 게임 자체는 그대로 돌아가요.
   let golems = null;
