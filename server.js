@@ -116,6 +116,10 @@ let UNDER_Y = -100;     // 이보다 낮으면 지하 (땅 위 몬스터는 지�
 })();
 
 const PLAYER_HP_MAX = 100;
+// 개발자 도구: 이 닉네임으로 접속한 사람은 화면 위 패널에서 자기 데미지·체력 배율을 바꿀 수 있어요.
+// ※ 닉네임만 확인하는 방식이라 같은 닉네임을 쓰면 누구나 쓸 수 있어요. 공개 서버로 열 땐 비밀번호 방식으로 바꾸세요.
+const DEV_NICK = '박준우';
+const DEV_MULT_MIN = 0.1, DEV_MULT_MAX = 1000;
 const HP_REGEN_SEC = 2;      // 자연 회복: 이 시간(초)마다
 const HP_REGEN_AMOUNT = 1;   // 이만큼 회복
 
@@ -181,6 +185,23 @@ io.on('connection', (socket) => {
     socket.emit('init', { id: socket.id, seed: SEED });
     socket.emit('hp', { hp: PLAYER_HP_MAX, max: PLAYER_HP_MAX });
     if (caveEnt) socket.emit('cave', caveEnt);   // 동굴 입구 위치 (아직 계산 전이면 계산이 끝났을 때 전체에게 보냄)
+  });
+
+  // 개발자 도구 (닉네임이 DEV_NICK 인 사람만). 화면 패널이 켜질 때 인사를 보내면 현재 배율을 알려줘요
+  socket.on('dev:hello', () => {
+    const p = players.get(socket.id);
+    if (p && p.nick === DEV_NICK) socket.emit('dev:on', { dmg: p.dmgMult || 1, hp: p.hpMult || 1 });
+  });
+  socket.on('dev:set', (d) => {
+    const p = players.get(socket.id);
+    if (!p || p.nick !== DEV_NICK || !d || typeof d !== 'object') return;
+    const num = (v) => { v = Number(v); return Number.isFinite(v) ? Math.min(DEV_MULT_MAX, Math.max(DEV_MULT_MIN, v)) : 1; };
+    p.dmgMult = num(d.dmg);
+    p.hpMult = num(d.hp);
+    const max = Math.max(1, Math.round(PLAYER_HP_MAX * p.hpMult));
+    if (max !== p.hpMax) { p.hpMax = max; p.hp = max; }   // 최대 체력이 바뀌면 가득 채워서 시작
+    socket.emit('hp', { hp: p.hp, max: p.hpMax });
+    socket.emit('dev:on', { dmg: p.dmgMult, hp: p.hpMult });
   });
 
   socket.on('move', (m) => {
