@@ -12,6 +12,7 @@ import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
 import { createZoneBanner } from './zone-banner.js';
 import { createSeaLife } from './sea-life.js';
+import { ITEMS, SKILL_INFO, INV_CAP, SLAM } from './items.mjs';
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
@@ -1744,12 +1745,22 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .uwb-grid{position:absolute;display:grid;gap:4px}
 .uwb-eq{position:absolute}
 .uwb-lb{position:absolute;width:160px;margin-left:-80px;text-align:center;font-size:24px;font-weight:700;color:#2a1a0c}
-.uwb-detail{position:absolute;left:840px;top:330px;width:560px;height:420px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;text-align:center;font-size:30px;line-height:1.9;color:#5a4328}
-.uwb-orn{font-size:44px;color:rgba(90,60,28,.5);line-height:1}
+.uwb-detail{position:absolute;left:840px;top:270px;width:560px;height:520px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;font-size:30px;line-height:1.9;color:#5a4328}
+.uwb-orn{font-size:34px;color:rgba(90,60,28,.5);line-height:1}
 .uwb-x{position:absolute;left:1380px;top:146px;width:52px;height:48px;font-size:40px;line-height:48px;text-align:center;cursor:pointer;color:#3a2814}
 .uwb-x:hover{color:#000}
 .uw-node{fill:#2b1f14;stroke:#7a5d34;stroke-width:5;cursor:pointer}
 .uw-node.sel{stroke:#ffd77a}
+.uw-slot{position:relative}
+.uw-slot .ic{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:54px;line-height:1;pointer-events:none}
+.uw-slot .ic small{font-size:16px;margin-top:4px;font-weight:700;color:#f1dfb6;text-shadow:0 1px 0 #000,0 0 3px #000}
+.uw-slot .cnt{position:absolute;right:8px;bottom:4px;font-size:22px;font-weight:700;color:#fff;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000;pointer-events:none}
+.uwb-dt{font-size:34px;font-weight:700;color:#2a1a0c;line-height:1.3}
+.uwb-dsc{font-size:22px;line-height:1.5;color:#4a3720}
+.uwb-dsc b{color:#8a2a14}
+.uwb-btn{display:inline-block;margin-top:6px;padding:8px 38px;font-size:30px;font-weight:700;color:#f1dfb6;background:#5a3b1c;border:3px solid #2a1a0c;border-radius:6px;cursor:pointer;box-shadow:0 3px 0 #2a1a0c}
+.uwb-btn:hover{filter:brightness(1.2)}
+.uwb-btn.off{background:#7a7468;color:#c8c0b0;cursor:default;box-shadow:none}
 `;
   document.head.appendChild(winStyle);
   const winEl = document.createElement('div');
@@ -1760,10 +1771,52 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   const at = (x, y, w, h) => 'left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px';
   const wHead = (x, y, t) => '<div class="uwb-h" style="left:' + x + 'px;top:' + y + 'px"><i>◈</i>' + t + '</div>';
   const wDetail = (txt) => '<div class="uwb-detail"><div class="uwb-orn">❖</div><div class="uw-dtxt">' + txt + '</div><div class="uwb-orn">❖</div></div>';
+  // ----- 인벤토리 · 스킬 데이터 (서버가 보내줌: 'inv' / 'skills') -----
+  let invItems = [];            // [{ id, n }]
+  let learnedSk = [];           // 배운 스킬 id
+  let slotRSkill = null;        // R 칸(E 칸 아래)에 장착한 스킬
+  const winSel = { inv: -1, sk: null };   // 창에서 선택한 칸 (다시 그려도 유지)
+  const SK_ICON = { sweep: '🌀', slam: '💥' };
+  const itemSlot = (i) => {
+    const it = invItems[i], def = it && ITEMS[it.id];
+    return '<div class="uw-slot' + (winSel.inv === i ? ' sel' : '') + '" data-inv="' + i + '">' +
+      (def ? '<div class="ic">' + def.icon + '<small>스킬북</small></div>' + (it.n > 1 ? '<span class="cnt">' + it.n + '</span>' : '') : '') + '</div>';
+  };
   const wInv = () => wHead(138, 158, '인벤토리') +
-    '<div class="uwb-grid" style="' + at(147, 249, 581, 551) + ';grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(5,1fr)">' + '<div class="uw-slot"></div>'.repeat(30) + '</div>' +
+    '<div class="uwb-grid" style="' + at(147, 249, 581, 551) + ';grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(5,1fr)">' + Array.from({ length: 30 }, (_, i) => itemSlot(i)).join('') + '</div>' +
     '<img src="/ui/icon_bag.png" alt="" style="position:absolute;left:153px;top:831px;width:40px;height:40px;object-fit:contain;filter:sepia(.7) brightness(.45)">' +
-    '<div style="position:absolute;left:205px;top:832px;font-size:30px;font-weight:700">0 / 100</div>';
+    '<div style="position:absolute;left:205px;top:832px;font-size:30px;font-weight:700">' + invItems.length + ' / ' + INV_CAP + '</div>';
+  const invDetail = () => {
+    if (winSel.inv < 0) return '아이템을 선택하면<br>상세 정보가 표시됩니다.';
+    const it = invItems[winSel.inv], def = it && ITEMS[it.id];
+    if (!def) return '비어 있는 칸이에요';
+    let btn = '';
+    if (def.kind === 'skillbook') btn = learnedSk.includes(def.skill)
+      ? '<div class="uwb-btn off">이미 배운 스킬</div>'
+      : '<div class="uwb-btn" data-act="learn" data-id="' + it.id + '">배우기</div>';
+    return '<div class="uwb-dt">' + def.icon + ' ' + def.name + (it.n > 1 ? ' ×' + it.n : '') + '</div><div class="uwb-dsc">' + def.desc + '</div>' + btn;
+  };
+  const skillList = () => ['sweep', ...learnedSk.filter((id) => SKILL_INFO[id] && id !== 'sweep')];
+  const wSkillGrid = () => {
+    const list = skillList();
+    let h = '';
+    for (let i = 0; i < 20; i++) {
+      const id = list[i], info = id && SKILL_INFO[id];
+      h += info
+        ? '<div class="uw-slot' + (winSel.sk === id ? ' sel' : '') + '" data-sk="' + id + '"><div class="ic">' + (SK_ICON[id] || '✦') + '<small>' + info.name + '</small></div></div>'
+        : '<div class="uw-slot"></div>';
+    }
+    return '<div class="uwb-grid" style="' + at(153, 298, 568, 452) + ';grid-template-columns:repeat(5,104px);grid-template-rows:repeat(4,104px);gap:12px">' + h + '</div>';
+  };
+  const skillDetail = () => {
+    const info = winSel.sk && SKILL_INFO[winSel.sk];
+    if (!info) return '스킬을 선택하면<br>상세 정보가 표시됩니다.';
+    let tail;
+    if (info.base) tail = '<div class="uwb-dsc" style="color:#7a5a30">기본 스킬 · ' + info.slot + ' 칸에 고정되어 있어요</div>';
+    else if (slotRSkill === winSel.sk) tail = '<div class="uwb-dsc" style="color:#2a6a2a">장착 중 (' + info.slot + ' 칸)</div><div class="uwb-btn" data-act="unequip">장착 해제</div>';
+    else tail = '<div class="uwb-btn" data-act="equip" data-skill="' + winSel.sk + '">' + info.slot + ' 칸에 장착</div>';
+    return '<div class="uwb-dt">' + (SK_ICON[winSel.sk] || '✦') + ' ' + info.name + '</div><div class="uwb-dsc">' + info.desc + '</div>' + tail;
+  };
   const wEquip = () => {
     const sl = (img, x, y, w, h, lx, ly, name) =>
       '<div class="uw-slot uwb-eq" style="' + at(x, y, w, h) + ';background-image:url(/ui/' + img + '.png)"></div>' +
@@ -1788,13 +1841,9 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   };
 
   function winBody(i) {
-    if (i === 0) return wInv() + wDetail('아이템을 선택하면<br>상세 정보가 표시됩니다.');
+    if (i === 0) return wInv() + wDetail(invDetail());
     if (i === 1) return wInv() + wEquip();
-    if (i === 2) {
-      return wHead(138, 158, '스킬') +
-        '<div class="uwb-grid" style="' + at(153, 298, 568, 452) + ';grid-template-columns:repeat(5,104px);grid-template-rows:repeat(4,104px);gap:12px">' + '<div class="uw-slot"></div>'.repeat(20) + '</div>' +
-        wDetail('스킬을 선택하면<br>상세 정보가 표시됩니다.');
-    }
+    if (i === 2) return wHead(138, 158, '스킬') + wSkillGrid() + wDetail(skillDetail());
     return wTree() + wDetail('특성을 선택하면<br>상세 정보가 표시됩니다.');
   }
 
@@ -1823,6 +1872,18 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const tab = t.closest('[data-tab]');
     if (tab) { winIdx = Number(tab.getAttribute('data-tab')); renderWin(); return; }
     if (t === winEl) { closeWin(); return; }
+    const act = t.closest('[data-act]');   // 배우기 / 장착 / 장착 해제 버튼 (결과는 서버가 인벤토리·스킬 정보로 다시 보내줌)
+    if (act) {
+      const a = act.getAttribute('data-act');
+      if (a === 'learn') socket.emit('learn', { id: act.getAttribute('data-id') });
+      else if (a === 'equip') socket.emit('equip', { skill: act.getAttribute('data-skill') });
+      else if (a === 'unequip') socket.emit('equip', { skill: null });
+      return;
+    }
+    const iv = t.closest('[data-inv]');
+    if (iv) { winSel.inv = Number(iv.getAttribute('data-inv')); renderWin(); return; }
+    const sk = t.closest('[data-sk]');
+    if (sk) { winSel.sk = sk.getAttribute('data-sk'); renderWin(); return; }
     const sl = t.closest('.uw-slot, .uw-node');
     if (sl) {
       winEl.querySelectorAll('.sel').forEach((n) => n.classList.remove('sel'));
@@ -2378,11 +2439,27 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   const SKILL_SLOTS = [
     { key: 'Q', id: 'dash', name: '대쉬', cd: 1, img: '/ui/dash_btn.png' },   // 대쉬는 아래 "대쉬 (Q)" 구역 참고
     { key: 'E', id: 'sweep', name: '휩쓸기', cd: 10 },   // cd = 쿨타임(초). 서버 값(goblin-ai.mjs SKILLS.sweep.COOLDOWN)과 같게
-    { key: 'R', id: null, name: '없음', cd: 0 },
+    { key: 'R', id: null, name: '없음', cd: 0 },   // R = E 칸 바로 아래 칸: 스킬 창에서 장착한 스킬(내려찍기)이 들어와요
     { key: 'T', id: null, name: '없음', cd: 0 },
   ];
   const SKILLBAR_PC_SCALE = 2.5;  // 컴퓨터(키보드 모드)에서 스킬 칸 크기 배율. 화면 높이를 넘지 않게 자동으로 줄여요
   const skillReadyAt = {};        // 스킬 id -> 다시 쓸 수 있는 시각(performance.now 기준)
+  let refreshSkillBar = null;   // 스킬 칸 이름 갱신 (아래 스킬 칸 만들 때 채움)
+  function applySlotR() {   // 서버가 알려준 장착 정보를 R 칸에 반영
+    const def = SKILL_SLOTS.find((x) => x.key === 'R'), info = slotRSkill && SKILL_INFO[slotRSkill];
+    def.id = info ? slotRSkill : null;
+    def.name = info ? info.name : '없음';
+    def.cd = info ? info.cd : 0;
+    if (refreshSkillBar) refreshSkillBar();
+  }
+  let slamFxMine = null, slamFxRemote = null;   // 내려찍기 연출 (노란 네모 + 땅 조각). 남의 것은 따로
+  import('./slam-fx.js')
+    .then((m) => {
+      const o = { size: SLAM.SIZE, telegraph: SLAM.DELAY, colors: { fill: 0xffc21a, inner: 0xffe36a, edge: 0xffd23a } };
+      slamFxMine = m.createSlamFx(scene, T, o);
+      slamFxRemote = m.createSlamFx(scene, T, o);
+    })
+    .catch((err) => console.error('내려찍기 이펙트 로드 실패:', err));
   let skillFx = null;   // (이름 주의: 게임 루프 안에 fx 라는 다른 변수가 있어서 skillFx 로 씀)
   import('./skill-fx.js')
     .then((m) => { skillFx = m.createSkillFx(scene); })
@@ -2440,11 +2517,22 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       socket.emit('skill', { id: 'sweep' });
       if (skillFx) { try { skillFx.play('sweep', myAvatar.position.x, myAvatar.position.y, myAvatar.position.z, me.ry); } catch (err) { console.error('스킬 이펙트 오류:', err); } }
     }
+    if (def.id === 'slam') {   // 내려찍기: 노란 네모가 뜨고 SLAM.DELAY 초 뒤 땅을 찍음 (피해는 서버가 확정)
+      if (!startWeaponSweep(myRig)) return;
+      skillReadyAt.slam = performance.now() + def.cd * 1000;
+      socket.emit('skill', { id: 'slam' });
+      if (slamFxMine) { try { slamFxMine.start(me.x, me.z, me.ry); } catch (err) { console.error('내려찍기 이펙트 오류:', err); } }
+    }
   }
 
   // 다른 플레이어가 쓴 스킬 (모션 + 이펙트)
   socket.on('skillfx', (d) => {
     const remote = d && remotes.get(d.id);
+    if (remote && d.skill === 'slam') {   // 다른 플레이어의 내려찍기
+      startWeaponSweep(remote.g.userData.rig, true);
+      if (slamFxRemote && Number.isFinite(d.x) && Number.isFinite(d.z) && Number.isFinite(d.ry)) { try { slamFxRemote.start(d.x, d.z, d.ry); } catch (err) { console.error('내려찍기 이펙트 오류:', err); } }
+      return;
+    }
     if (!remote || d.skill !== 'sweep') return;
     startWeaponSweep(remote.g.userData.rig, true);
     if (skillFx) { try { skillFx.play('sweep', remote.g.position.x, remote.g.position.y, remote.g.position.z, remote.g.rotation.y); } catch (err) { console.error('스킬 이펙트 오류:', err); } }
@@ -2473,6 +2561,13 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       return { def, el, cdv: el.querySelector('.cdv'), cdn: el.querySelector('.cdn') };
     });
     document.body.appendChild(bar);
+    refreshSkillBar = () => {   // R 칸에 스킬을 장착/해제하면 칸에 보이는 이름도 바꿈
+      for (const sl of slotEls) {
+        const n = sl.el.querySelector('.n');
+        if (n && n.textContent !== sl.def.name) { n.textContent = sl.def.name; n.className = 'n' + (sl.def.name.length > 2 ? ' s' : ''); }
+      }
+    };
+    refreshSkillBar();
     setInterval(() => {   // 쿨타임 표시 (아래에서 위로 줄어드는 어두운 막 + 남은 초)
       const now = performance.now();
       for (const s of slotEls) {
@@ -2602,6 +2697,20 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (d.hp < before) flashHurt();
   });
   socket.on('kill', (d) => toast(d && typeof d.msg === 'string' ? d.msg : '고블린을 처치했습니다!'));
+  socket.on('toast', (d) => { if (d && typeof d.msg === 'string') toast(d.msg); });   // 서버 안내 (스킬북 획득 · 배움 등)
+  const winOpenNow = () => winEl.style.display === 'flex';
+  socket.on('inv', (d) => {   // 인벤토리 (서버가 정함)
+    invItems = d && Array.isArray(d.items) ? d.items.filter((i) => i && ITEMS[i.id] && Number.isFinite(i.n)) : [];
+    if (winSel.inv >= invItems.length) winSel.inv = -1;
+    if (winOpenNow()) renderWin();
+  });
+  socket.on('skills', (d) => {   // 배운 스킬 + R 칸 장착 상태 (서버가 정함)
+    learnedSk = d && Array.isArray(d.learned) ? d.learned.filter((id) => SKILL_INFO[id]) : [];
+    slotRSkill = d && d.slotR && SKILL_INFO[d.slotR] && learnedSk.includes(d.slotR) ? d.slotR : null;
+    applySlotR();
+    if (winOpenNow()) renderWin();
+  });
+  socket.emit('sync');   // 위 핸들러가 준비됐으니 인벤토리·스킬 정보를 한 번 더 받음
   socket.on('notice', (t) => { if (typeof t === 'string') toast(t); });
 
   let sendTimer = 0;
@@ -2943,6 +3052,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (boss) {
       try { boss.update(dt, me); } catch (err) { console.error('보스 오류 (보스만 끕니다):', err); boss = null; }
     }
+    if (slamFxMine) { try { slamFxMine.update(dt); } catch (err) { console.error('내려찍기 이펙트 오류:', err); slamFxMine = null; } }
+    if (slamFxRemote) { try { slamFxRemote.update(dt); } catch (err) { console.error('내려찍기 이펙트 오류:', err); slamFxRemote = null; } }
     if (cave && !curCave && !diving && curRoom < 0) {   // 땅 위에서 동굴 구멍(검은 원) 안으로 들어서면 떨어져 동굴로
       const en = cave.entrance;
       if (Math.abs(me.y - en.y) < 8 && Math.hypot(me.x - en.x, me.z - en.z) < en.dive) {
