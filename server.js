@@ -71,6 +71,33 @@ let sliSim = null;
   }
 })();
 
+// ---------- 아이템 · 스킬북 (인벤토리 / 배우기 / 장착) ----------
+// 목록·설명·확률·수치는 public/js/items.mjs. 로드에 실패해도 게임은 그대로 돌아가요(아이템만 못 얻음).
+// 플레이어 정보: p.inv = [{ id, n }] (인벤토리), p.learned = ['slam'] (배운 스킬), p.slotR = 'slam' | null (R 칸에 장착한 스킬)
+let ITEMS_MOD = null;
+(async () => {
+  try { ITEMS_MOD = await import(pathToFileURL(path.join(__dirname, 'public/js/items.mjs')).href); }
+  catch (e) { console.error('아이템 정보 로드 실패 (아이템 없이 계속 진행):', e); }
+})();
+// 접속이 끊겨도 같은 닉네임으로 다시 들어오면 인벤토리·스킬을 되돌려줘요. (서버를 다시 켜면 사라져요. 닉네임만 보고 되돌려주는 방식이라 계정 시스템이 생기면 그쪽으로 옮겨야 해요)
+const savedByNick = new Map();
+const saveProfile = (p) => {
+  savedByNick.set(p.nick, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR });
+  if (savedByNick.size > 500) savedByNick.delete(savedByNick.keys().next().value);
+};
+const sendInv = (p) => io.to(p.id).emit('inv', { items: p.inv });
+const sendSkills = (p) => io.to(p.id).emit('skills', { learned: p.learned, slotR: p.slotR });
+const sendToast = (p, msg) => io.to(p.id).emit('toast', { msg });
+function addItem(p, id, n = 1) {   // 성공하면 true, 칸이 없으면 false
+  if (!ITEMS_MOD || !ITEMS_MOD.ITEMS[id]) return false;
+  const st = p.inv.find((i) => i.id === id);
+  if (st) st.n += n;
+  else if (p.inv.length < ITEMS_MOD.INV_CAP) p.inv.push({ id, n });
+  else return false;
+  saveProfile(p);
+  return true;
+}
+
 // ---------- 보스 오크 대전사 (고블린 구역 한가운데의 어두운 흙 터) ----------
 // 계산 코드는 public/js/boss-ai.mjs, 터 위치는 terrain.js 가 시드마다 정해요. 로드에 실패해도 다른 몬스터·게임은 그대로 돌아가요.
 let bossSim = null;
@@ -182,8 +209,13 @@ io.on('connection', (socket) => {
       hp: PLAYER_HP_MAX, hpMax: PLAYER_HP_MAX,
       level: 1   // 레벨 (아직 성장 시스템이 없어서 1 고정. 나중에 여기 값만 바꾸면 거래 목록에도 반영됨)
     });
+    const me = players.get(socket.id), sv = savedByNick.get(nick);   // 같은 닉네임이 전에 쓰던 인벤토리·스킬 복원
+    me.inv = sv ? sv.inv.map((i) => ({ ...i })) : [];
+    me.learned = sv ? [...sv.learned] : [];
+    me.slotR = sv ? sv.slotR : null;
     socket.emit('init', { id: socket.id, seed: SEED });
     socket.emit('hp', { hp: PLAYER_HP_MAX, max: PLAYER_HP_MAX });
+    sendInv(me); sendSkills(me);
     if (caveEnt) socket.emit('cave', caveEnt);   // 동굴 입구 위치 (아직 계산 전이면 계산이 끝났을 때 전체에게 보냄)
   });
 
@@ -202,6 +234,44 @@ io.on('connection', (socket) => {
     if (max !== p.hpMax) { p.hpMax = max; p.hp = max; }   // 최대 체력이 바뀌면 가득 채워서 시작
     socket.emit('hp', { hp: p.hp, max: p.hpMax });
     socket.emit('dev:on', { dmg: p.dmgMult, hp: p.hpMult });
+  });
+
+  // 화면이 준비되면 인벤토리·스킬 정보를 한 번 더 요청 (접속 직후에 보낸 것을 놓쳤을 때 대비)
+  socket.on('sync', () => {
+    const p = players.get(socket.id);
+    if (p && p.inv) { sendInv(p); sendSkills(p); }
+  });
+  // 스킬북 배우기: 인벤토리의 책을 하나 쓰고 그 스킬을 익힘 (이미 배운 스킬이면 책을 쓰지 않음)
+  socket.on('learn', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !ITEMS_MOD || !d || typeof d.id !== 'string') return;
+    const def = ITEMS_MOD.ITEMS[d.id], st = p.inv.find((i) => i.id === d.id);
+    if (!def || def.kind !== 'skillbook' || !st) return;
+    if (p.learned.includes(def.skill)) { sendToast(p, '이미 배운 스킬이에요'); return; }
+    st.n -= 1;
+    if (st.n <= 0) p.inv.splice(p.inv.indexOf(st), 1);
+    p.learned.push(def.skill);
+    saveProfile(p); sendInv(p); sendSkills(p);
+    sendToast(p, '\'' + ITEMS_MOD.SKILL_INFO[def.skill].name + '\' 스킬을 배웠습니다!');
+  });
+  // 장착: R 칸(E 칸 아래)에 배운 스킬을 올리거나(skill = 스킬 id) 내림(skill = null)
+  socket.on('equip', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !ITEMS_MOD || !d) return;
+    if (d.skill === null) p.slotR = null;
+    else {
+      const info = typeof d.skill === 'string' ? ITEMS_MOD.SKILL_INFO[d.skill] : null;
+      if (!info || info.slot !== 'R' || !p.learned.includes(d.skill)) return;
+      p.slotR = d.skill;
+    }
+    saveProfile(p); sendSkills(p);
+  });
+  // 개발자 도구: 스킬북을 바로 받음 (1% 드랍을 기다리지 않고 시험하려고)
+  socket.on('dev:book', () => {
+    const p = players.get(socket.id);
+    if (!p || p.nick !== DEV_NICK) return;
+    if (addItem(p, 'book_slam')) { sendInv(p); sendToast(p, '스킬북: 내려찍기를 받았어요 (개발자 도구)'); }
+    else sendToast(p, '인벤토리가 가득 찼어요');
   });
 
   socket.on('move', (m) => {
@@ -260,21 +330,36 @@ io.on('connection', (socket) => {
     resolveAttack(p, now);
   });
 
-  // 스킬 사용 (E = 휩쓸기). 검을 든 상태에서만, 쿨타임은 서버가 다시 검사. 피해는 서버가 범위 안의 고블린 전부에게 확정
+  // 스킬 사용. E = 휩쓸기(기본), R = 장착한 스킬(내려찍기). 검을 든 상태에서만, 쿨타임은 서버가 다시 검사. 피해는 서버가 범위 안의 몬스터 전부에게 확정
   socket.on('skill', (d) => {
     const p = players.get(socket.id);
-    if (!p || !p.eq || !SKILLS || !d || d.id !== 'sweep') return;
+    if (!p || !p.eq || !SKILLS || !d || (d.id !== 'sweep' && d.id !== 'slam')) return;
     if (!sim && !rabSim && !sliSim && !bossSim && !golSim) return;
     const now = Date.now();
     p.skillCd = p.skillCd || {};
-    if (now < (p.skillCd.sweep || 0) - 300) return;   // 쿨타임 중 (네트워크 지연 0.3초는 봐줌)
-    p.skillCd.sweep = now + SKILLS.sweep.COOLDOWN * 1000;
-    socket.broadcast.emit('skillfx', { id: socket.id, skill: 'sweep' });
-    if (sim) sim.playerSkill(p, 'sweep', now);
-    if (rabSim) rabSim.playerSkill(p, 'sweep', now);
-    if (sliSim) sliSim.playerSkill(p, 'sweep', now);
-    if (bossSim) bossSim.playerSkill(p, 'sweep', now);
-    if (golSim) golSim.playerSkill(p, 'sweep', now);
+    if (d.id === 'sweep') {
+      if (now < (p.skillCd.sweep || 0) - 300) return;   // 쿨타임 중 (네트워크 지연 0.3초는 봐줌)
+      p.skillCd.sweep = now + SKILLS.sweep.COOLDOWN * 1000;
+      socket.broadcast.emit('skillfx', { id: socket.id, skill: 'sweep' });
+      if (sim) sim.playerSkill(p, 'sweep', now);
+      if (rabSim) rabSim.playerSkill(p, 'sweep', now);
+      if (sliSim) sliSim.playerSkill(p, 'sweep', now);
+      if (bossSim) bossSim.playerSkill(p, 'sweep', now);
+      if (golSim) golSim.playerSkill(p, 'sweep', now);
+      return;
+    }
+    // 내려찍기: 배우고 R 칸에 장착해야 씀. 내 둘레 정사각형 범위(쓴 순간 위치·방향으로 고정)에 DELAY 뒤 피해
+    if (!ITEMS_MOD || p.slotR !== 'slam' || !p.learned.includes('slam')) return;
+    const SL = ITEMS_MOD.SLAM;
+    if (now < (p.skillCd.slam || 0) - 300) return;
+    p.skillCd.slam = now + SL.COOLDOWN * 1000;
+    socket.broadcast.emit('skillfx', { id: socket.id, skill: 'slam', x: p.x, z: p.z, ry: p.ry });
+    const sq = { cx: p.x, cz: p.z, ry: p.ry, half: SL.SIZE / 2, dmg: SL.DAMAGE, delay: SL.DELAY };
+    if (sim) sim.playerSquare(p, now, sq);
+    if (rabSim) rabSim.playerSquare(p, now, sq);
+    if (sliSim) sliSim.playerSquare(p, now, sq);
+    if (bossSim) bossSim.playerSquare(p, now, sq);
+    if (golSim) golSim.playerSquare(p, now, sq);
   });
 
   // 대쉬 (Q): 이동 자체는 클라이언트가 하고(5m), 서버는 쿨타임(1초)만 확인해서 다른 플레이어에게 이펙트를 알려줌
@@ -294,7 +379,7 @@ io.on('connection', (socket) => {
     if (p) p.fast = !!v;
   });
 
-  socket.on('disconnect', () => players.delete(socket.id));
+  socket.on('disconnect', () => { const p = players.get(socket.id); if (p && p.inv) saveProfile(p); players.delete(socket.id); });
 });
 
 // 20Hz 고블린·토끼 시뮬레이션 + 주변 몬스터 목록 전송
@@ -347,7 +432,18 @@ setInterval(() => {
     try {
       bossSim.update(dt, now, players, {
         hurt: hurtPlayer,
-        kill: (pid) => io.to(pid).emit('kill', { msg: '오크 대전사를 처치했습니다!' })
+        kill: (pid, b, hitters) => {
+          // 보스에게 피해를 준 사람마다 따로 스킬북 확률(items.mjs BOSS_BOOK_CHANCE)을 굴려요
+          for (const hid of (hitters && hitters.length ? hitters : [pid])) {
+            const hp = players.get(hid);
+            if (!hp) continue;
+            io.to(hid).emit('kill', { msg: '오크 대전사를 처치했습니다!' });
+            if (ITEMS_MOD && Math.random() < (Number(process.env.BOSS_BOOK_CHANCE) || ITEMS_MOD.BOSS_BOOK_CHANCE)) {   // 환경변수 BOSS_BOOK_CHANCE 로 확률을 바꿔 시험할 수 있어요 (예: 1 = 100%)
+              if (addItem(hp, 'book_slam')) { sendInv(hp); sendToast(hp, '✨ ' + ITEMS_MOD.ITEMS.book_slam.name + ' 획득!'); }
+              else sendToast(hp, '인벤토리가 가득 차서 스킬북을 얻지 못했어요');
+            }
+          }
+        }
       });
       for (const p of players.values()) {
         if (!p.spawned || p.y < UNDER_Y) continue;
