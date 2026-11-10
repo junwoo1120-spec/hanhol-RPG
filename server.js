@@ -82,20 +82,46 @@ let ITEMS_MOD = null;
 // 접속이 끊겨도 같은 닉네임으로 다시 들어오면 인벤토리·스킬을 되돌려줘요. (서버를 다시 켜면 사라져요. 닉네임만 보고 되돌려주는 방식이라 계정 시스템이 생기면 그쪽으로 옮겨야 해요)
 const savedByNick = new Map();
 const saveProfile = (p) => {
-  savedByNick.set(p.nick, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR });
+  savedByNick.set(p.nick, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear } });
   if (savedByNick.size > 500) savedByNick.delete(savedByNick.keys().next().value);
 };
 const sendInv = (p) => io.to(p.id).emit('inv', { items: p.inv });
 const sendSkills = (p) => io.to(p.id).emit('skills', { learned: p.learned, slotR: p.slotR });
 const sendToast = (p, msg) => io.to(p.id).emit('toast', { msg });
-function addItem(p, id, n = 1) {   // 성공하면 true, 칸이 없으면 false
-  if (!ITEMS_MOD || !ITEMS_MOD.ITEMS[id]) return false;
-  const st = p.inv.find((i) => i.id === id);
-  if (st) st.n += n;
-  else if (p.inv.length < ITEMS_MOD.INV_CAP) p.inv.push({ id, n });
-  else return false;
+function addItem(p, id, n = 1) {   // 성공하면 true, 칸이 없으면 false (장비는 한 개당 한 칸, 재료·책은 겹쳐 쌓임)
+  const def = ITEMS_MOD && ITEMS_MOD.ITEMS[id];
+  if (!def) return false;
+  if (def.stack === false) {
+    if (p.inv.length + n > ITEMS_MOD.INV_CAP) return false;
+    for (let i = 0; i < n; i++) p.inv.push({ id, n: 1 });
+  } else {
+    const st = p.inv.find((i) => i.id === id);
+    if (st) st.n += n;
+    else if (p.inv.length < ITEMS_MOD.INV_CAP) p.inv.push({ id, n });
+    else return false;
+  }
   saveProfile(p);
   return true;
+}
+// 몬스터를 잡았을 때 드랍표대로 굴려서 인벤토리에 넣고, 화면 아래에 '아이템x개수를 획득했습니다.' 를 띄움
+function giveLoot(pid, kind) {
+  const p = players.get(pid);
+  if (!p || !ITEMS_MOD || !p.inv) return;
+  const got = [];
+  let full = false;
+  for (const e of ITEMS_MOD.rollLoot(kind)) { if (addItem(p, e.id, e.n)) got.push(e); else full = true; }
+  if (got.length) { sendInv(p); io.to(pid).emit('loot', { items: got }); }
+  if (full) sendToast(p, '인벤토리가 가득 차서 일부 아이템을 얻지 못했어요');
+}
+// ---------- 장비 (갑옷·신발): 장착하면 최대 체력이 늘어요 ----------
+const sendGear = (p) => io.to(p.id).emit('gear', { gear: p.gear });
+const calcHpMax = (p) => Math.max(1, Math.round(PLAYER_HP_MAX * (p.hpMult || 1))) + (ITEMS_MOD ? ITEMS_MOD.gearHp(p.gear) : 0);
+function applyGear(p) {   // 최대 체력을 다시 계산: 늘어난 만큼 현재 체력도 같이 늘고, 줄면 최대치에 맞춰 깎임
+  const max = calcHpMax(p), diff = max - p.hpMax;
+  p.hpMax = max;
+  p.hp = diff > 0 ? Math.min(max, p.hp + diff) : Math.min(p.hp, max);
+  io.to(p.id).emit('hp', { hp: p.hp, max: p.hpMax });
+  saveProfile(p); sendGear(p); sendInv(p);
 }
 
 // ---------- 보스 오크 대전사 (고블린 구역 한가운데의 어두운 흙 터) ----------
@@ -213,9 +239,11 @@ io.on('connection', (socket) => {
     me.inv = sv ? sv.inv.map((i) => ({ ...i })) : [];
     me.learned = sv ? [...sv.learned] : [];
     me.slotR = sv ? sv.slotR : null;
+    me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, boots: sv.gear.boots || null } : { armor: null, boots: null };
+    me.hpMax = calcHpMax(me); me.hp = me.hpMax;   // 장비로 늘어난 최대 체력 포함
     socket.emit('init', { id: socket.id, seed: SEED });
-    socket.emit('hp', { hp: PLAYER_HP_MAX, max: PLAYER_HP_MAX });
-    sendInv(me); sendSkills(me);
+    socket.emit('hp', { hp: me.hp, max: me.hpMax });
+    sendInv(me); sendSkills(me); sendGear(me);
     if (caveEnt) socket.emit('cave', caveEnt);   // 동굴 입구 위치 (아직 계산 전이면 계산이 끝났을 때 전체에게 보냄)
   });
 
@@ -230,7 +258,7 @@ io.on('connection', (socket) => {
     const num = (v) => { v = Number(v); return Number.isFinite(v) ? Math.min(DEV_MULT_MAX, Math.max(DEV_MULT_MIN, v)) : 1; };
     p.dmgMult = num(d.dmg);
     p.hpMult = num(d.hp);
-    const max = Math.max(1, Math.round(PLAYER_HP_MAX * p.hpMult));
+    const max = calcHpMax(p);   // 장비로 늘어난 최대 체력 포함
     if (max !== p.hpMax) { p.hpMax = max; p.hp = max; }   // 최대 체력이 바뀌면 가득 채워서 시작
     socket.emit('hp', { hp: p.hp, max: p.hpMax });
     socket.emit('dev:on', { dmg: p.dmgMult, hp: p.hpMult });
@@ -239,7 +267,30 @@ io.on('connection', (socket) => {
   // 화면이 준비되면 인벤토리·스킬 정보를 한 번 더 요청 (접속 직후에 보낸 것을 놓쳤을 때 대비)
   socket.on('sync', () => {
     const p = players.get(socket.id);
-    if (p && p.inv) { sendInv(p); sendSkills(p); }
+    if (p && p.inv) { sendInv(p); sendSkills(p); sendGear(p); }
+  });
+  // 장비 장착: 인벤토리의 갑옷/신발을 해당 칸에 입음 (이미 입은 게 있으면 서로 바뀜)
+  socket.on('wear', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !ITEMS_MOD || !d || typeof d.id !== 'string') return;
+    const def = ITEMS_MOD.ITEMS[d.id], st = p.inv.find((i) => i.id === d.id);
+    if (!def || def.kind !== 'gear' || !st) return;
+    p.inv.splice(p.inv.indexOf(st), 1);
+    const old = p.gear[def.slot];
+    if (old) p.inv.push({ id: old, n: 1 });
+    p.gear[def.slot] = d.id;
+    applyGear(p);
+  });
+  // 장비 해제: 입고 있던 것을 인벤토리로 되돌림
+  socket.on('unwear', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !ITEMS_MOD || !d || typeof d.slot !== 'string') return;
+    const id = p.gear[d.slot];
+    if (!id) return;
+    if (p.inv.length >= ITEMS_MOD.INV_CAP) { sendToast(p, '인벤토리가 가득 차서 벗을 수 없어요'); return; }
+    p.inv.push({ id, n: 1 });
+    p.gear[d.slot] = null;
+    applyGear(p);
   });
   // 스킬북 배우기: 인벤토리의 책을 하나 쓰고 그 스킬을 익힘 (이미 배운 스킬이면 책을 쓰지 않음)
   socket.on('learn', (d) => {
@@ -271,6 +322,14 @@ io.on('connection', (socket) => {
     const p = players.get(socket.id);
     if (!p || p.nick !== DEV_NICK) return;
     if (addItem(p, 'book_slam')) { sendInv(p); sendToast(p, '스킬북: 내려찍기를 받았어요 (개발자 도구)'); }
+    else sendToast(p, '인벤토리가 가득 찼어요');
+  });
+
+  // 개발자 도구: 아이템을 바로 받음 (드랍 확률을 기다리지 않고 장비·재료를 시험하려고)
+  socket.on('dev:give', (d) => {
+    const p = players.get(socket.id);
+    if (!p || p.nick !== DEV_NICK || !ITEMS_MOD || !d || typeof d.id !== 'string' || !ITEMS_MOD.ITEMS[d.id]) return;
+    if (addItem(p, d.id, 1)) { sendInv(p); io.to(p.id).emit('loot', { items: [{ id: d.id, n: 1 }] }); }
     else sendToast(p, '인벤토리가 가득 찼어요');
   });
 
@@ -393,7 +452,7 @@ setInterval(() => {
     try {
       sim.update(dt, now, players, {
         hurt: hurtPlayer,
-        kill: (pid) => io.to(pid).emit('kill', { msg: '고블린을 처치했습니다!' })
+        kill: (pid) => { io.to(pid).emit('kill', { msg: '고블린을 처치했습니다!' }); giveLoot(pid, 'goblin'); }
       });
       for (const p of players.values()) {
         if (p.spawned && p.y >= UNDER_Y) io.to(p.id).emit('gob', sim.snapshot(p.x, p.z));
@@ -406,7 +465,7 @@ setInterval(() => {
     try {
       rabSim.update(dt, now, players, {
         hurt: hurtPlayer,
-        kill: (pid) => io.to(pid).emit('kill', { msg: '토끼를 처치했습니다!' })
+        kill: (pid) => { io.to(pid).emit('kill', { msg: '토끼를 처치했습니다!' }); giveLoot(pid, 'rabbit'); }
       });
       for (const p of players.values()) {
         if (p.spawned && p.y >= UNDER_Y) io.to(p.id).emit('rab', rabSim.snapshot(p.x, p.z));
@@ -419,7 +478,7 @@ setInterval(() => {
     try {
       sliSim.update(dt, now, players, {
         hurt: hurtPlayer,
-        kill: (pid) => io.to(pid).emit('kill', { msg: '슬라임을 처치했습니다!' })
+        kill: (pid) => { io.to(pid).emit('kill', { msg: '슬라임을 처치했습니다!' }); giveLoot(pid, 'slime'); }
       });
       for (const p of players.values()) {
         if (p.spawned && p.y >= UNDER_Y) io.to(p.id).emit('sli', sliSim.snapshot(p.x, p.z));
@@ -438,8 +497,9 @@ setInterval(() => {
             const hp = players.get(hid);
             if (!hp) continue;
             io.to(hid).emit('kill', { msg: '오크 대전사를 처치했습니다!' });
+            giveLoot(hid, 'boss');   // 하급 마정석 10~15개 (피해를 준 사람마다)
             if (ITEMS_MOD && Math.random() < (Number(process.env.BOSS_BOOK_CHANCE) || ITEMS_MOD.BOSS_BOOK_CHANCE)) {   // 환경변수 BOSS_BOOK_CHANCE 로 확률을 바꿔 시험할 수 있어요 (예: 1 = 100%)
-              if (addItem(hp, 'book_slam')) { sendInv(hp); sendToast(hp, '✨ ' + ITEMS_MOD.ITEMS.book_slam.name + ' 획득!'); }
+              if (addItem(hp, 'book_slam')) { sendInv(hp); io.to(hid).emit('loot', { items: [{ id: 'book_slam', n: 1 }] }); }
               else sendToast(hp, '인벤토리가 가득 차서 스킬북을 얻지 못했어요');
             }
           }
