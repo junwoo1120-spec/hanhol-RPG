@@ -12,7 +12,7 @@ import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
 import { createZoneBanner } from './zone-banner.js';
 import { createSeaLife } from './sea-life.js';
-import { ITEMS, SKILL_INFO, INV_CAP, SLAM } from './items.mjs';
+import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, lootText } from './items.mjs';
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
@@ -1775,12 +1775,17 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   let invItems = [];            // [{ id, n }]
   let learnedSk = [];           // 배운 스킬 id
   let slotRSkill = null;        // R 칸(E 칸 아래)에 장착한 스킬
+  let gearEq = { armor: null, boots: null };   // 입고 있는 장비 (서버가 정함)
   const winSel = { inv: -1, sk: null };   // 창에서 선택한 칸 (다시 그려도 유지)
   const SK_ICON = { sweep: '🌀', slam: '💥' };
+  // 아이템 그림: 그림 파일(img)이 있으면 그림, 없으면 이모지
+  const iconHtml = (def, px) => def.img
+    ? '<img src="' + def.img + '" alt="" draggable="false" style="width:' + px + 'px;height:' + px + 'px;object-fit:contain;pointer-events:none">'
+    : '<span style="font-size:' + Math.round(px * 0.85) + 'px;line-height:1">' + def.icon + '</span>';
   const itemSlot = (i) => {
     const it = invItems[i], def = it && ITEMS[it.id];
     return '<div class="uw-slot' + (winSel.inv === i ? ' sel' : '') + '" data-inv="' + i + '">' +
-      (def ? '<div class="ic">' + def.icon + '<small>스킬북</small></div>' + (it.n > 1 ? '<span class="cnt">' + it.n + '</span>' : '') : '') + '</div>';
+      (def ? '<div class="ic">' + iconHtml(def, 66) + '<small>' + (def.label || '아이템') + '</small></div>' + (it.n > 1 ? '<span class="cnt">' + it.n + '</span>' : '') : '') + '</div>';
   };
   const wInv = () => wHead(138, 158, '인벤토리') +
     '<div class="uwb-grid" style="' + at(147, 249, 581, 551) + ';grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(5,1fr)">' + Array.from({ length: 30 }, (_, i) => itemSlot(i)).join('') + '</div>' +
@@ -1794,7 +1799,13 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (def.kind === 'skillbook') btn = learnedSk.includes(def.skill)
       ? '<div class="uwb-btn off">이미 배운 스킬</div>'
       : '<div class="uwb-btn" data-act="learn" data-id="' + it.id + '">배우기</div>';
-    return '<div class="uwb-dt">' + def.icon + ' ' + def.name + (it.n > 1 ? ' ×' + it.n : '') + '</div><div class="uwb-dsc">' + def.desc + '</div>' + btn;
+    if (def.kind === 'gear') {
+      const worn = gearEq[def.slot] ? ITEMS[gearEq[def.slot]] : null;
+      btn = '<div class="uwb-dsc" style="color:#2a6a2a">최대 체력 +' + def.hp + '</div>' +
+        (worn ? '<div class="uwb-dsc" style="color:#7a5a30;font-size:18px">(지금 입은 ' + worn.name + '과(와) 서로 바뀌어요)</div>' : '') +
+        '<div class="uwb-btn" data-act="wear" data-id="' + it.id + '">장착</div>';
+    }
+    return '<div class="uwb-dt">' + iconHtml(def, 74) + '<br>' + def.name + (it.n > 1 ? ' ×' + it.n : '') + '</div><div class="uwb-dsc">' + def.desc + '</div>' + btn;
   };
   const skillList = () => ['sweep', ...learnedSk.filter((id) => SKILL_INFO[id] && id !== 'sweep')];
   const wSkillGrid = () => {
@@ -1818,15 +1829,19 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     return '<div class="uwb-dt">' + (SK_ICON[winSel.sk] || '✦') + ' ' + info.name + '</div><div class="uwb-dsc">' + info.desc + '</div>' + tail;
   };
   const wEquip = () => {
-    const sl = (img, x, y, w, h, lx, ly, name) =>
-      '<div class="uw-slot uwb-eq" style="' + at(x, y, w, h) + ';background-image:url(/ui/' + img + '.png)"></div>' +
+    const sl = (img, x, y, w, h, lx, ly, name, key) => {
+      const worn = key && gearEq[key] ? ITEMS[gearEq[key]] : null;
+      return '<div class="uw-slot uwb-eq" ' + (worn ? 'data-eq="' + key + '" title="누르면 벗어요" ' : '') + 'style="' + at(x, y, w, h) + ';background-image:url(/ui/' + img + '.png)">' +
+        (worn ? '<div class="ic">' + iconHtml(worn, 84) + '<small>+' + worn.hp + ' 체력</small></div>' : '') + '</div>' +
       '<div class="uwb-lb" style="left:' + lx + 'px;top:' + ly + 'px">' + name + '</div>';
+    };
     return wHead(820, 152, '장비') +
       '<img src="/ui/silhouette.png" alt="" style="position:absolute;left:991px;top:378px;width:211px;height:270px;pointer-events:none">' +
       sl('slot_head', 1043, 252, 112, 107, 1099, 363, '투구') +
-      sl('slot_armor', 858, 426, 118, 118, 917, 548, '갑옷') +
+      sl('slot_armor', 858, 426, 118, 118, 917, 548, '갑옷', 'armor') +
       sl('slot_weapon', 1225, 426, 119, 118, 1284, 548, '무기') +
-      sl('slot_boots', 1038, 626, 121, 121, 1099, 752, '신발');
+      sl('slot_boots', 1038, 626, 121, 121, 1099, 752, '신발', 'boots') +
+      '<div style="position:absolute;left:820px;top:840px;width:560px;text-align:center;font-size:22px;color:#6a4a28">장비 아이템을 누르면 입고, 입은 장비를 누르면 벗어요</div>';
   };
   const wTree = () => {
     const cx = 290, cy = 275, R = 185;
@@ -1878,10 +1893,18 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       if (a === 'learn') socket.emit('learn', { id: act.getAttribute('data-id') });
       else if (a === 'equip') socket.emit('equip', { skill: act.getAttribute('data-skill') });
       else if (a === 'unequip') socket.emit('equip', { skill: null });
+      else if (a === 'wear') socket.emit('wear', { id: act.getAttribute('data-id') });
       return;
     }
+    const eqSlot = t.closest('[data-eq]');
+    if (eqSlot) { socket.emit('unwear', { slot: eqSlot.getAttribute('data-eq') }); return; }
     const iv = t.closest('[data-inv]');
-    if (iv) { winSel.inv = Number(iv.getAttribute('data-inv')); renderWin(); return; }
+    if (iv) {
+      winSel.inv = Number(iv.getAttribute('data-inv'));
+      const picked = invItems[winSel.inv], pdef = picked && ITEMS[picked.id];
+      if (winIdx === 1 && pdef && pdef.kind === 'gear') { socket.emit('wear', { id: picked.id }); return; }   // 장비 탭에서는 장비를 누르면 바로 입음
+      renderWin(); return;
+    }
     const sk = t.closest('[data-sk]');
     if (sk) { winSel.sk = sk.getAttribute('data-sk'); renderWin(); return; }
     const sl = t.closest('.uw-slot, .uw-node');
@@ -2698,6 +2721,33 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
   socket.on('kill', (d) => toast(d && typeof d.msg === 'string' ? d.msg : '고블린을 처치했습니다!'));
   socket.on('toast', (d) => { if (d && typeof d.msg === 'string') toast(d.msg); });   // 서버 안내 (스킬북 획득 · 배움 등)
+  socket.on('gear', (d) => {   // 입고 있는 장비 (서버가 정함)
+    const g = d && d.gear ? d.gear : {};
+    gearEq = {};
+    for (const k of Object.keys(GEAR_SLOT_NAME)) gearEq[k] = g[k] && ITEMS[g[k]] ? g[k] : null;
+    if (winOpenNow()) renderWin();
+  });
+  // 몬스터를 잡으면 화면 아래 UI 바로 위에 '토끼 가죽x2를 획득했습니다.' 처럼 뜸 (여러 개면 줄줄이, 3초 뒤 사라짐)
+  const lootBox = document.createElement('div');
+  lootBox.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);z-index:7;display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none';
+  document.body.appendChild(lootBox);
+  socket.on('loot', (d) => {
+    const list = d && Array.isArray(d.items) ? d.items : [];
+    const bw = document.querySelector('.bottom-wrap');
+    lootBox.style.bottom = ((bw ? bw.getBoundingClientRect().height : 90) + 18) + 'px';
+    for (const it of list) {
+      const text = it && Number.isFinite(it.n) ? lootText(it.id, it.n) : '';
+      if (!text) continue;
+      const line = document.createElement('div');
+      line.textContent = text;
+      line.style.cssText = 'padding:5px 14px;border-radius:14px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font:600 14px sans-serif;opacity:0;transition:opacity .25s;white-space:nowrap';
+      lootBox.appendChild(line);
+      requestAnimationFrame(() => { line.style.opacity = '1'; });
+      setTimeout(() => { line.style.opacity = '0'; }, 2800);
+      setTimeout(() => line.remove(), 3150);
+      while (lootBox.childElementCount > 6) lootBox.firstElementChild.remove();
+    }
+  });
   const winOpenNow = () => winEl.style.display === 'flex';
   socket.on('inv', (d) => {   // 인벤토리 (서버가 정함)
     invItems = d && Array.isArray(d.items) ? d.items.filter((i) => i && ITEMS[i.id] && Number.isFinite(i.n)) : [];
