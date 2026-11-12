@@ -6,7 +6,7 @@ import {
   collideBuildings, collideRoom, nearestDoor, doorInfo, isDoorOpen, setDoorOpen, ROOMS, CORR_ROOM, roomEntry, roomExit, roomRet,
   roomFloorY, roomGhost, clampCameraRoom, clampCameraInRoom, innFloor, stairsInfo,
 } from './village-layout.js';
-import { makeHumanoid, animateHumanoid, humanReady } from './character.js';
+import { makeHumanoid, animateHumanoid, humanReady, setOutfit } from './character.js';
 import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSweep, setWeaponHandlers, isWeaponEquipped } from './weapon.js';
 import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
@@ -307,7 +307,8 @@ function parsePlayer(p) {
       z: p[4],
       ry: p[5],
       eq: p[6] === 1,
-      level: Number(p[7]) || 1
+      level: Number(p[7]) || 1,
+      gm: Number(p[8]) || 0   // 입은 옷 (1 = 갑옷, 2 = 바지)
     };
   }
 
@@ -320,7 +321,8 @@ function parsePlayer(p) {
       z: p.z,
       ry: p.ry ?? 0,
       eq: !!p.eq,
-      level: Number(p.level) || 1
+      level: Number(p.level) || 1,
+      gm: Number(p.gm) || 0
     };
   }
 
@@ -1775,7 +1777,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   let invItems = [];            // [{ id, n }]
   let learnedSk = [];           // 배운 스킬 id
   let slotRSkill = null;        // R 칸(E 칸 아래)에 장착한 스킬
-  let gearEq = { armor: null, boots: null };   // 입고 있는 장비 (서버가 정함)
+  let gearEq = { armor: null, pants: null };   // 입고 있는 장비 (서버가 정함)
   const winSel = { inv: -1, sk: null };   // 창에서 선택한 칸 (다시 그려도 유지)
   const SK_ICON = { sweep: '🌀', slam: '💥' };
   // 아이템 그림: 그림 파일(img)이 있으면 그림, 없으면 이모지
@@ -1840,7 +1842,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       sl('slot_head', 1043, 252, 112, 107, 1099, 363, '투구') +
       sl('slot_armor', 858, 426, 118, 118, 917, 548, '갑옷', 'armor') +
       sl('slot_weapon', 1225, 426, 119, 118, 1284, 548, '무기') +
-      sl('slot_boots', 1038, 626, 121, 121, 1099, 752, '신발', 'boots') +
+      sl('slot_pants', 1038, 626, 121, 121, 1099, 752, '바지', 'pants') +
       '<div style="position:absolute;left:820px;top:840px;width:560px;text-align:center;font-size:22px;color:#6a4a28">장비 아이템을 누르면 입고, 입은 장비를 누르면 벗어요</div>';
   };
   const wTree = () => {
@@ -2425,10 +2427,12 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
         scene.add(remote.g);
         remotes.set(pid, remote);
         setRemoteWeapon(remote.g.userData.rig, p.eq, true);   // 처음 보이는 순간에 이미 들고 있으면 모션 없이 든 상태로
+        remote.gm = -1;
       } else if (!!p.eq !== !!remote.eq) {
         setRemoteWeapon(remote.g.userData.rig, p.eq);          // 장착/해제 모션 재생
       }
 
+      if (remote.gm !== p.gm) { remote.gm = p.gm; setOutfit(remote.g, { armor: !!(p.gm & 1), pants: !!(p.gm & 2) }); }   // 다른 플레이어가 입은 옷
       remote.eq = !!p.eq;
       remote.nick = p.nick || '플레이어';
       remote.level = p.level || 1;
@@ -2725,6 +2729,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const g = d && d.gear ? d.gear : {};
     gearEq = {};
     for (const k of Object.keys(GEAR_SLOT_NAME)) gearEq[k] = g[k] && ITEMS[g[k]] ? g[k] : null;
+    setOutfit(myAvatar, { armor: !!gearEq.armor, pants: !!gearEq.pants });   // 입은 옷이 내 캐릭터에 보임
     if (winOpenNow()) renderWin();
   });
   // 몬스터를 잡으면 화면 아래 UI 바로 위에 '토끼 가죽x2를 획득했습니다.' 처럼 뜸 (여러 개면 줄줄이, 3초 뒤 사라짐)
