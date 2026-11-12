@@ -239,7 +239,7 @@ io.on('connection', (socket) => {
     me.inv = sv ? sv.inv.map((i) => ({ ...i })) : [];
     me.learned = sv ? [...sv.learned] : [];
     me.slotR = sv ? sv.slotR : null;
-    me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, boots: sv.gear.boots || null } : { armor: null, boots: null };
+    me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, pants: sv.gear.pants || null } : { armor: null, pants: null };
     me.hpMax = calcHpMax(me); me.hp = me.hpMax;   // 장비로 늘어난 최대 체력 포함
     socket.emit('init', { id: socket.id, seed: SEED });
     socket.emit('hp', { hp: me.hp, max: me.hpMax });
@@ -534,7 +534,8 @@ setInterval(() => {
 setInterval(() => {
   const list = [];
   for (const p of players.values()) {
-    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level]);
+    // 마지막 값 = 입은 옷 (1 = 갑옷, 2 = 바지, 3 = 둘 다) → 다른 플레이어 화면에도 입은 모습이 보임
+    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level, (p.gear && p.gear.armor ? 1 : 0) | (p.gear && p.gear.pants ? 2 : 0)]);
   }
   io.emit('state', list);
 }, 1000 / 15);
