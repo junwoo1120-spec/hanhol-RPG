@@ -109,7 +109,13 @@ function giveLoot(pid, kind) {
   if (!p || !ITEMS_MOD || !p.inv) return;
   const got = [];
   let full = false;
-  for (const e of ITEMS_MOD.rollLoot(kind)) { if (addItem(p, e.id, e.n)) got.push(e); else full = true; }
+  let wore = false;
+  for (const e of ITEMS_MOD.rollLoot(kind)) {
+    const def = ITEMS_MOD.ITEMS[e.id];
+    if (def && def.kind === 'gear' && !p.gear[def.slot]) { p.gear[def.slot] = e.id; got.push(e); wore = true; continue; }   // 장비는 비어 있는 칸이면 인벤토리를 거치지 않고 바로 입음
+    if (addItem(p, e.id, e.n)) got.push(e); else full = true;   // 이미 입은 칸이면 인벤토리로
+  }
+  if (wore) applyGear(p);   // 최대 체력·입은 모습·저장
   if (got.length) { sendInv(p); io.to(pid).emit('loot', { items: got }); }
   if (full) sendToast(p, '인벤토리가 가득 차서 일부 아이템을 얻지 못했어요');
 }
@@ -519,7 +525,7 @@ setInterval(() => {
     try {
       golSim.update(dt, now, players, {
         hurt: hurtPlayer,
-        kill: (pid) => io.to(pid).emit('kill', { msg: '골렘을 처치했습니다!' })
+        kill: (pid) => { io.to(pid).emit('kill', { msg: '골렘을 처치했습니다!' }); giveLoot(pid, 'golem'); }
       });
       for (const p of players.values()) {
         if (p.spawned && p.y < UNDER_Y) io.to(p.id).emit('gol', golSim.snapshot(p.x, p.z));   // 동굴 안에 있는 사람에게만
