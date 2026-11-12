@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { updateWeapon } from './weapon.js';
 
 // ============================================================
@@ -654,4 +655,153 @@ function weaponLoco(rig) {
     l.phase = rig.move > 0.05 ? (((rig.phase / (Math.PI * 2)) % 1) + 1) % 1 : -1;
   }
   return l;
+}
+
+// ============================================================
+// 입는 옷 (고블린 갑옷 / 고블린 바지): 캐릭터 뼈에 붙여서 걷고 뛰고 팔을 휘두를 때 같이 움직여요
+// 사용: setOutfit(avatar, { armor: true/false, pants: true/false })   (내 캐릭터와 다른 플레이어 모두)
+// 치수는 마네킹(human_base.glb)을 직접 재서 맞췄어요: 골반 높이 0.95, 허리 폭 약 0.32, 가슴 폭 약 0.34, 허벅지 반지름 약 0.1
+// 코드로 만든 임시 캐릭터와 GLB 캐릭터가 같은 높이·뼈 위치라서 같은 옷을 입혀요.
+// ============================================================
+let OUT = null;
+
+function outfitKit() {
+  if (OUT) return OUT;
+  const lam = (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true, side: THREE.DoubleSide });
+  const M = {
+    leather: lam(0x7c4d2b), leatherDk: lam(0x4a2d1a), metal: lam(0xbfc0c8),
+    olive: lam(0x6e6b2f), oliveDk: lam(0x4b4922), hole: lam(0x231e11),
+  };
+  const xf = (geo, o = {}) => {
+    const m = new THREE.Matrix4().compose(
+      new THREE.Vector3(o.x || 0, o.y || 0, o.z || 0),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(o.rx || 0, o.ry || 0, o.rz || 0)),
+      new THREE.Vector3(o.sx || 1, o.sy || 1, o.sz || 1));
+    geo.applyMatrix4(m);
+    return geo;
+  };
+  const merge = (list) => { const g = mergeGeometries(list, false); list.forEach((q) => q.dispose()); return g; };
+  // 타원 단면 몸통 껍데기: [반지름(좌우), 높이] 목록을 돌려서 만들고 앞뒤(z)를 납작하게
+  const shell = (pts, zScale, seg = 14) => xf(new THREE.LatheGeometry(pts.map((p) => new THREE.Vector2(p[0], p[1])), seg), { sz: zScale });
+  // 해진 천/가죽 끝: 아래로 뾰족한 삼각 조각을 빙 둘러 붙임 (n 개, 길이는 len ± 들쭉날쭉)
+  const fringe = (rx, rz, y, n, len, w, seed = 1) => {
+    const list = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2, h = len * (0.55 + 0.9 * Math.abs(Math.sin(i * 12.9898 + seed * 78.233)));
+      const c = new THREE.ConeGeometry(w, h, 4);
+      c.rotateX(Math.PI);                                  // 끝이 아래로
+      list.push(xf(c, { x: Math.cos(a) * rx, y: y - h / 2, z: Math.sin(a) * rz, ry: -a }));
+    }
+    return list;
+  };
+  const box = (w, h, d, o) => xf(new THREE.BoxGeometry(w, h, d), o);
+  const tube = (rt, rb, h, o, open = true, seg = 12) => xf(new THREE.CylinderGeometry(rt, rb, h, seg, 1, open), o);
+
+  OUT = { M, geo: {} };
+  const G = OUT.geo;
+
+  // ===== 고블린 갑옷 (가죽 흉갑) =====
+  // 몸통 (스파인 뼈 기준 세계 높이로 만들고, 붙일 때 뼈 높이만큼 내림)
+  G.armorBody = merge([
+    shell([[0.178, 0.97], [0.17, 1.02], [0.148, 1.1], [0.158, 1.2], [0.185, 1.3], [0.192, 1.39], [0.16, 1.455], [0.112, 1.485]], 0.68),
+    ...fringe(0.17, 0.118, 0.97, 14, 0.12, 0.034, 3),                                  // 아랫단이 너덜너덜
+    ...fringe(0.165, 0.112, 1.455, 12, 0.05, 0.026, 7).map((g) => xf(g, { y: 0.12, sx: 1 })),   // (목둘레 쪽 작은 뾰족)
+  ]);
+  G.armorDark = merge([
+    tube(0.186, 0.186, 0.05, { y: 1.0, sz: 0.69 }, true, 16),                               // 허리 벨트
+    box(0.055, 0.5, 0.012, { x: 0.02, y: 1.27, z: 0.133, rz: 0.55 }),                       // 가슴 가죽끈 (앞)
+    box(0.055, 0.5, 0.012, { x: -0.02, y: 1.27, z: -0.133, rz: -0.55 }),                    // (뒤)
+  ]);
+  G.armorMetal = merge([
+    box(0.07, 0.06, 0.02, { y: 1.0, z: 0.13 }),                                              // 벨트 버클
+    box(0.034, 0.04, 0.016, { x: 0.075, y: 1.36, z: 0.138 }),                                // 가죽끈 버클
+  ]);
+  // 어깨 갑옷 (위팔 뼈 기준: 어깨 관절이 원점). 가장자리가 해진 가죽 어깨받이
+  G.padLeather = merge([
+    xf(new THREE.SphereGeometry(0.115, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2), { y: 0.015, sx: 1.2, sy: 0.7, sz: 1.05 }),
+    ...fringe(0.135, 0.12, 0.02, 9, 0.07, 0.03, 11),
+  ]);
+  G.padDark = merge([box(0.04, 0.012, 0.1, { y: 0.082 })]);                                  // 어깨 위 가죽띠
+
+  // ===== 고블린 바지 (누더기 올리브색) =====
+  G.pantsHips = merge([
+    shell([[0.17, 0.86], [0.178, 0.9], [0.17, 0.96], [0.165, 1.0]], 0.72, 16),
+    tube(0.168, 0.168, 0.045, { y: 0.995, sz: 0.72 }, true, 16),                              // 허리띠 자리 위쪽 단
+  ]);
+  G.pantsHipsDark = merge([tube(0.172, 0.172, 0.035, { y: 0.96, sz: 0.725 }, true, 16)]);    // 가죽 허리띠 (olive 위)
+  G.pantsHipsMetal = merge([box(0.06, 0.05, 0.02, { y: 0.96, z: 0.128 })]);                  // 버클
+  const leg = (side) => {                                                                    // side: +1 왼쪽(+x) / -1 오른쪽
+    const upper = [tube(0.128, 0.098, 0.46, { y: -0.2 }, true, 12)];                         // 허벅지 (허벅지 뼈 기준 0.93 → 0.47)
+    const upperHole = [xf(new THREE.SphereGeometry(0.032, 6, 4), { x: side * 0.045, y: -0.2, z: 0.092, sx: 1, sy: 1.25, sz: 0.4 })];   // 찢어진 구멍 (살이 비침)
+    const lower = [tube(0.099, 0.082, 0.36, { y: -0.15 }, true, 12)];                        // 종아리 (무릎 뼈 기준 +0.03 → -0.33)
+    const hem = fringe(0.082, 0.082, -0.33, 8, 0.075 + side * 0.01, 0.032, side > 0 ? 5 : 9);  // 너덜너덜한 밑단
+    const lowerHole = [xf(new THREE.SphereGeometry(0.03, 6, 4), { x: -side * 0.05, y: -0.1, z: 0.076, sy: 1.2, sz: 0.4 })];
+    return { upper: merge(upper), upperHole: merge(upperHole), lower: merge([...lower, ...hem]), lowerHole: merge(lowerHole) };
+  };
+  G.legL = leg(1);
+  G.legR = leg(-1);
+  return OUT;
+}
+
+// 아바타에서 옷을 붙일 뼈와 그 뼈의 (서 있는 자세) 세계 높이. GLB 캐릭터와 임시 캐릭터 둘 다
+function outfitNodes(avatar) {
+  const body = avatar && avatar.children && avatar.children[0];
+  const rig = body && body.userData && body.userData.rig;
+  if (!rig) return null;
+  let n;
+  if (rig.kind === 'glb') {
+    const g = (name) => body.getObjectByName(name);
+    n = {
+      pelvis: [g('pelvis'), 0.95], torso: [g('spine_02'), 1.17], armL: [g('upper_arm_L'), 1.45], armR: [g('upper_arm_R'), 1.45],
+      thighL: [g('thigh_L'), 0.9], thighR: [g('thigh_R'), 0.9], shinL: [g('shin_L'), 0.48], shinR: [g('shin_R'), 0.48],
+    };
+  } else if (rig.L && rig.R) {
+    n = {
+      pelvis: [rig.hips, 0.95], torso: [rig.spine, 1.03], armL: [rig.L.shoulder, 1.45], armR: [rig.R.shoulder, 1.45],
+      thighL: [rig.L.hip, 0.9], thighR: [rig.R.hip, 0.9], shinL: [rig.L.knee, 0.48], shinR: [rig.R.knee, 0.48],
+    };
+  } else return null;
+  for (const v of Object.values(n)) if (!v[0]) return null;
+  return n;
+}
+
+export function setOutfit(avatar, o = {}) {
+  if (!avatar) return;
+  const want = (o.armor ? 1 : 0) | (o.pants ? 2 : 0);
+  if (avatar.userData.outfitMask === want && avatar.userData.outfitParts) return;
+  for (const g of avatar.userData.outfitParts || []) if (g.parent) g.parent.remove(g);   // 지오메트리·재질은 공유라 지우지 않음
+  avatar.userData.outfitParts = [];
+  avatar.userData.outfitMask = want;
+  if (!want) return;
+  const N = outfitNodes(avatar);
+  if (!N) { avatar.userData.outfitMask = -1; return; }   // 아직 뼈가 없으면 다음에 다시 시도
+  const K = outfitKit(), M = K.M, G = K.geo;
+  const parts = avatar.userData.outfitParts;
+  // [뼈, 그 뼈의 세계 높이, 세계 높이 기준으로 만든 지오메트리인지(true) / 뼈 기준(false), [[지오메트리, 재질], ...]]
+  const attach = (node, worldY, worldSpace, list) => {
+    const grp = new THREE.Group();
+    if (worldSpace) grp.position.y = -worldY;
+    for (const [geo, mat] of list) grp.add(new THREE.Mesh(geo, mat));
+    node.add(grp);
+    parts.push(grp);
+  };
+  if (o.pants) {
+    attach(N.pelvis[0], N.pelvis[1], true, [[G.pantsHips, M.olive], [G.pantsHipsDark, M.leatherDk], [G.pantsHipsMetal, M.metal]]);
+    for (const side of ['L', 'R']) {
+      const L = side === 'L' ? G.legL : G.legR;
+      attach(N['thigh' + side][0], 0, false, [[L.upper, M.olive], [L.upperHole, M.hole]]);
+      attach(N['shin' + side][0], 0, false, [[L.lower, M.oliveDk], [L.lowerHole, M.hole]]);
+    }
+  }
+  if (o.armor) {
+    attach(N.torso[0], N.torso[1], true, [[G.armorBody, M.leather], [G.armorDark, M.leatherDk], [G.armorMetal, M.metal]]);
+    for (const side of ['L', 'R']) {
+      const pad = new THREE.Group();   // 어깨받이는 팔 바깥쪽으로 살짝 기울임
+      pad.rotation.z = side === 'L' ? -0.28 : 0.28;
+      pad.add(new THREE.Mesh(G.padLeather, M.leather), new THREE.Mesh(G.padDark, M.leatherDk));
+      pad.position.set(side === 'L' ? 0.02 : -0.02, 0.01, 0);
+      N['arm' + side][0].add(pad);
+      parts.push(pad);
+    }
+  }
 }
