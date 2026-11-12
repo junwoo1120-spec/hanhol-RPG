@@ -41,6 +41,7 @@ export const ITEMS = {
   rabbit_liver: { name: '토끼 간', kind: 'material', icon: '🥩', img: '/ui/items/rabbit_liver.png', label: '재료', desc: '용왕님이 좋아하는 토끼 간 입니다.' },
   slime_goo: { name: '슬라임 점액', kind: 'material', icon: '🟢', img: '/ui/items/slime_goo.png', label: '재료', desc: '슬라임을 잡고 나온 찌꺼기입니다.' },
   mana_low: { name: '하급 마정석', kind: 'material', icon: '💠', img: '/ui/items/mana_low.png', label: '재료', desc: '이 세상의 재화인 마정석 입니다.<br>여러 방면으로 사용할 수 있습니다.' },
+  golem_core: { name: '골렘 코어', kind: 'material', icon: '🔷', img: '/ui/items/golem_core.png', label: '재료', desc: '골렘의 눈에 박혀 있던 빛나는 보석입니다.' },
   goblin_armor: { name: '고블린 갑옷', kind: 'gear', slot: 'armor', hp: 5, stack: false, icon: '🦺', img: '/ui/items/goblin_armor.png', label: '갑옷', desc: '고블린이 입던 갑옷 입니다.<br>더럽습니다.' },
   goblin_pants: { name: '고블린 바지', kind: 'gear', slot: 'pants', hp: 5, stack: false, icon: '👖', img: '/ui/items/goblin_pants.png', label: '바지', desc: '고블린이 입던 바지 입니다.<br>더럽습니다.' },
 };
@@ -59,6 +60,10 @@ export const LOOT = {
   slime: [
     { id: 'slime_goo', chance: 1, min: 1, max: 3 },
     { id: 'mana_low', chance: 0.8, min: 2, max: 3 },
+  ],
+  golem: [
+    { id: 'mana_low', chance: 1, min: 5, max: 5 },
+    { id: 'golem_core', chance: 0.1, min: 1, max: 1 },
   ],
   boss: [   // 오크 대전사: 피해를 준 사람마다 각자 받아요
     { id: 'mana_low', chance: 1, min: 10, max: 15 },
