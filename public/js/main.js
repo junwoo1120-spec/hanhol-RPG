@@ -2673,6 +2673,21 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (boss) boss.onSnapshot(lastBoss);
   });
 
+  // ---------- 지도 (왼쪽 위): 지형 전체 + 내 위치 · 다른 플레이어 · 마을 · 동굴 · 보스. 누르거나 M 키로 큰 지도 ----------
+  import('./minimap.mjs')
+    .then((m) => m.createMinimap({
+      T,
+      getMe: () => ({ x: me.x, z: me.z, ry: me.ry, under: curCave || curRoom >= 0 }),
+      getOthers: () => {
+        const out = [];
+        for (const r of remotes.values()) if (r && r.t && r.t.y > -100) out.push([r.t.x, r.t.z]);   // 지하(동굴·집 안)에 있는 사람은 지도에 안 찍음
+        return out;
+      },
+      getBoss: () => (boss && boss.state ? boss.state() : null),
+      getCave: () => (cave && cave.entrance ? cave.entrance : null),
+    }))
+    .catch((err) => console.error('지도 로드 실패:', err));
+
   // ---------- 개발자 도구 (닉네임이 서버에 등록된 개발자 이름일 때만 화면 위에 패널이 떠요) ----------
   import('./dev-panel.mjs')
     .then((m) => m.createDevPanel({ socket }))
@@ -3193,4 +3208,4 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   updateCompass();
 
   loop();
-}
+      }
