@@ -8,6 +8,18 @@ const io = new Server(server);
 // .mjs 파일(goblin.mjs)을 자바스크립트로 인식시키기. 안 하면 브라우저가 모듈 로드를 거부해요.
 try { if (express.static.mime) express.static.mime.define({ 'application/javascript': ['mjs'] }); } catch (e) { /* 무시 */ }
 app.use(express.static('public'));
+// ---------- 회원가입 / 로그인 (accounts.js) ----------
+const acc = require('./accounts.js');
+app.set('trust proxy', 1);
+app.use('/api', express.json({ limit: '2kb' }));
+const authApi = (fn) => async (req, res) => {
+  try { res.json(await fn(req.body || {}, req.ip || 'x')); }
+  catch (e) { console.error('인증 오류:', e); res.status(500).json({ ok: false, error: 'server', message: '서버 오류가 났어요. 잠시 뒤에 다시 해주세요.' }); }
+};
+app.post('/api/register', authApi((b, ip) => acc.register(b.nick, b.password, ip)));
+app.post('/api/login', authApi((b, ip) => acc.login(b.nick, b.password, ip)));
+app.post('/api/resume', authApi((b) => { const v = acc.verify(b.token); return v ? { ok: true, nick: v.name } : { ok: false, error: 'expired' }; }));
+app.post('/api/logout', authApi((b) => { acc.logout(b.token); return { ok: true }; }));
 
 const fs = require('fs');
 const path = require('path');
@@ -79,12 +91,22 @@ let ITEMS_MOD = null;
   try { ITEMS_MOD = await import(pathToFileURL(path.join(__dirname, 'public/js/items.mjs')).href); }
   catch (e) { console.error('아이템 정보 로드 실패 (아이템 없이 계속 진행):', e); }
 })();
-// 접속이 끊겨도 같은 닉네임으로 다시 들어오면 인벤토리·스킬을 되돌려줘요. (서버를 다시 켜면 사라져요. 닉네임만 보고 되돌려주는 방식이라 계정 시스템이 생기면 그쪽으로 옮겨야 해요)
-const savedByNick = new Map();
+// 진행 상황(인벤토리·스킬·장비·레벨·마지막 위치)은 계정에 저장돼요 (accounts.js → DATA_DIR/accounts.json).
+// 같은 계정으로 다시 로그인하면 그대로 이어서 해요. 서버를 다시 켜거나 업데이트해도 DATA_DIR 이 영구 디스크면 유지돼요.
 const saveProfile = (p) => {
-  savedByNick.set(p.nick, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear } });
-  if (savedByNick.size > 500) savedByNick.delete(savedByNick.keys().next().value);
+  if (!p || !p.acct || !p.inv) return;
+  const old = acc.getProfile(p.acct);
+  // 땅 위에 있을 때만 위치를 새로 저장 (동굴·집 안이면 마지막 땅 위 위치를 그대로 둠)
+  const above = p.spawned && [p.x, p.z].every(Number.isFinite) && p.y >= UNDER_Y && Math.abs(p.x) < 5000 && Math.abs(p.z) < 5000;
+  const pos = above ? { x: Math.round(p.x * 10) / 10, z: Math.round(p.z * 10) / 10 } : (old && old.pos) || null;
+  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, level: p.level, pos });
 };
+function kickPlayer(o) {   // 같은 계정으로 다른 곳에서 로그인하면 먼저 있던 접속을 끊어요
+  saveProfile(o);
+  players.delete(o.id);
+  const s = io.sockets.sockets.get(o.id);
+  if (s) { s.emit('kicked'); s.disconnect(true); }
+}
 const sendInv = (p) => io.to(p.id).emit('inv', { items: p.inv });
 const sendSkills = (p) => io.to(p.id).emit('skills', { learned: p.learned, slotR: p.slotR });
 const sendToast = (p, msg) => io.to(p.id).emit('toast', { msg });
@@ -226,28 +248,34 @@ function resolveAttack(attacker, now) {
 }
 
 io.on('connection', (socket) => {
-  socket.on('join', ({ nick } = {}) => {
+  socket.on('join', (d) => {
+    if (players.has(socket.id)) return;
+    const auth = acc.verify(d && d.token);   // 로그인한 계정만 입장 (닉네임은 계정 닉네임으로 고정)
+    if (!auth) { socket.emit('authfail'); socket.disconnect(); return; }
+    for (const o of [...players.values()]) if (o.acct === auth.key) kickPlayer(o);
     if (players.size >= MAX_PLAYERS) {
       socket.emit('full');
       socket.disconnect();
       return;
     }
-    nick = String(nick || '').trim().slice(0, 12) || '모험가';
+    const nick = auth.name;
     players.set(socket.id, {
-      id: socket.id, nick,
+      id: socket.id, nick, acct: auth.key,
       x: 0, y: 0, z: 0, ry: 0, t: 0,
       spawned: false, fast: false,
       eq: false, eqT: 0, atkT: 0,
       hp: PLAYER_HP_MAX, hpMax: PLAYER_HP_MAX,
       level: 1   // 레벨 (아직 성장 시스템이 없어서 1 고정. 나중에 여기 값만 바꾸면 거래 목록에도 반영됨)
     });
-    const me = players.get(socket.id), sv = savedByNick.get(nick);   // 같은 닉네임이 전에 쓰던 인벤토리·스킬 복원
+    const me = players.get(socket.id), sv = acc.getProfile(auth.key);   // 이 계정의 저장된 인벤토리·스킬·장비 복원
     me.inv = sv ? sv.inv.map((i) => ({ ...i })) : [];
     me.learned = sv ? [...sv.learned] : [];
     me.slotR = sv ? sv.slotR : null;
     me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, pants: sv.gear.pants || null } : { armor: null, pants: null };
+    if (sv && Number.isFinite(sv.level)) me.level = sv.level;
     me.hpMax = calcHpMax(me); me.hp = me.hpMax;   // 장비로 늘어난 최대 체력 포함
-    socket.emit('init', { id: socket.id, seed: SEED });
+    const spawn = sv && sv.pos && Number.isFinite(sv.pos.x) && Number.isFinite(sv.pos.z) ? { x: sv.pos.x, z: sv.pos.z } : undefined;   // 마지막으로 있던 땅 위 위치
+    socket.emit('init', { id: socket.id, seed: SEED, spawn });
     socket.emit('hp', { hp: me.hp, max: me.hpMax });
     sendInv(me); sendSkills(me); sendGear(me);
     if (caveEnt) socket.emit('cave', caveEnt);   // 동굴 입구 위치 (아직 계산 전이면 계산이 끝났을 때 전체에게 보냄)
@@ -546,5 +574,16 @@ setInterval(() => {
   io.emit('state', list);
 }, 1000 / 15);
 
+// 진행 상황 자동 저장 (30초마다) + 서버가 꺼질 때(업데이트 배포 포함) 마지막으로 한 번 더 저장
+setInterval(() => { for (const p of players.values()) saveProfile(p); }, 30000);
+function shutdown() {
+  for (const p of players.values()) saveProfile(p);
+  acc.flushNow();
+  const t = setTimeout(() => process.exit(0), 10000);   // GitHub 백업이 오래 걸려도 10초 안에는 끝내요
+  acc.backupNow().catch(() => {}).finally(() => { clearTimeout(t); process.exit(0); });
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log('listening on ' + PORT));
+acc.ready.then(() => server.listen(PORT, () => console.log('listening on ' + PORT)));   // GitHub 복구가 끝난 뒤 서버를 열어요
