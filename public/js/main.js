@@ -185,6 +185,21 @@ body.touch .rt-stack{transform:scale(var(--ui,1));transform-origin:right top}
 .hp .hpmp-in i{background:linear-gradient(#f56a5c,#d82424 55%,#a81414)}
 .mp .hpmp-in i{background:linear-gradient(#46a8ff,#1a74e6 55%,#0b56b8)}
 .hpmp-in span{position:relative;display:block;text-align:center;font-size:13px;line-height:20px}
+/* 경험치 바 (체력·마나 아래, 메뉴 위) */
+.xpbar{position:relative;display:flex;align-items:center;width:100%;height:26px;margin-top:8px;font-family:Georgia,'Times New Roman','Malgun Gothic',serif;font-weight:700;color:#efe4cf}
+.xpbar::before,.xpbar::after{content:'';position:absolute;top:50%;width:22px;height:22px;transform:translateY(-50%);background:linear-gradient(#a08670,#4a382b);clip-path:polygon(0 50%,38% 40%,50% 0,62% 40%,100% 50%,62% 60%,50% 100%,38% 60%);filter:drop-shadow(0 1px 2px #000)}
+.xpbar::before{left:-12px}.xpbar::after{right:-12px}
+.xp-lv{position:relative;z-index:2;flex:none;width:72px;height:26px;padding:2px;box-sizing:border-box;background:linear-gradient(#9c8670,#40301f);clip-path:polygon(8% 0,92% 0,100% 18%,100% 82%,92% 100%,8% 100%,0 82%,0 18%)}
+.xp-lv span{display:flex;align-items:center;justify-content:center;height:100%;font-size:14px;letter-spacing:1px;background:linear-gradient(#1b1512,#0c0908);clip-path:polygon(8% 0,92% 0,100% 18%,100% 82%,92% 100%,8% 100%,0 82%,0 18%);text-shadow:0 1px 2px #000}
+.xp-track{flex:1;display:flex;align-items:center;height:14px;margin-left:-4px;padding:2px 2px 2px 0;box-sizing:border-box;background:linear-gradient(#8f7a66,#3b2c21)}
+.xp-lbl{flex:none;padding:0 7px 0 9px;font-size:10px;letter-spacing:1px;color:#e8dcc8;text-shadow:0 1px 2px #000}
+.xp-in{position:relative;flex:1;height:100%;overflow:hidden;background:#0a0807;clip-path:polygon(6px 0,100% 0,100% 100%,6px 100%,0 50%)}
+.xp-in i{position:absolute;left:0;top:0;bottom:0;display:block;width:0;background:linear-gradient(#fff0a8,#f2c445 40%,#d19a1c 75%,#9a6a0e);box-shadow:0 0 8px rgba(255,205,70,.65);transition:width .7s cubic-bezier(.2,.8,.2,1);overflow:hidden}
+.xp-in i::after{content:'';position:absolute;top:0;bottom:0;width:40%;left:-40%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);animation:xpshine 3.2s ease-in-out infinite}
+@keyframes xpshine{0%{left:-40%}60%,100%{left:140%}}
+.xp-in.pop i{animation:xppop .5s ease-out}
+@keyframes xppop{0%{filter:brightness(1.9)}100%{filter:brightness(1)}}
+.xp-num{position:absolute;right:14px;top:0;bottom:0;display:flex;align-items:center;font-size:10px;color:#e6e0d6;text-shadow:0 1px 2px #000,0 0 3px #000}
 
 .bui-menu{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;width:100%;margin-top:10px}
 .mbtn{pointer-events:auto;cursor:pointer;position:relative;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:8px 4px 6px;box-sizing:border-box;background:radial-gradient(circle at 50% 40%,#1c1c22,#0a0a0c);border:3px solid #3e3e46;border-radius:3px;box-shadow:inset 0 0 0 1px #000,0 2px 6px rgba(0,0,0,.6);transition:transform .1s,filter .1s}
@@ -203,6 +218,14 @@ body.touch .hpmp-ic{width:24px;height:24px;border-width:2px}
 body.touch .hpmp-ic img{width:14px;height:14px}
 body.touch .hpmp-bar{height:18px;padding:2px 2px 2px 14px;margin-left:-10px}
 body.touch .hpmp-in span{font-size:10px;line-height:14px}
+body.touch .xpbar{height:18px;margin-top:5px}
+body.touch .xpbar::before,body.touch .xpbar::after{width:15px;height:15px}
+body.touch .xpbar::before{left:-8px}body.touch .xpbar::after{right:-8px}
+body.touch .xp-lv{width:50px;height:18px;padding:1.5px}
+body.touch .xp-lv span{font-size:10px;letter-spacing:0}
+body.touch .xp-track{height:10px;padding:1.5px 1.5px 1.5px 0}
+body.touch .xp-lbl{font-size:7px;padding:0 4px 0 6px}
+body.touch .xp-num{font-size:7px;right:5px}
 body.touch .bui-menu{width:100%;gap:3px;margin-top:6px}
 body.touch .mbtn{padding:3px 1px 2px;border-width:2px}
 body.touch .mbtn b{font-size:6px}
@@ -440,7 +463,7 @@ async function connect(nick, mode) {
   });
 }
 
-function boot(socket, { id, seed, spawn }, nick, mode) {
+function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, gold: initGold }, nick, mode) {
   const touchMode = mode === 'touch';
   let uiScale = touchMode ? computeUiScale() : 1;
   document.body.classList.add(touchMode ? 'touch' : 'kbd');
@@ -1661,7 +1684,9 @@ function boot(socket, { id, seed, spawn }, nick, mode) {
 
   // ---------- 하단 중앙 UI (레벨, HP/MP, 메뉴 버튼) ----------
   // 지금은 모양만 있는 임시 값이에요. 나중에 실제 값으로 바꾸면 돼요.
-  const PLAYER = { level: 1, hp: 100, hpMax: 100, mp: 50, mpMax: 50, exp: 0, expMax: 100 };
+  const expNeed = (lv) => 1000 * Math.max(1, lv);   // 레벨별 필요 경험치 (임시 공식: 레벨 1 = 1000. 나중에 원하는 공식으로 바꾸세요)
+  const PLAYER = { level: Number.isFinite(initLevel) && initLevel >= 1 ? Math.floor(initLevel) : 1, hp: 100, hpMax: 100, mp: 50, mpMax: 50, exp: Number.isFinite(initExp) && initExp >= 0 ? Math.floor(initExp) : 0, expMax: 1000, gold: Number.isFinite(initGold) && initGold >= 0 ? Math.floor(initGold) : 0 };
+  PLAYER.expMax = expNeed(PLAYER.level);
 
   const fmt = (n) => {
     if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
@@ -1692,9 +1717,12 @@ function boot(socket, { id, seed, spawn }, nick, mode) {
   const bui = document.createElement('div');
   bui.className = 'bui';
   bui.innerHTML =
-    '<div class="bui-lv"><span>Lv.' + PLAYER.level + '</span></div>' +
     hpmp('hp', '/ui/icon_heart.png', PLAYER.hp, PLAYER.hpMax) +
     hpmp('mp', '/ui/icon_drop.png', PLAYER.mp, PLAYER.mpMax) +
+    '<div class="xpbar">' +
+      '<div class="xp-lv"><span>Lv. ' + PLAYER.level + '</span></div>' +
+      '<div class="xp-track"><b class="xp-lbl">EXP</b><div class="xp-in"><i style="width:' + pct(PLAYER.exp, PLAYER.expMax) + '%"></i><span class="xp-num">' + fmt(PLAYER.exp) + ' / ' + fmt(PLAYER.expMax) + '</span></div></div>' +
+    '</div>' +
     '<div class="bui-menu"></div>';
 
   const MENUS = [
@@ -2745,6 +2773,22 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     hurtEl.style.opacity = '1';
     requestAnimationFrame(() => requestAnimationFrame(() => { hurtEl.style.transition = 'opacity .35s'; hurtEl.style.opacity = '0'; }));
   }
+  // 경험치 바 갱신: 서버가 'exp' 이벤트 { level, exp, gold }(expMax 는 선택)를 보내면 게이지가 차올라요
+  function setExp(d) {
+    if (!d) return;
+    if (Number.isFinite(d.level) && d.level >= 1) PLAYER.level = Math.floor(d.level);
+    if (Number.isFinite(d.exp) && d.exp >= 0) PLAYER.exp = Math.floor(d.exp);
+    if (Number.isFinite(d.gold) && d.gold >= 0) PLAYER.gold = Math.floor(d.gold);
+    PLAYER.expMax = Number.isFinite(d.expMax) && d.expMax > 0 ? Math.floor(d.expMax) : expNeed(PLAYER.level);
+    const fill = bui.querySelector('.xp-in i'), num = bui.querySelector('.xp-num'), lv = bui.querySelector('.xp-lv span');
+    if (fill) {
+      const w = pct(PLAYER.exp, PLAYER.expMax) + '%';
+      if (fill.style.width !== w) { fill.style.width = w; const box = fill.parentNode; box.classList.remove('pop'); void box.offsetWidth; box.classList.add('pop'); }
+    }
+    if (num) num.textContent = fmt(PLAYER.exp) + ' / ' + fmt(PLAYER.expMax);
+    if (lv) lv.textContent = 'Lv. ' + PLAYER.level;
+  }
+  socket.on('exp', setExp);
   socket.on('hp', (d) => {
     if (!d || !Number.isFinite(d.hp) || !Number.isFinite(d.max)) return;
     const before = PLAYER.hp;
