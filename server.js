@@ -359,6 +359,15 @@ io.on('connection', (socket) => {
     saveProfile(p); sendSkills(p);
   });
   // 개발자 도구: 스킬북을 바로 받음 (1% 드랍을 기다리지 않고 시험하려고)
+  // 개발자 전용 경험치·레벨 조절 (시험용): { exp: 값으로 설정, add: 더하기(음수 가능), level: 레벨 설정 }
+  socket.on('dev:exp', (d) => {
+    const p = players.get(socket.id);
+    if (!p || p.nick !== DEV_NICK || !d || typeof d !== 'object') return;
+    if (Number.isFinite(d.level)) p.level = Math.min(999, Math.max(1, Math.floor(d.level)));
+    if (Number.isFinite(d.exp)) p.exp = cleanNum(d.exp, EXP_MAX);
+    if (Number.isFinite(d.add)) p.exp = cleanNum(p.exp + d.add, EXP_MAX);
+    sendExp(p); saveProfile(p);
+  });
   socket.on('dev:book', () => {
     const p = players.get(socket.id);
     if (!p || p.nick !== DEV_NICK) return;
