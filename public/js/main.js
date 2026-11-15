@@ -11,6 +11,7 @@ import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSwe
 import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
 import { createZoneBanner } from './zone-banner.js';
+import { createAuth, clearToken } from './auth.js';
 import { createSeaLife } from './sea-life.js';
 import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, lootText } from './items.mjs';
 
@@ -330,19 +331,16 @@ function parsePlayer(p) {
 }
 
 // ============ 시작 화면: 닉네임 -> 조작 방식 선택 -> 접속 ============
-$('join').classList.add('rpg-btn');
-$('nick').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') $('join').click();
-});
+// 닉네임 입력칸·입장 버튼은 로그인/회원가입 화면(auth.js)으로 대체됐어요
+$('nick').style.display = 'none';
+$('join').style.display = 'none';
+let authToken = null;   // 로그인해서 받은 토큰 (서버 입장 때 보냄)
 
 function resetLogin(message) {
   $('login').style.display = 'flex';
-  $('nick').style.display = '';
-  $('join').style.display = '';
-  $('join').disabled = false;
   const box = $('modeBox');
   if (box) box.remove();
-  $('msg').textContent = message || '';
+  auth.show(message);
 }
 
 function showModeSelect(nick) {
@@ -388,9 +386,12 @@ function showModeSelect(nick) {
   $('login').appendChild(box);
 }
 
-$('join').onclick = () => {
-  showModeSelect($('nick').value.trim() || '플레이어');
-};
+const auth = createAuth({
+  root: $('login'),
+  msg: $('msg'),
+  onLogin: (nick, token) => { authToken = token; showModeSelect(nick); },
+});
+auth.show();   // 저장된 로그인이 있으면 자동으로 알아봐요
 
 async function connect(nick, mode) {
   $('msg').textContent = '서버에 연결 중...';
@@ -399,7 +400,17 @@ async function connect(nick, mode) {
   const socket = io();
 
   socket.on('connect', () => {
-    socket.emit('join', { nick });
+    socket.emit('join', { token: authToken });
+  });
+
+  socket.on('authfail', () => {   // 로그인 정보가 서버에서 만료/삭제됨
+    clearToken();
+    resetLogin('로그인 정보가 만료됐어요. 다시 로그인해주세요.');
+  });
+
+  socket.on('kicked', () => {   // 같은 계정으로 다른 곳에서 로그인함
+    alert('다른 곳에서 같은 계정으로 로그인해서 연결이 끊겼어요.');
+    location.reload();
   });
 
   socket.on('connect_error', (err) => {
@@ -429,7 +440,7 @@ async function connect(nick, mode) {
   });
 }
 
-function boot(socket, { id, seed }, nick, mode) {
+function boot(socket, { id, seed, spawn }, nick, mode) {
   const touchMode = mode === 'touch';
   let uiScale = touchMode ? computeUiScale() : 1;
   document.body.classList.add(touchMode ? 'touch' : 'kbd');
@@ -1016,6 +1027,12 @@ function boot(socket, { id, seed }, nick, mode) {
     pitch: 0.45,
     ry: 0
   };
+  // 저장된 마지막 위치(땅 위)가 있으면 거기서 이어서 시작
+  if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
+    me.x = spawn.x;
+    me.z = spawn.z;
+    me.y = T.height(spawn.x, spawn.z);
+  }
 
   // 점프/중력 상태
   let vy = 0;
