@@ -93,13 +93,16 @@ let ITEMS_MOD = null;
 })();
 // 진행 상황(인벤토리·스킬·장비·레벨·마지막 위치)은 계정에 저장돼요 (accounts.js → DATA_DIR/accounts.json).
 // 같은 계정으로 다시 로그인하면 그대로 이어서 해요. 서버를 다시 켜거나 업데이트해도 DATA_DIR 이 영구 디스크면 유지돼요.
+// 경험치·골드: 숫자가 아니면 0, 음수는 0, 상한 초과는 상한으로 잘라서(정수) 저장·복구해요
+const EXP_MAX = 1e12, GOLD_MAX = 1e12;
+const cleanNum = (v, max) => (Number.isFinite(v) ? Math.min(max, Math.max(0, Math.floor(v))) : 0);
 const saveProfile = (p) => {
   if (!p || !p.acct || !p.inv) return;
   const old = acc.getProfile(p.acct);
   // 땅 위에 있을 때만 위치를 새로 저장 (동굴·집 안이면 마지막 땅 위 위치를 그대로 둠)
   const above = p.spawned && [p.x, p.z].every(Number.isFinite) && p.y >= UNDER_Y && Math.abs(p.x) < 5000 && Math.abs(p.z) < 5000;
   const pos = above ? { x: Math.round(p.x * 10) / 10, z: Math.round(p.z * 10) / 10 } : (old && old.pos) || null;
-  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, level: p.level, pos });
+  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, level: p.level, exp: cleanNum(p.exp, EXP_MAX), gold: cleanNum(p.gold, GOLD_MAX), pos });
 };
 function kickPlayer(o) {   // 같은 계정으로 다른 곳에서 로그인하면 먼저 있던 접속을 끊어요
   saveProfile(o);
@@ -109,6 +112,7 @@ function kickPlayer(o) {   // 같은 계정으로 다른 곳에서 로그인하�
 }
 const sendInv = (p) => io.to(p.id).emit('inv', { items: p.inv });
 const sendSkills = (p) => io.to(p.id).emit('skills', { learned: p.learned, slotR: p.slotR });
+const sendExp = (p) => io.to(p.id).emit('exp', { level: p.level, exp: p.exp, gold: p.gold });   // 경험치를 얻었을 때 이걸 부르면 화면 경험치 바가 차올라요
 const sendToast = (p, msg) => io.to(p.id).emit('toast', { msg });
 function addItem(p, id, n = 1) {   // 성공하면 true, 칸이 없으면 false (장비는 한 개당 한 칸, 재료·책은 겹쳐 쌓임)
   const def = ITEMS_MOD && ITEMS_MOD.ITEMS[id];
@@ -265,7 +269,8 @@ io.on('connection', (socket) => {
       spawned: false, fast: false,
       eq: false, eqT: 0, atkT: 0,
       hp: PLAYER_HP_MAX, hpMax: PLAYER_HP_MAX,
-      level: 1   // 레벨 (아직 성장 시스템이 없어서 1 고정. 나중에 여기 값만 바꾸면 거래 목록에도 반영됨)
+      level: 1,  // 레벨 (아직 성장 시스템이 없어서 1 고정. 나중에 여기 값만 바꾸면 거래 목록에도 반영됨)
+      exp: 0, gold: 0   // 경험치·골드 기본값 (저장된 값이 있으면 아래에서 덮어써요)
     });
     const me = players.get(socket.id), sv = acc.getProfile(auth.key);   // 이 계정의 저장된 인벤토리·스킬·장비 복원
     me.inv = sv ? sv.inv.map((i) => ({ ...i })) : [];
@@ -273,9 +278,11 @@ io.on('connection', (socket) => {
     me.slotR = sv ? sv.slotR : null;
     me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, pants: sv.gear.pants || null } : { armor: null, pants: null };
     if (sv && Number.isFinite(sv.level)) me.level = sv.level;
+    me.exp = cleanNum(sv && sv.exp, EXP_MAX);     // 예전 계정은 값이 없어서 0부터 시작
+    me.gold = cleanNum(sv && sv.gold, GOLD_MAX);
     me.hpMax = calcHpMax(me); me.hp = me.hpMax;   // 장비로 늘어난 최대 체력 포함
     const spawn = sv && sv.pos && Number.isFinite(sv.pos.x) && Number.isFinite(sv.pos.z) ? { x: sv.pos.x, z: sv.pos.z } : undefined;   // 마지막으로 있던 땅 위 위치
-    socket.emit('init', { id: socket.id, seed: SEED, spawn });
+    socket.emit('init', { id: socket.id, seed: SEED, spawn, level: me.level, exp: me.exp, gold: me.gold });
     socket.emit('hp', { hp: me.hp, max: me.hpMax });
     sendInv(me); sendSkills(me); sendGear(me);
     if (caveEnt) socket.emit('cave', caveEnt);   // 동굴 입구 위치 (아직 계산 전이면 계산이 끝났을 때 전체에게 보냄)
