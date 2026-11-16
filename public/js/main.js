@@ -1679,7 +1679,7 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
 
   // ---------- 하단 중앙 UI (레벨, HP/MP, 메뉴 버튼) ----------
   // 지금은 모양만 있는 임시 값이에요. 나중에 실제 값으로 바꾸면 돼요.
-  const expNeed = (lv) => 1000 * Math.max(1, lv);   // 레벨별 필요 경험치 (임시 공식: 레벨 1 = 1000. 나중에 원하는 공식으로 바꾸세요)
+  const expNeed = (lv) => { lv = Math.max(1, lv); return (10 + 5 * lv) * (10 + lv); };   // 레벨별 필요 경험치 (임시 공식: 레벨 1 = 1000. 나중에 원하는 공식으로 바꾸세요)
   const PLAYER = { level: Number.isFinite(initLevel) && initLevel >= 1 ? Math.floor(initLevel) : 1, hp: 100, hpMax: 100, mp: 50, mpMax: 50, exp: Number.isFinite(initExp) && initExp >= 0 ? Math.floor(initExp) : 0, expMax: 1000, gold: Number.isFinite(initGold) && initGold >= 0 ? Math.floor(initGold) : 0 };
   PLAYER.expMax = Number.isFinite(initExpMax) && initExpMax > 0 ? Math.floor(initExpMax) : expNeed(PLAYER.level);
 
@@ -2704,15 +2704,22 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   // boss.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
   let boss = null;
   let lastBoss = [];
+  let lastBossDmg = [];
   import('./boss.mjs')
     .then((m) => {
       boss = m.createBossWorld({ scene, camera, T, WATER_LEVEL });
       boss.onSnapshot(lastBoss);
+      boss.setDmg(lastBossDmg, nick);
     })
     .catch((err) => console.error('보스 로드 실패:', err));
   socket.on('boss', (list) => {
     lastBoss = Array.isArray(list) ? list : [];
     if (boss) boss.onSnapshot(lastBoss);
+  });
+  // 보스 체력바 오른쪽 아래: [[닉네임, 보스 체력을 깎은 %], ...]
+  socket.on('bossdmg', (rows) => {
+    lastBossDmg = Array.isArray(rows) ? rows : [];
+    if (boss) boss.setDmg(lastBossDmg, nick);
   });
 
   // ---------- 지도 (왼쪽 위): 지형 전체 + 내 위치 · 다른 플레이어 · 마을 · 동굴 · 보스. 누르거나 M 키로 큰 지도 ----------
