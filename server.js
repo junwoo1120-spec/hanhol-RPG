@@ -1,616 +1,3315 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
+import * as THREE from 'three';
+import { makeTerrain, WATER_LEVEL, PLAY_RADIUS, LANDMARKS } from './terrain.js';
+import { buildVillage } from './village.js';
+import { buildHouses, updateHouses, setRoomsHidden, setPortalTexture } from './buildings.js';
+import {
+  collideBuildings, collideRoom, nearestDoor, doorInfo, isDoorOpen, setDoorOpen, ROOMS, CORR_ROOM, roomEntry, roomExit, roomRet,
+  roomFloorY, roomGhost, clampCameraRoom, clampCameraInRoom, innFloor, stairsInfo,
+} from './village-layout.js';
+import { makeHumanoid, animateHumanoid, humanReady, setOutfit } from './character.js';
+import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSweep, setWeaponHandlers, isWeaponEquipped } from './weapon.js';
+import { createNatureKit } from './nature.js';
+import { createNatureWorld } from './nature-world.js';
+import { createZoneBanner } from './zone-banner.js';
+import { createAuth, clearToken } from './auth.js';
+import { createSeaLife } from './sea-life.js';
+import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, lootText } from './items.mjs';
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
-// .mjs 파일(goblin.mjs)을 자바스크립트로 인식시키기. 안 하면 브라우저가 모듈 로드를 거부해요.
-try { if (express.static.mime) express.static.mime.define({ 'application/javascript': ['mjs'] }); } catch (e) { /* 무시 */ }
-app.use(express.static('public'));
-// ---------- 회원가입 / 로그인 (accounts.js) ----------
-const acc = require('./accounts.js');
-app.set('trust proxy', 1);
-app.use('/api', express.json({ limit: '2kb' }));
-const authApi = (fn) => async (req, res) => {
-  try { res.json(await fn(req.body || {}, req.ip || 'x')); }
-  catch (e) { console.error('인증 오류:', e); res.status(500).json({ ok: false, error: 'server', message: '서버 오류가 났어요. 잠시 뒤에 다시 해주세요.' }); }
-};
-app.post('/api/register', authApi((b, ip) => acc.register(b.nick, b.password, ip)));
-app.post('/api/login', authApi((b, ip) => acc.login(b.nick, b.password, ip)));
-app.post('/api/resume', authApi((b) => { const v = acc.verify(b.token); return v ? { ok: true, nick: v.name } : { ok: false, error: 'expired' }; }));
-app.post('/api/logout', authApi((b) => { acc.logout(b.token); return { ok: true }; }));
+// HTML 요소 선택 도우미
+const $ = (id) => document.getElementById(id);
 
-const fs = require('fs');
-const path = require('path');
-const { pathToFileURL } = require('url');
+const S = 32;            // 청크 크기
+const N = 32;            // 청크 분할 수
+const VIEW = 5;          // 로딩 반경(청크 단위)
+const UNLOAD = VIEW + 2;
 
-const SEED = Number(process.env.WORLD_SEED) || 12345;
-const MAX_PLAYERS = 20;
-const MAX_SPEED = 30;      // units/sec (달리기 14 + 여유)
-const FAST_MULT = 100;     // 클라이언트 FAST_MULT와 같은 값
-const players = new Map();
-const openDoors = new Set();   // 열려 있는 문 (집 번호). 접속자끼리 같은 상태를 보도록 서버가 기억
-const MAX_DOORS = 64;
-const ATTACK_MIN_MS = 550;   // 평타 최소 간격 (클라이언트 쿨다운 0.7초보다 조금 느슨하게 → 네트워크 지터 허용)
-const EQUIP_MIN_MS = 300;    // 장착/해제 토글 최소 간격
+const SPEED_SCALE = 1.05; // 전체 이동속도 배율 (이전 1.5의 0.7배)
+const RUN_MULT = 2;       // 달리기 배율
+const RUN_TOGGLE = true;  // true: Ctrl을 한 번 누르면 켜짐/꺼짐, false: 누르고 있는 동안만 달리기
+const GRAVITY = 26;       // 중력
+const JUMP_V = 10.5;      // 점프 힘
 
-// ---------- 고블린 (평원 몬스터) ----------
-// 위치·추적·공격·체력은 전부 서버가 정해요. 계산 코드는 public/js/goblin-ai.mjs (브라우저도 같은 설정값을 읽음).
-// terrain.js 는 브라우저용 ESM 이라 파일 내용을 읽어서 불러와요 (파일을 따로 복사해 둘 필요 없음).
-let sim = null;
-let SKILLS = null;   // goblin-ai.mjs 의 스킬 설정 (쿨타임 등)
-(async () => {
-  try {
-    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
-    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
-    const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/goblin-ai.mjs')).href);
-    sim = ai.createGoblinSim({ T: terr.makeTerrain(SEED), seed: SEED, WATER_LEVEL: terr.WATER_LEVEL, VILLAGE: terr.VILLAGE, PLAY_RADIUS: terr.PLAY_RADIUS });
-    SKILLS = ai.SKILLS;
-    console.log('고블린 ' + sim.goblins.length + '마리 배치 완료');
-  } catch (e) {
-    console.error('고블린 시스템 로드 실패 (고블린 없이 계속 진행):', e);
-  }
+const FAST_MIN = 10;      // 속도 배율 최소
+const FAST_MAX = 100;     // 속도 배율 최대 (서버 한도도 100)
+const RES_HIGH = N;       // 평소 청크 해상도
+const RES_LOW = 8;        // 빠르게 이동할 때 청크 해상도
+const PITCH_LIMIT = 1.5; // 위아래 회전 한계 (이 이상 넘어가면 화면이 뒤집히므로 막음)
+function wrapPitch(p) { return Math.min(PITCH_LIMIT, Math.max(-PITCH_LIMIT, p)); }
+
+// 조작법 창에 표시할 내용 [키 목록, 설명]
+const HELP_KEYBOARD = [
+  [['W', 'A', 'S', 'D'], '이동'],
+  [['Space'], '점프 (물속에서는 위로 헤엄)'],
+  [['C'], '물속에서 아래로 잠수'],
+  [['Ctrl'], '달리기 켜기/끄기'],
+  [['Shift'], '시점 고정(쉬프트락) 켜기/끄기'],
+  [['1'], '칼 꺼내기/넣기'],
+  [['Enter', '마우스 클릭'], '공격 (칼을 꺼낸 상태)'],
+  [['Q'], '대쉬: 이동 방향으로 5m 돌진, 입력 없으면 앞으로 (쿨타임 1초)'],
+  [['E'], '문 열기/닫기, 집 들어가기/나가기 (근처에 문이 없으면 휩쓸기 스킬)'],
+  [['←', '→', '↑', '↓'], '화면 회전'],
+  [['마우스'], '화면 회전 (화면 클릭 후)'],
+  [['H'], '조작법 열기/닫기'],
+  [['Esc'], '마우스 잠금 해제'],
+];
+const HELP_TOUCH = [
+  [['조이스틱'], '이동 (왼쪽 아래)'],
+  [['화면 드래그'], '화면 회전'],
+  [['⤒'], '점프'],
+  [['🏃'], '달리기 켜기/끄기'],
+  [['🔒'], '시점 고정 켜기/끄기'],
+  [['화면 톡 터치'], '검 공격 (나무검 장착 후)'],
+  [['공격 버튼'], '처음 누르면 나무검 장착, 이후 공격'],
+  [['대쉬 버튼'], '조이스틱 방향으로 5m 돌진 (쿨타임 1초). 입력이 없으면 앞으로'],
+  [['오른쪽 스킬 칸 E R T'], 'E = 휩쓸기 (쿨타임 10초). R, T는 아직 빈 칸'],
+  [['하단 메뉴 버튼'], '인벤토리·장비·스킬·특성·상태창·퀘스트·거래 (단축키 없음)'],
+];
+
+// ============ RPG 스타일 UI ============
+const GAME_CSS = `
+#login{background:radial-gradient(ellipse at 50% 25%,#2d2350 0%,#140e26 60%,#0a0716 100%)}
+#login h2{margin:0 0 6px;font:700 44px Georgia,'Noto Serif KR',serif;letter-spacing:8px;color:#f6e3a1;text-shadow:0 0 18px #c9922a,0 2px 0 #5b3d0a}
+#login input{width:230px;text-align:center;color:#f6e3a1;background:#0e0a1c;border:2px solid #b8913f;border-radius:10px;outline:none}
+#login input::placeholder{color:#8d7a4d}
+#login #msg{min-height:20px;color:#ffb4a8;font-size:14px}
+#modeBox{display:flex;flex-direction:column;align-items:center;gap:14px}
+.mode-title{color:#f6e3a1;font:600 18px sans-serif}
+.mode-row{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+.mode-note{color:#9b92b8;font:12px sans-serif}
+.rpg-btn{cursor:pointer;color:#f6e3a1;font:600 16px/1.2 Georgia,'Noto Serif KR',serif;padding:14px 20px;min-width:190px;border-radius:12px;border:2px solid #d9b25c;background:linear-gradient(#3a2d5c,#1b1432);box-shadow:0 0 0 2px #0b0816,inset 0 0 12px rgba(217,178,92,.25),0 6px 18px rgba(0,0,0,.5)}
+.rpg-btn small{display:block;margin-top:6px;font:400 12px sans-serif;color:#cdbf95}
+.rpg-btn:hover{filter:brightness(1.25)}
+body.touch,body.touch *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+
+
+.rt-stack{position:fixed;top:8px;right:8px;z-index:5;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.speedpanel{width:190px;padding:8px;display:flex;flex-direction:column;gap:6px;border-radius:12px;background:rgba(20,14,38,.75);border:1px solid rgba(217,178,92,.75);color:#f6e3a1;font:600 13px sans-serif}
+.speedpanel button{padding:7px 10px;font:700 14px sans-serif;border:1px solid #d9b25c;border-radius:8px;color:#fff;cursor:pointer}
+.speedpanel .hint{font:400 11px sans-serif;opacity:.8}
+body.touch .speedpanel{width:150px}
+body.touch .speedpanel .hint{display:none}
+
+.helpbtn{display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 12px 4px 8px;border-radius:8px;background:linear-gradient(#2a1f16,#150f0b);border:2px solid #8a6b3a;box-shadow:0 0 0 2px #0a0705,0 3px 10px rgba(0,0,0,.5);color:#f1dba4;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-weight:700;font-size:13px;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
+.helpbtn img{height:38px;width:auto;filter:drop-shadow(0 2px 3px rgba(0,0,0,.7))}
+.helpbtn:hover{filter:brightness(1.25)}
+.helppanel{display:none;box-sizing:border-box;width:250px;max-height:calc(100vh - 240px);overflow-y:auto;padding:10px 10px 8px;border-radius:6px;background:linear-gradient(#251b14,#16100c);border:3px solid #8a6b3a;box-shadow:0 0 0 2px #0a0705,inset 0 0 0 1px #4a3a22,0 6px 16px rgba(0,0,0,.55);color:#e8d3a0;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-size:12px;line-height:1.4}
+.helppanel h4{margin:0 0 6px;text-align:center;font-size:15px;letter-spacing:3px;color:#f6e3a1;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
+.hrow{display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px dashed rgba(138,107,58,.5)}
+.hrow.first{border-top:0}
+.hk{flex:none;width:96px;display:flex;flex-wrap:wrap;gap:3px}
+.kcap{padding:1px 5px;border-radius:3px;background:#3a2e20;border:1px solid #8a6b3a;border-bottom-width:3px;color:#fff3c4;font-size:11px;white-space:nowrap}
+.hd{flex:1}
+body.touch .helppanel{width:210px;font-size:11px}
+body.touch .hk{width:76px}
+
+.chips{display:flex;gap:6px;pointer-events:none}
+.chip{padding:3px 10px;border-radius:12px;font:600 12px sans-serif;background:rgba(20,14,38,.75);color:#8d8aa0;border:1px solid #4a3f72}
+.chip.on{color:#201500;background:linear-gradient(#f6e3a1,#d9b25c);border-color:#fff3c4}
+.hintbar{pointer-events:none;color:#e9ddb4;font:12px sans-serif;text-shadow:0 0 3px #000;opacity:.85}
+
+.joy-base{position:fixed;left:26px;bottom:28px;width:130px;height:130px;border-radius:50%;z-index:6;touch-action:none;background:radial-gradient(circle,rgba(20,14,38,.35) 55%,rgba(20,14,38,.65));border:3px solid rgba(217,178,92,.85);box-shadow:0 0 0 3px rgba(0,0,0,.35),inset 0 0 18px rgba(217,178,92,.25)}
+.joy-base::before{content:'';position:absolute;inset:18px;border-radius:50%;border:1px dashed rgba(217,178,92,.45)}
+.joy-knob{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#f6e3a1,#b8913f 70%);border:2px solid #fff3c4;box-shadow:0 3px 10px rgba(0,0,0,.6);pointer-events:none}
+.tbtn{position:fixed;z-index:6;touch-action:none;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#f6e3a1;font:700 11px sans-serif;background:radial-gradient(circle at 35% 30%,#4b3a7c,#1d1535);border:3px solid #d9b25c;box-shadow:0 0 0 3px rgba(0,0,0,.35),0 4px 14px rgba(0,0,0,.55),inset 0 0 12px rgba(217,178,92,.25)}
+.tbtn span{font-size:22px;line-height:1}
+.tbtn.press{transform:scale(.92);filter:brightness(1.5)}
+.tbtn.on{background:radial-gradient(circle at 35% 30%,#f6e3a1,#b8913f);color:#2a1a00}
+.tbtn.jump{right:28px;bottom:28px;width:92px;height:92px}
+.tbtn.jump span{font-size:30px}
+.tbtn.atk,.tbtn.lock{border:0;border-radius:0;box-shadow:none;background-color:transparent;background-repeat:no-repeat;background-position:center;background-size:contain;filter:drop-shadow(0 3px 6px rgba(0,0,0,.6))}
+.tbtn.atk{right:37px;bottom:130px;width:70px;height:70px;background-image:url(/ui/attack_btn.png)}
+.tbtn.atk span,.tbtn.lock span{display:none}
+.tbtn.atk.press,.tbtn.lock.press{filter:brightness(1.4) drop-shadow(0 3px 6px rgba(0,0,0,.6))}
+.tbtn.lock.on{background:url(/ui/lock_btn.png) center/contain no-repeat;filter:brightness(1.3) drop-shadow(0 0 8px #f6d36b)}
+.tbtn.jump,.tbtn.run,.tbtn.dash{border:0;border-radius:0;box-shadow:none;background-color:transparent;background-repeat:no-repeat;background-position:center;background-size:contain;filter:drop-shadow(0 3px 6px rgba(0,0,0,.6))}
+.tbtn.jump{background-image:url(/ui/jump_btn.png)}
+.tbtn.run{background-image:url(/ui/run_btn.png)}
+.tbtn.run.on{background:url(/ui/run_btn.png) center/contain no-repeat;filter:brightness(1.3) drop-shadow(0 0 8px #f6d36b)}
+.tbtn.jump span,.tbtn.run span,.tbtn.dash span{display:none}
+.tbtn.jump.press,.tbtn.run.press,.tbtn.dash.press{filter:brightness(1.4) drop-shadow(0 3px 6px rgba(0,0,0,.6))}
+.tbtn.dash{right:129px;bottom:133px;width:64px;height:64px;background-image:url(/ui/dash_btn.png)}
+.tbtn.dash.pc{right:113px;bottom:117px;width:96px;height:96px}
+.tbtn.dash .k{position:absolute;top:-6px;left:50%;transform:translateX(-50%);z-index:3;font:700 12px 'Galmuri9','Galmuri11',sans-serif;font-style:normal;color:#fff;line-height:13px;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
+.tbtn.dash.pc .n{font-size:22px}
+.tbtn.dash.pc .cdn{font-size:33px}
+.tbtn.dash .n{position:relative;z-index:2;font:700 15px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-style:normal;color:#fff;white-space:nowrap;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000,-1px -1px #000,1px 1px #000,-1px 1px #000,1px -1px #000}
+.tbtn.dash .cdc{position:absolute;inset:0;border-radius:50%;overflow:hidden;z-index:4;pointer-events:none}
+.tbtn.dash .cdv{position:absolute;left:0;right:0;bottom:0;height:0;background:rgba(0,0,0,.68)}
+.tbtn.dash .cdn{position:absolute;z-index:5;font:700 22px 'Galmuri11',sans-serif;font-style:normal;color:#ffe9a8;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000}
+.tbtn.dash.cool .n{opacity:.45}
+.tbtn .lbl{position:absolute;left:50%;bottom:-4px;transform:translateX(-50%);font:700 13px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-style:normal;color:#fff;white-space:nowrap;pointer-events:none;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000,0 2px 3px #000}
+.tbtn.lock .lbl{font-size:11px}
+.tbtn.run{right:132px;bottom:34px;width:58px;height:58px}
+.tbtn.lock{right:0;bottom:10px;width:30px;height:30px;background-image:url(/ui/lock_btn.png)}
+
+.skillbar{display:flex;position:fixed;right:4px;top:40%;z-index:6;flex-direction:column;gap:6px;transform-origin:right center;pointer-events:none}
+body.touch .skillbar{top:46%;transform:translateY(-50%) scale(var(--ui,1))}
+body.kbd .skillbar{transform:translateY(-50%) scale(var(--sk,1))}
+.skill-slot{position:relative;width:56px;height:56px;box-sizing:border-box;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center}
+.skill-slot::before{content:'';position:absolute;inset:0;background:#323a3e;border:2px solid #f0f2e6;box-shadow:inset 0 0 0 2px rgba(0,0,0,.45),0 3px 8px rgba(0,0,0,.55)}
+.skill-slot .k{position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:3;font:700 9px 'Galmuri9','Galmuri11',sans-serif;font-style:normal;color:#fff;line-height:11px;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
+.skill-slot .n{position:relative;z-index:2;font:700 17px 'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#fff;white-space:nowrap;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000,-1px -1px #000,1px 1px #000,-1px 1px #000,1px -1px #000}
+.skill-slot .n.s{font-size:13px}
+.skill-slot .cdc{position:absolute;inset:2px;overflow:hidden;z-index:4;pointer-events:none}
+.skill-slot .cdv{position:absolute;left:0;right:0;bottom:0;height:0;background:rgba(0,0,0,.68)}
+.skill-slot.round::before{display:none}
+.skill-slot.round .cdc{inset:0;border-radius:50%}
+.skill-slot.round .k{top:-4px}
+.skill-slot .im{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none;user-select:none;-webkit-user-drag:none}
+.skill-slot .cdn{position:absolute;z-index:5;font:700 22px 'Galmuri11',sans-serif;font-style:normal;color:#ffe9a8;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000}
+.skill-slot.cool .n{opacity:.45}
+.skill-slot.press{filter:brightness(1.35)}
+.toast{position:fixed;left:50%;top:120px;transform:translateX(-50%);padding:6px 14px;border-radius:14px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font:600 13px sans-serif;z-index:9;pointer-events:none;opacity:0;transition:opacity .25s}
+.toast.show{opacity:1}
+body.touch .joy-base{transform:scale(var(--ui,1));transform-origin:left bottom}
+.tgroup{display:none}
+body.touch .tgroup{display:block;position:fixed;right:0;bottom:0;width:230px;height:290px;z-index:6;pointer-events:none;transform:scale(var(--ui,1));transform-origin:right bottom}
+body.touch .tgroup .tbtn{position:absolute;pointer-events:auto}
+body.touch .bottom-wrap{transform:translateX(-50%) scale(var(--ui,1));transform-origin:center bottom}
+body.touch .rt-stack{transform:scale(var(--ui,1));transform-origin:right top}
+.cross{position:fixed;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;border:2px solid rgba(255,255,255,.9);box-shadow:0 0 4px #000;z-index:5;pointer-events:none;display:none}
+
+.bottom-wrap{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);z-index:5;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none;width:min(500px,94vw)}
+.bottom-wrap .hintbar{white-space:normal;text-align:center;font-size:11px}
+.bui{width:100%;display:flex;flex-direction:column;align-items:center;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-weight:700;color:#fff;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000}
+
+.bui-lv{position:relative;z-index:2;width:150px;height:40px;margin-bottom:-6px;padding:3px;box-sizing:border-box;background:linear-gradient(#6a6a72,#2a2a30);clip-path:polygon(9% 0,91% 0,100% 50%,91% 100%,9% 100%,0 50%)}
+.bui-lv span{display:flex;align-items:center;justify-content:center;height:100%;font-size:21px;letter-spacing:2px;background:#0d0d10;clip-path:polygon(9% 0,91% 0,100% 50%,91% 100%,9% 100%,0 50%)}
+
+.hpmp{position:relative;display:flex;align-items:center;width:100%;height:30px;margin-top:4px}
+.hpmp-ic{position:relative;z-index:2;flex:none;width:34px;height:34px;border-radius:50%;box-sizing:border-box;background:radial-gradient(#1a1a1f,#08080a);border:3px solid #55555d;display:flex;align-items:center;justify-content:center}
+.hpmp-ic img{width:20px;height:20px;object-fit:contain}
+.hpmp-bar{flex:1;height:26px;margin-left:-14px;padding:3px 3px 3px 18px;box-sizing:border-box;background:linear-gradient(#62626a,#2a2a30);clip-path:polygon(0 0,calc(100% - 13px) 0,100% 50%,calc(100% - 13px) 100%,0 100%)}
+.hpmp-in{position:relative;height:100%;overflow:hidden;background:#070708;clip-path:polygon(0 0,calc(100% - 10px) 0,100% 50%,calc(100% - 10px) 100%,0 100%)}
+.hpmp-in i{position:absolute;left:0;top:0;bottom:0;display:block}
+.hp .hpmp-in i{background:linear-gradient(#f56a5c,#d82424 55%,#a81414)}
+.mp .hpmp-in i{background:linear-gradient(#46a8ff,#1a74e6 55%,#0b56b8)}
+.hpmp-in span{position:relative;display:block;text-align:center;font-size:13px;line-height:20px}
+/* 레벨 숫자 + 경험치 바 (체력·마나 위). 틀 그림 /ui/exp_bar.png 위에 레벨 글자·게이지·숫자를 얹어요 */
+.rollbox{position:relative;overflow:hidden}
+.rollbox>span{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;white-space:nowrap}
+.lvnum{width:170px;height:34px;margin-bottom:2px;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-weight:700;font-size:26px;color:#fff;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000,-2px -2px #000,2px 2px #000,-2px 2px #000,2px -2px #000}
+.xpbar{position:relative;width:118%;aspect-ratio:1400/88;margin-bottom:6px;container-type:inline-size}
+.xp-frame{display:block;width:100%;height:100%;pointer-events:none;user-select:none;-webkit-user-drag:none}
+.xp-lvtxt{position:absolute;left:4.737%;top:22.131%;width:9.32%;height:59.016%;font-family:Georgia,'Times New Roman','Malgun Gothic',serif;font-weight:700;font-size:15px;font-size:2.6cqw;color:#efe4cf;text-shadow:0 1px 2px #000}
+.xp-gauge{position:absolute;left:20.906%;top:41.803%;width:73.481%;height:20.492%;overflow:hidden}
+.xp-gauge i{position:absolute;left:0;top:0;bottom:0;display:block;width:0;overflow:hidden;background:linear-gradient(#ffeaa0,#f2c95c 40%,#d49a40 75%,#f5d466);box-shadow:0 0 8px rgba(255,205,70,.6);clip-path:polygon(3px 0,100% 0,100% 100%,3px 100%,0 50%);transition:width .7s cubic-bezier(.2,.8,.2,1)}
+.xp-gauge i::after{content:'';position:absolute;top:0;bottom:0;width:40%;left:-40%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent);animation:xpshine 3.2s ease-in-out infinite}
+@keyframes xpshine{0%{left:-40%}60%,100%{left:140%}}
+.xp-gauge.pop i{animation:xppop .5s ease-out}
+@keyframes xppop{0%{filter:brightness(2)}100%{filter:brightness(1)}}
+.lvup{animation:lvglow .9s ease-out}
+@keyframes lvglow{0%{filter:brightness(2.4) drop-shadow(0 0 6px #ffd34d)}100%{filter:none}}
+.xp-num{position:absolute;right:6.797%;top:51.6%;transform:translateY(-50%);font-family:Georgia,'Times New Roman','Malgun Gothic',serif;font-weight:700;font-size:10px;font-size:1.9cqw;color:#ece6dc;text-shadow:0 1px 2px #000,0 0 3px #000;white-space:nowrap}
+
+.bui-menu{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;width:100%;margin-top:10px}
+.mbtn{pointer-events:auto;cursor:pointer;position:relative;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:8px 4px 6px;box-sizing:border-box;background:radial-gradient(circle at 50% 40%,#1c1c22,#0a0a0c);border:3px solid #3e3e46;border-radius:3px;box-shadow:inset 0 0 0 1px #000,0 2px 6px rgba(0,0,0,.6);transition:transform .1s,filter .1s}
+.mbtn::before{content:'';position:absolute;inset:-3px;pointer-events:none;background:linear-gradient(#7a7a84,#7a7a84) 0 0/7px 7px no-repeat,linear-gradient(#7a7a84,#7a7a84) 100% 0/7px 7px no-repeat,linear-gradient(#7a7a84,#7a7a84) 0 100%/7px 7px no-repeat,linear-gradient(#7a7a84,#7a7a84) 100% 100%/7px 7px no-repeat}
+.mbtn img{width:56%;height:auto;max-height:58%;object-fit:contain;margin-top:2px;filter:drop-shadow(0 2px 2px rgba(0,0,0,.7))}
+.mbtn b{font-size:13px;line-height:1.1;white-space:nowrap}
+.mbtn:hover{filter:brightness(1.25)}
+.mbtn.flash,.mbtn:active{transform:scale(.94);filter:brightness(1.7)}
+
+body.touch .bottom-wrap{width:clamp(250px,calc(100vw - 390px),400px);bottom:6px}
+body.touch .bottom-wrap .hintbar{display:none}
+body.touch .bui-lv{width:100px;height:28px}
+body.touch .bui-lv span{font-size:14px}
+body.touch .hpmp{height:22px;margin-top:2px}
+body.touch .hpmp-ic{width:24px;height:24px;border-width:2px}
+body.touch .hpmp-ic img{width:14px;height:14px}
+body.touch .hpmp-bar{height:18px;padding:2px 2px 2px 14px;margin-left:-10px}
+body.touch .hpmp-in span{font-size:10px;line-height:14px}
+body.touch .xpbar{width:100%;margin-bottom:3px}
+body.touch .lvnum{width:120px;height:22px;font-size:17px;margin-bottom:1px}
+body.touch .bui-menu{width:100%;gap:3px;margin-top:6px}
+body.touch .mbtn{padding:3px 1px 2px;border-width:2px}
+body.touch .mbtn b{font-size:6px}
+`;
+
+(function injectStyles() {
+  const st = document.createElement('style');
+  st.textContent = GAME_CSS;
+  document.head.appendChild(st);
+
+  // 픽셀 글꼴 (못 불러오면 기본 글꼴로 보임)
+  const fontLink = document.createElement('link');
+  fontLink.rel = 'stylesheet';
+  fontLink.href = 'https://cdn.jsdelivr.net/npm/galmuri@latest/dist/galmuri.css';
+  document.head.appendChild(fontLink);
 })();
 
-// ---------- 토끼 (평원 초반부 몬스터, 선공 없음) ----------
-// 고블린과 같은 방식이에요. 계산 코드는 public/js/rabbit-ai.mjs. 로드에 실패해도 고블린·게임은 그대로 돌아가요.
-let rabSim = null;
-(async () => {
-  try {
-    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
-    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
-    const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/rabbit-ai.mjs')).href);
-    rabSim = ai.createRabbitSim({ T: terr.makeTerrain(SEED), seed: SEED, WATER_LEVEL: terr.WATER_LEVEL, VILLAGE: terr.VILLAGE, PLAY_RADIUS: terr.PLAY_RADIUS });
-    console.log('토끼 ' + rabSim.rabbits.length + '마리 배치 완료');
-  } catch (e) {
-    console.error('토끼 시스템 로드 실패 (토끼 없이 계속 진행):', e);
-  }
-})();
-
-// ---------- 슬라임 (슬라임 고원 = 평원 동쪽~남동쪽, 선공) ----------
-// 고블린·토끼와 같은 방식이에요. 계산 코드는 public/js/slime-ai.mjs. 로드에 실패해도 다른 몬스터·게임은 그대로 돌아가요.
-let sliSim = null;
-(async () => {
-  try {
-    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
-    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
-    const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/slime-ai.mjs')).href);
-    sliSim = ai.createSlimeSim({ T: terr.makeTerrain(SEED), seed: SEED, WATER_LEVEL: terr.WATER_LEVEL, VILLAGE: terr.VILLAGE, PLAY_RADIUS: terr.PLAY_RADIUS });
-    console.log('슬라임 ' + sliSim.slimes.length + '마리 배치 완료');
-  } catch (e) {
-    console.error('슬라임 시스템 로드 실패 (슬라임 없이 계속 진행):', e);
-  }
-})();
-
-// ---------- 아이템 · 스킬북 (인벤토리 / 배우기 / 장착) ----------
-// 목록·설명·확률·수치는 public/js/items.mjs. 로드에 실패해도 게임은 그대로 돌아가요(아이템만 못 얻음).
-// 플레이어 정보: p.inv = [{ id, n }] (인벤토리), p.learned = ['slam'] (배운 스킬), p.slotR = 'slam' | null (R 칸에 장착한 스킬)
-let ITEMS_MOD = null;
-(async () => {
-  try { ITEMS_MOD = await import(pathToFileURL(path.join(__dirname, 'public/js/items.mjs')).href); }
-  catch (e) { console.error('아이템 정보 로드 실패 (아이템 없이 계속 진행):', e); }
-})();
-// 진행 상황(인벤토리·스킬·장비·레벨·마지막 위치)은 계정에 저장돼요 (accounts.js → DATA_DIR/accounts.json).
-// 같은 계정으로 다시 로그인하면 그대로 이어서 해요. 서버를 다시 켜거나 업데이트해도 DATA_DIR 이 영구 디스크면 유지돼요.
-// 경험치·골드: 숫자가 아니면 0, 음수는 0, 상한 초과는 상한으로 잘라서(정수) 저장·복구해요
-const EXP_MAX = 1e12, GOLD_MAX = 1e12;
-const cleanNum = (v, max) => (Number.isFinite(v) ? Math.min(max, Math.max(0, Math.floor(v))) : 0);
-const MAX_LEVEL = 999;
-const expNeed = (lv) => 1000 * Math.max(1, lv);   // 레벨 N 에서 다음 레벨까지 필요한 경험치 (화면 main.js 의 expNeed 와 같은 공식이어야 해요)
-// 경험치가 다 차면 레벨이 올라가요 (남은 경험치는 다음 레벨로 이월, 한 번에 여러 레벨도 가능)
-const settleExp = (p) => {
-  p.level = Math.min(MAX_LEVEL, Math.max(1, Math.floor(Number.isFinite(p.level) ? p.level : 1)));
-  while (p.level < MAX_LEVEL && p.exp >= expNeed(p.level)) { p.exp -= expNeed(p.level); p.level++; }
-  if (p.level >= MAX_LEVEL) p.exp = Math.min(p.exp, expNeed(p.level) - 1);
-};
-const saveProfile = (p) => {
-  if (!p || !p.acct || !p.inv) return;
-  const old = acc.getProfile(p.acct);
-  // 땅 위에 있을 때만 위치를 새로 저장 (동굴·집 안이면 마지막 땅 위 위치를 그대로 둠)
-  const above = p.spawned && [p.x, p.z].every(Number.isFinite) && p.y >= UNDER_Y && Math.abs(p.x) < 5000 && Math.abs(p.z) < 5000;
-  const pos = above ? { x: Math.round(p.x * 10) / 10, z: Math.round(p.z * 10) / 10 } : (old && old.pos) || null;
-  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, level: p.level, exp: cleanNum(p.exp, EXP_MAX), gold: cleanNum(p.gold, GOLD_MAX), pos });
-};
-function kickPlayer(o) {   // 같은 계정으로 다른 곳에서 로그인하면 먼저 있던 접속을 끊어요
-  saveProfile(o);
-  players.delete(o.id);
-  const s = io.sockets.sockets.get(o.id);
-  if (s) { s.emit('kicked'); s.disconnect(true); }
-}
-const sendInv = (p) => io.to(p.id).emit('inv', { items: p.inv });
-const sendSkills = (p) => io.to(p.id).emit('skills', { learned: p.learned, slotR: p.slotR });
-const sendExp = (p) => io.to(p.id).emit('exp', { level: p.level, exp: p.exp, expMax: expNeed(p.level), gold: p.gold });   // 경험치를 얻었을 때 이걸 부르면 화면 경험치 바가 차올라요
-// 경험치 주기: addExp(p, 숫자) → 다 차면 자동으로 레벨업하고 화면에 알려줘요 (몬스터 처치 등에서 이걸 부르면 돼요)
-const addExp = (p, n) => { if (!p || !Number.isFinite(n) || n <= 0) return; p.exp = cleanNum(p.exp + n, EXP_MAX); settleExp(p); sendExp(p); saveProfile(p); };
-const sendToast = (p, msg) => io.to(p.id).emit('toast', { msg });
-function addItem(p, id, n = 1) {   // 성공하면 true, 칸이 없으면 false (장비는 한 개당 한 칸, 재료·책은 겹쳐 쌓임)
-  const def = ITEMS_MOD && ITEMS_MOD.ITEMS[id];
-  if (!def) return false;
-  if (def.stack === false) {
-    if (p.inv.length + n > ITEMS_MOD.INV_CAP) return false;
-    for (let i = 0; i < n; i++) p.inv.push({ id, n: 1 });
-  } else {
-    const st = p.inv.find((i) => i.id === id);
-    if (st) st.n += n;
-    else if (p.inv.length < ITEMS_MOD.INV_CAP) p.inv.push({ id, n });
-    else return false;
-  }
-  saveProfile(p);
-  return true;
-}
-// 몬스터를 잡았을 때 드랍표대로 굴려서 인벤토리에 넣고, 화면 아래에 '아이템x개수를 획득했습니다.' 를 띄움
-function giveLoot(pid, kind) {
-  const p = players.get(pid);
-  if (!p || !ITEMS_MOD || !p.inv) return;
-  const got = [];
-  let full = false;
-  let wore = false;
-  for (const e of ITEMS_MOD.rollLoot(kind)) {
-    const def = ITEMS_MOD.ITEMS[e.id];
-    if (def && def.kind === 'gear' && !p.gear[def.slot]) { p.gear[def.slot] = e.id; got.push(e); wore = true; continue; }   // 장비는 비어 있는 칸이면 인벤토리를 거치지 않고 바로 입음
-    if (addItem(p, e.id, e.n)) got.push(e); else full = true;   // 이미 입은 칸이면 인벤토리로
-  }
-  if (wore) applyGear(p);   // 최대 체력·입은 모습·저장
-  if (got.length) { sendInv(p); io.to(pid).emit('loot', { items: got }); }
-  if (full) sendToast(p, '인벤토리가 가득 차서 일부 아이템을 얻지 못했어요');
-}
-// ---------- 장비 (갑옷·신발): 장착하면 최대 체력이 늘어요 ----------
-const sendGear = (p) => io.to(p.id).emit('gear', { gear: p.gear });
-const calcHpMax = (p) => Math.max(1, Math.round(PLAYER_HP_MAX * (p.hpMult || 1))) + (ITEMS_MOD ? ITEMS_MOD.gearHp(p.gear) : 0);
-function applyGear(p) {   // 최대 체력을 다시 계산: 늘어난 만큼 현재 체력도 같이 늘고, 줄면 최대치에 맞춰 깎임
-  const max = calcHpMax(p), diff = max - p.hpMax;
-  p.hpMax = max;
-  p.hp = diff > 0 ? Math.min(max, p.hp + diff) : Math.min(p.hp, max);
-  io.to(p.id).emit('hp', { hp: p.hp, max: p.hpMax });
-  saveProfile(p); sendGear(p); sendInv(p);
+// 단말기 화면 크기에 맞춘 UI 배율 (짧은 쪽 400px = 1배, 0.75~1.6배)
+function computeUiScale() {
+  const shortSide = Math.min(window.innerWidth, window.innerHeight);
+  return Math.max(0.75, Math.min(1.6, shortSide / 400));
 }
 
-// ---------- 보스 오크 대전사 (고블린 구역 한가운데의 어두운 흙 터) ----------
-// 계산 코드는 public/js/boss-ai.mjs, 터 위치는 terrain.js 가 시드마다 정해요. 로드에 실패해도 다른 몬스터·게임은 그대로 돌아가요.
-let bossSim = null;
-(async () => {
-  try {
-    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
-    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
-    const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/boss-ai.mjs')).href);
-    const zones = await import(pathToFileURL(path.join(__dirname, 'public/js/plain-zones.mjs')).href);
-    bossSim = ai.createBossSim({ T: terr.makeTerrain(SEED) });
-    if (bossSim) {
-      const a = bossSim.arena;
-      console.log('보스 오크 대전사 배치 완료 (터 중심 ' + a.x + ', ' + a.z + ')');
-      if (zones.plainZoneAt(a.x, a.z, terr.VILLAGE) !== 'goblin') console.warn('경고: 보스 터가 고블린 구역 밖이에요. terrain.js 의 findArena 각도(145/300)를 plain-zones.mjs 와 맞춰 주세요.');
-    } else console.warn('보스 터로 쓸 알맞은 평원을 못 찾아서 보스 없이 진행해요.');
-  } catch (e) {
-    console.error('보스 시스템 로드 실패 (보스 없이 계속 진행):', e);
-  }
-})();
+// 플레이어 라벨
+// 캐릭터 표시 배율 (모델·이름표·카메라에 공통 적용)
+const CHAR_SCALE = 1.4;   // 캐릭터 크기 (모델·이름표·시선 높이)
+const CAM_SCALE = 1;    // 카메라 거리 배율 (CHAR_SCALE보다 작게 두면 화면에서 더 크게 보임)
 
-// ---------- 지하 동굴 + 골렘 ----------
-// 평원 중반부에 동굴 입구가 있고, 동굴 안(아주 깊은 땅 밑)에 골렘 20마리가 살아요.
-// 지도·충돌은 public/js/cave-layout.mjs, 골렘 두뇌는 public/js/golem-ai.mjs. 입구 위치는 서버가 정해서 접속한 브라우저에 알려줘요.
-let golSim = null;
-let caveEnt = null;     // 동굴 입구 { x, z }
-let UNDER_Y = -100;     // 이보다 낮으면 지하 (땅 위 몬스터는 지하 플레이어를 못 봄)
-(async () => {
-  try {
-    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
-    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
-    const L = await import(pathToFileURL(path.join(__dirname, 'public/js/cave-layout.mjs')).href);
-    const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/golem-ai.mjs')).href);
-    const ent = L.findEntrance(terr.makeTerrain(SEED), SEED, terr.WATER_LEVEL, terr.VILLAGE);
-    if (!ent) throw new Error('동굴 입구로 쓸 평평한 평원을 못 찾음');
-    golSim = ai.createGolemSim({ layout: L.makeCaveLayout(ent, SEED), seed: SEED });
-    UNDER_Y = L.CAVE.UNDER_Y;
-    caveEnt = ent;
-    io.emit('cave', caveEnt);   // 이미 접속해 있는 사람에게도 알림
-    console.log('동굴 입구 (' + ent.x + ', ' + ent.z + '), 골렘 ' + golSim.golems.length + '마리 배치 완료');
-  } catch (e) {
-    console.error('동굴/골렘 시스템 로드 실패 (동굴 없이 계속 진행):', e);
-  }
-})();
+function makeLabel(text) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
 
-const PLAYER_HP_MAX = 100;
-// 개발자 도구: 이 닉네임으로 접속한 사람은 화면 위 패널에서 자기 데미지·체력 배율을 바꿀 수 있어요.
-// ※ 닉네임만 확인하는 방식이라 같은 닉네임을 쓰면 누구나 쓸 수 있어요. 공개 서버로 열 땐 비밀번호 방식으로 바꾸세요.
-const DEV_NICK = '박준우';
-const DEV_MULT_MIN = 0.1, DEV_MULT_MAX = 1000;
-const HP_REGEN_SEC = 2;      // 자연 회복: 이 시간(초)마다
-const HP_REGEN_AMOUNT = 1;   // 이만큼 회복
+  const ctx = canvas.getContext('2d');
+  ctx.font = 'bold 34px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = '#000';
+  ctx.strokeText(text, 128, 44);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(text, 128, 44);
 
-// 플레이어 체력 자연 회복
-function regenPlayers(dt) {
-  for (const p of players.values()) {
-    if (!p.spawned || p.hp >= p.hpMax) { p.regenT = 0; continue; }
-    p.regenT = (p.regenT || 0) + dt;
-    if (p.regenT < HP_REGEN_SEC) continue;
-    p.regenT -= HP_REGEN_SEC;
-    p.hp = Math.min(p.hpMax, p.hp + HP_REGEN_AMOUNT);
-    io.to(p.id).emit('hp', { hp: p.hp, max: p.hpMax });
-  }
+  const texture = new THREE.CanvasTexture(canvas);
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: texture,
+      depthTest: false
+    })
+  );
+
+  sprite.scale.set(3 * CHAR_SCALE, 0.75 * CHAR_SCALE, 1);
+  sprite.position.y = 2.6 * CHAR_SCALE;
+
+  return sprite;
 }
 
-// 플레이어가 고블린에게 맞음. 체력이 0이 되면 임시로 시작 마을에서 체력을 가득 채워 다시 시작시켜요 (사망 시스템이 생기면 교체)
-function hurtPlayer(pid, dmg) {
-  const p = players.get(pid);
-  if (!p || p.hp <= 0) return;
-  p.hp = Math.max(0, p.hp - dmg);
-  if (p.hp <= 0) {
-    p.hp = p.hpMax;
-    const underground = p.y < UNDER_Y;   // 동굴 안에서 쓰러지면 땅 위 시작 마을로 올려 보냄
-    Object.assign(p, { x: 0, z: 0, t: Date.now() });
-    if (underground) p.y = 10;
-    if (sim) sim.dropTarget(pid);
-    if (rabSim) rabSim.dropTarget(pid);
-    if (sliSim) sliSim.dropTarget(pid);
-    if (bossSim) bossSim.dropTarget(pid);
-    if (golSim) golSim.dropTarget(pid);
-    if (underground) io.to(pid).emit('surface', { x: 0, y: 10, z: 0 });
-    else io.to(pid).emit('correct', { x: 0, y: p.y, z: 0 });
-    io.to(pid).emit('notice', '쓰러져서 시작 마을에서 다시 시작해요');
+// 플레이어 모델
+function makeAvatar(nick, color) {
+  const group = new THREE.Group();
+
+  // 사람 모양 캐릭터 (children[0]) + 닉네임 표시 (children[1])
+  const body = makeHumanoid(color);
+  body.scale.setScalar(CHAR_SCALE);
+  group.add(body);
+  group.add(makeLabel(nick));
+  group.userData.rig = body.userData.rig;
+
+  return group;
+}
+
+// 서버 데이터에서 플레이어 목록을 배열로 변환
+function normalizePlayers(data) {
+  if (Array.isArray(data)) {
+    return data;
   }
-  io.to(pid).emit('hp', { hp: p.hp, max: p.hpMax });
-}
 
-// 평타 판정: 장착·쿨다운 검사를 통과한 공격만 여기로 와요. 실제 피해는 sim 이 위치·방향·사거리를 서버 기준으로 검사해서 확정
-function resolveAttack(attacker, now) {
-  if (sim) sim.playerAttack(attacker, now);
-  if (rabSim) rabSim.playerAttack(attacker, now);
-  if (sliSim) sliSim.playerAttack(attacker, now);
-  if (bossSim) bossSim.playerAttack(attacker, now);
-  if (golSim) golSim.playerAttack(attacker, now);
-}
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.players)) return data.players;
+    if (Array.isArray(data.list)) return data.list;
 
-io.on('connection', (socket) => {
-  socket.on('join', (d) => {
-    if (players.has(socket.id)) return;
-    const auth = acc.verify(d && d.token);   // 로그인한 계정만 입장 (닉네임은 계정 닉네임으로 고정)
-    if (!auth) { socket.emit('authfail'); socket.disconnect(); return; }
-    for (const o of [...players.values()]) if (o.acct === auth.key) kickPlayer(o);
-    if (players.size >= MAX_PLAYERS) {
-      socket.emit('full');
-      socket.disconnect();
-      return;
-    }
-    const nick = auth.name;
-    players.set(socket.id, {
-      id: socket.id, nick, acct: auth.key,
-      x: 0, y: 0, z: 0, ry: 0, t: 0,
-      spawned: false, fast: false,
-      eq: false, eqT: 0, atkT: 0,
-      hp: PLAYER_HP_MAX, hpMax: PLAYER_HP_MAX,
-      level: 1,  // 레벨 (아직 성장 시스템이 없어서 1 고정. 나중에 여기 값만 바꾸면 거래 목록에도 반영됨)
-      exp: 0, gold: 0   // 경험치·골드 기본값 (저장된 값이 있으면 아래에서 덮어써요)
+    return Object.entries(data).map(([pid, p]) => {
+      if (Array.isArray(p)) {
+        return [pid, ...p.slice(1)];
+      }
+
+      return { id: pid, ...p };
     });
-    const me = players.get(socket.id), sv = acc.getProfile(auth.key);   // 이 계정의 저장된 인벤토리·스킬·장비 복원
-    me.inv = sv ? sv.inv.map((i) => ({ ...i })) : [];
-    me.learned = sv ? [...sv.learned] : [];
-    me.slotR = sv ? sv.slotR : null;
-    me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, pants: sv.gear.pants || null } : { armor: null, pants: null };
-    if (sv && Number.isFinite(sv.level)) me.level = sv.level;
-    me.exp = cleanNum(sv && sv.exp, EXP_MAX);     // 예전 계정은 값이 없어서 0부터 시작
-    me.gold = cleanNum(sv && sv.gold, GOLD_MAX);
-    settleExp(me);   // 저장된 경험치가 이미 가득이면 레벨로 넘겨요
-    me.hpMax = calcHpMax(me); me.hp = me.hpMax;   // 장비로 늘어난 최대 체력 포함
-    const spawn = sv && sv.pos && Number.isFinite(sv.pos.x) && Number.isFinite(sv.pos.z) ? { x: sv.pos.x, z: sv.pos.z } : undefined;   // 마지막으로 있던 땅 위 위치
-    socket.emit('init', { id: socket.id, seed: SEED, spawn, level: me.level, exp: me.exp, expMax: expNeed(me.level), gold: me.gold });
-    socket.emit('hp', { hp: me.hp, max: me.hpMax });
-    sendInv(me); sendSkills(me); sendGear(me);
-    if (caveEnt) socket.emit('cave', caveEnt);   // 동굴 입구 위치 (아직 계산 전이면 계산이 끝났을 때 전체에게 보냄)
+  }
+
+  console.error('알 수 없는 state 데이터 형식:', data);
+  return [];
+}
+
+// 플레이어 데이터 해석
+function parsePlayer(p) {
+  if (Array.isArray(p)) {
+    // [id, nick, x, y, z, ry]
+    return {
+      id: p[0],
+      nick: p[1],
+      x: p[2],
+      y: p[3],
+      z: p[4],
+      ry: p[5],
+      eq: p[6] === 1,
+      level: Number(p[7]) || 1,
+      gm: Number(p[8]) || 0   // 입은 옷 (1 = 갑옷, 2 = 바지)
+    };
+  }
+
+  if (p && typeof p === 'object') {
+    return {
+      id: p.id ?? p.pid,
+      nick: p.nick ?? p.name ?? '플레이어',
+      x: p.x,
+      y: p.y ?? 0,
+      z: p.z,
+      ry: p.ry ?? 0,
+      eq: !!p.eq,
+      level: Number(p.level) || 1,
+      gm: Number(p.gm) || 0
+    };
+  }
+
+  return null;
+}
+
+// ============ 시작 화면: 닉네임 -> 조작 방식 선택 -> 접속 ============
+// 닉네임 입력칸·입장 버튼은 로그인/회원가입 화면(auth.js)으로 대체됐어요
+$('nick').style.display = 'none';
+$('join').style.display = 'none';
+let authToken = null;   // 로그인해서 받은 토큰 (서버 입장 때 보냄)
+
+function resetLogin(message) {
+  $('login').style.display = 'flex';
+  const box = $('modeBox');
+  if (box) box.remove();
+  auth.show(message);
+}
+
+function showModeSelect(nick) {
+  $('nick').style.display = 'none';
+  $('join').style.display = 'none';
+  $('msg').textContent = '';
+
+  const box = document.createElement('div');
+  box.id = 'modeBox';
+
+  const title = document.createElement('div');
+  title.className = 'mode-title';
+  title.textContent = nick + '님, 조작 방식을 골라주세요';
+
+  const row = document.createElement('div');
+  row.className = 'mode-row';
+
+  const makeChoice = (icon, name, sub, mode) => {
+    const b = document.createElement('button');
+    b.className = 'rpg-btn';
+    const t = document.createElement('div');
+    t.textContent = icon + ' ' + name;
+    const s = document.createElement('small');
+    s.textContent = sub;
+    b.append(t, s);
+    b.addEventListener('click', () => {
+      box.style.display = 'none';
+      connect(nick, mode);
+    });
+    return b;
+  };
+
+  row.append(
+    makeChoice('⌨️', '키보드', 'WASD · 마우스 / 방향키 / 터치', 'keyboard'),
+    makeChoice('📱', '터치스크린', '조이스틱 · 버튼', 'touch')
+  );
+
+  const note = document.createElement('div');
+  note.className = 'mode-note';
+  note.textContent = '터치스크린은 가로 화면을 추천해요';
+
+  box.append(title, row, note);
+  $('login').appendChild(box);
+}
+
+const auth = createAuth({
+  root: $('login'),
+  msg: $('msg'),
+  onLogin: (nick, token) => { authToken = token; showModeSelect(nick); },
+});
+auth.show();   // 저장된 로그인이 있으면 자동으로 알아봐요
+
+async function connect(nick, mode) {
+  $('msg').textContent = '서버에 연결 중...';
+  await humanReady; // GLB 로딩이 끝난 뒤에 캐릭터를 만들도록 대기
+
+  const socket = io();
+
+  socket.on('connect', () => {
+    socket.emit('join', { token: authToken });
   });
 
-  // 개발자 도구 (닉네임이 DEV_NICK 인 사람만). 화면 패널이 켜질 때 인사를 보내면 현재 배율을 알려줘요
-  socket.on('dev:hello', () => {
-    const p = players.get(socket.id);
-    if (p && p.nick === DEV_NICK) socket.emit('dev:on', { dmg: p.dmgMult || 1, hp: p.hpMult || 1 });
-  });
-  socket.on('dev:set', (d) => {
-    const p = players.get(socket.id);
-    if (!p || p.nick !== DEV_NICK || !d || typeof d !== 'object') return;
-    const num = (v) => { v = Number(v); return Number.isFinite(v) ? Math.min(DEV_MULT_MAX, Math.max(DEV_MULT_MIN, v)) : 1; };
-    p.dmgMult = num(d.dmg);
-    p.hpMult = num(d.hp);
-    const max = calcHpMax(p);   // 장비로 늘어난 최대 체력 포함
-    if (max !== p.hpMax) { p.hpMax = max; p.hp = max; }   // 최대 체력이 바뀌면 가득 채워서 시작
-    socket.emit('hp', { hp: p.hp, max: p.hpMax });
-    socket.emit('dev:on', { dmg: p.dmgMult, hp: p.hpMult });
+  socket.on('authfail', () => {   // 로그인 정보가 서버에서 만료/삭제됨
+    clearToken();
+    resetLogin('로그인 정보가 만료됐어요. 다시 로그인해주세요.');
   });
 
-  // 화면이 준비되면 인벤토리·스킬 정보를 한 번 더 요청 (접속 직후에 보낸 것을 놓쳤을 때 대비)
-  socket.on('sync', () => {
-    const p = players.get(socket.id);
-    if (p && p.inv) { sendInv(p); sendSkills(p); sendGear(p); }
-  });
-  // 장비 장착: 인벤토리의 갑옷/신발을 해당 칸에 입음 (이미 입은 게 있으면 서로 바뀜)
-  socket.on('wear', (d) => {
-    const p = players.get(socket.id);
-    if (!p || !ITEMS_MOD || !d || typeof d.id !== 'string') return;
-    const def = ITEMS_MOD.ITEMS[d.id], st = p.inv.find((i) => i.id === d.id);
-    if (!def || def.kind !== 'gear' || !st) return;
-    p.inv.splice(p.inv.indexOf(st), 1);
-    const old = p.gear[def.slot];
-    if (old) p.inv.push({ id: old, n: 1 });
-    p.gear[def.slot] = d.id;
-    applyGear(p);
-  });
-  // 장비 해제: 입고 있던 것을 인벤토리로 되돌림
-  socket.on('unwear', (d) => {
-    const p = players.get(socket.id);
-    if (!p || !ITEMS_MOD || !d || typeof d.slot !== 'string') return;
-    const id = p.gear[d.slot];
-    if (!id) return;
-    if (p.inv.length >= ITEMS_MOD.INV_CAP) { sendToast(p, '인벤토리가 가득 차서 벗을 수 없어요'); return; }
-    p.inv.push({ id, n: 1 });
-    p.gear[d.slot] = null;
-    applyGear(p);
-  });
-  // 스킬북 배우기: 인벤토리의 책을 하나 쓰고 그 스킬을 익힘 (이미 배운 스킬이면 책을 쓰지 않음)
-  socket.on('learn', (d) => {
-    const p = players.get(socket.id);
-    if (!p || !ITEMS_MOD || !d || typeof d.id !== 'string') return;
-    const def = ITEMS_MOD.ITEMS[d.id], st = p.inv.find((i) => i.id === d.id);
-    if (!def || def.kind !== 'skillbook' || !st) return;
-    if (p.learned.includes(def.skill)) { sendToast(p, '이미 배운 스킬이에요'); return; }
-    st.n -= 1;
-    if (st.n <= 0) p.inv.splice(p.inv.indexOf(st), 1);
-    p.learned.push(def.skill);
-    saveProfile(p); sendInv(p); sendSkills(p);
-    sendToast(p, '\'' + ITEMS_MOD.SKILL_INFO[def.skill].name + '\' 스킬을 배웠습니다!');
-  });
-  // 장착: R 칸(E 칸 아래)에 배운 스킬을 올리거나(skill = 스킬 id) 내림(skill = null)
-  socket.on('equip', (d) => {
-    const p = players.get(socket.id);
-    if (!p || !ITEMS_MOD || !d) return;
-    if (d.skill === null) p.slotR = null;
-    else {
-      const info = typeof d.skill === 'string' ? ITEMS_MOD.SKILL_INFO[d.skill] : null;
-      if (!info || info.slot !== 'R' || !p.learned.includes(d.skill)) return;
-      p.slotR = d.skill;
-    }
-    saveProfile(p); sendSkills(p);
-  });
-  // 개발자 도구: 스킬북을 바로 받음 (1% 드랍을 기다리지 않고 시험하려고)
-  // 개발자 전용 경험치·레벨 조절 (시험용): { exp: 값으로 설정, add: 더하기(음수 가능), level: 레벨 설정 }
-  socket.on('dev:exp', (d) => {
-    const p = players.get(socket.id);
-    if (!p || p.nick !== DEV_NICK || !d || typeof d !== 'object') return;
-    if (Number.isFinite(d.level)) p.level = Math.min(999, Math.max(1, Math.floor(d.level)));
-    if (Number.isFinite(d.exp)) p.exp = cleanNum(d.exp, EXP_MAX);
-    if (Number.isFinite(d.add)) p.exp = cleanNum(p.exp + d.add, EXP_MAX);
-    settleExp(p); sendExp(p); saveProfile(p);   // 가득 차면 레벨업
-  });
-  socket.on('dev:book', () => {
-    const p = players.get(socket.id);
-    if (!p || p.nick !== DEV_NICK) return;
-    if (addItem(p, 'book_slam')) { sendInv(p); sendToast(p, '스킬북: 내려찍기를 받았어요 (개발자 도구)'); }
-    else sendToast(p, '인벤토리가 가득 찼어요');
+  socket.on('kicked', () => {   // 같은 계정으로 다른 곳에서 로그인함
+    alert('다른 곳에서 같은 계정으로 로그인해서 연결이 끊겼어요.');
+    location.reload();
   });
 
-  // 개발자 도구: 아이템을 바로 받음 (드랍 확률을 기다리지 않고 장비·재료를 시험하려고)
-  socket.on('dev:give', (d) => {
-    const p = players.get(socket.id);
-    if (!p || p.nick !== DEV_NICK || !ITEMS_MOD || !d || typeof d.id !== 'string' || !ITEMS_MOD.ITEMS[d.id]) return;
-    if (addItem(p, d.id, 1)) { sendInv(p); io.to(p.id).emit('loot', { items: [{ id: d.id, n: 1 }] }); }
-    else sendToast(p, '인벤토리가 가득 찼어요');
+  socket.on('connect_error', (err) => {
+    console.error('서버 연결 오류:', err);
+    resetLogin('서버 연결에 실패했습니다.');
   });
 
-  socket.on('move', (m) => {
-    const p = players.get(socket.id);
-    if (!p || !m || ![m.x, m.y, m.z, m.ry].every(Number.isFinite)) return;
-    const now = Date.now();
-    if (p.spawned) {
-      const dt = Math.max((now - p.t) / 1000, 0.016);
-      const d = Math.hypot(m.x - p.x, m.z - p.z);
-      // 서버 검증: 너무 빠르면 되돌림 (속도 배율 켜면 한도도 함께 증가)
-      if (d > MAX_SPEED * (p.fast ? FAST_MULT : 1) * dt + 1 + (now < (p.dashUntil || 0) ? 6 : 0)) {   // 대쉬 직후 잠깐은 한도를 넉넉히
-        socket.emit('correct', { x: p.x, y: p.y, z: p.z });
-        return;
-      }
-    }
-    Object.assign(p, { x: m.x, y: m.y, z: m.z, ry: m.ry, t: now, spawned: true });
+  socket.on('full', () => {
+    resetLogin('서버가 가득 찼어요 (최대 20명)');
   });
 
-  // 집 안 공간(땅 밑 방)으로 들어가거나 나올 때 위치를 한 번에 옮김. 속도 검증에 걸려 되돌려지지 않게 서버 위치도 같이 갱신
-  socket.on('tp', (d) => {
-    const p = players.get(socket.id);
-    if (!p || !d || ![d.x, d.y, d.z].every(Number.isFinite)) return;
-    if (Math.abs(d.x) > 5000 || Math.abs(d.z) > 5000 || d.y < -5000 || d.y > 800) return;
-    Object.assign(p, { x: d.x, y: d.y, z: d.z, t: Date.now() });
-  });
-
-  socket.on('doors?', () => {
-    if (players.has(socket.id)) socket.emit('doors', [...openDoors]);
-  });
-
-  socket.on('door', (d) => {
-    if (!players.has(socket.id) || !d || !Number.isInteger(d.i) || d.i < 0 || d.i >= MAX_DOORS) return;
-    if (d.open) openDoors.add(d.i); else openDoors.delete(d.i);
-    socket.broadcast.emit('door', { i: d.i, open: !!d.open });
-  });
-
-  // 나무검 장착/해제 (상태는 서버가 기억해서 나중에 들어온 사람도 같은 모습을 보게 함)
-  socket.on('weapon', (d) => {
-    const p = players.get(socket.id);
-    if (!p || !d) return;
-    const now = Date.now();
-    if (now - p.eqT < EQUIP_MIN_MS) return;
-    p.eqT = now;
-    p.eq = !!d.eq;
-    if (!p.eq) p.atkT = 0;
-  });
-
-  // 평타 시작 알림: 장착 중이고 쿨다운이 지났을 때만 다른 사람에게 전달 (피해는 resolveAttack 에서 서버가 결정)
-  socket.on('atk', (d) => {
-    const p = players.get(socket.id);
-    if (!p || !p.eq) return;
-    const now = Date.now();
-    if (now - p.atkT < ATTACK_MIN_MS) return;
-    p.atkT = now;
-    socket.broadcast.emit('atk', { id: socket.id, s: d && d.s === 1 ? 1 : 0 });
-    resolveAttack(p, now);
-  });
-
-  // 스킬 사용. E = 휩쓸기(기본), R = 장착한 스킬(내려찍기). 검을 든 상태에서만, 쿨타임은 서버가 다시 검사. 피해는 서버가 범위 안의 몬스터 전부에게 확정
-  socket.on('skill', (d) => {
-    const p = players.get(socket.id);
-    if (!p || !p.eq || !SKILLS || !d || (d.id !== 'sweep' && d.id !== 'slam')) return;
-    if (!sim && !rabSim && !sliSim && !bossSim && !golSim) return;
-    const now = Date.now();
-    p.skillCd = p.skillCd || {};
-    if (d.id === 'sweep') {
-      if (now < (p.skillCd.sweep || 0) - 300) return;   // 쿨타임 중 (네트워크 지연 0.3초는 봐줌)
-      p.skillCd.sweep = now + SKILLS.sweep.COOLDOWN * 1000;
-      socket.broadcast.emit('skillfx', { id: socket.id, skill: 'sweep' });
-      if (sim) sim.playerSkill(p, 'sweep', now);
-      if (rabSim) rabSim.playerSkill(p, 'sweep', now);
-      if (sliSim) sliSim.playerSkill(p, 'sweep', now);
-      if (bossSim) bossSim.playerSkill(p, 'sweep', now);
-      if (golSim) golSim.playerSkill(p, 'sweep', now);
+  socket.on('init', (data) => {
+    if (!data || !data.id) {
+      console.error('잘못된 init 데이터:', data);
+      resetLogin('캐릭터 초기화에 실패했습니다.');
       return;
     }
-    // 내려찍기: 배우고 R 칸에 장착해야 씀. 내 둘레 정사각형 범위(쓴 순간 위치·방향으로 고정)에 DELAY 뒤 피해
-    if (!ITEMS_MOD || p.slotR !== 'slam' || !p.learned.includes('slam')) return;
-    const SL = ITEMS_MOD.SLAM;
-    if (now < (p.skillCd.slam || 0) - 300) return;
-    p.skillCd.slam = now + SL.COOLDOWN * 1000;
-    socket.broadcast.emit('skillfx', { id: socket.id, skill: 'slam', x: p.x, z: p.z, ry: p.ry });
-    const sq = { cx: p.x, cz: p.z, ry: p.ry, half: SL.SIZE / 2, dmg: SL.DAMAGE, delay: SL.DELAY };
-    if (sim) sim.playerSquare(p, now, sq);
-    if (rabSim) rabSim.playerSquare(p, now, sq);
-    if (sliSim) sliSim.playerSquare(p, now, sq);
-    if (bossSim) bossSim.playerSquare(p, now, sq);
-    if (golSim) golSim.playerSquare(p, now, sq);
+
+    $('msg').textContent = '';
+
+    try {
+      boot(socket, data, nick, mode);
+    } catch (err) {
+      console.error('게임 시작 오류:', err);
+      resetLogin('게임 시작 오류: ' + err.message);
+    }
   });
-
-  // 대쉬 (Q): 이동 자체는 클라이언트가 하고(5m), 서버는 쿨타임(1초)만 확인해서 다른 플레이어에게 이펙트를 알려줌
-  socket.on('dash', (d) => {
-    const p = players.get(socket.id);
-    if (!p || !d || !Number.isFinite(d.dx) || !Number.isFinite(d.dz)) return;
-    const now = Date.now();
-    if (now - (p.dashT || 0) < 800) return;   // 쿨타임 1초 (네트워크 지연 오차 허용)
-    p.dashT = now;
-    p.dashUntil = now + 500;
-    const len = Math.hypot(d.dx, d.dz) || 1;
-    socket.broadcast.emit('dashfx', { id: socket.id, dx: d.dx / len, dz: d.dz / len });
-  });
-
-  socket.on('fast', (v) => {
-    const p = players.get(socket.id);
-    if (p) p.fast = !!v;
-  });
-
-  socket.on('disconnect', () => { const p = players.get(socket.id); if (p && p.inv) saveProfile(p); players.delete(socket.id); });
-});
-
-// 20Hz 고블린·토끼 시뮬레이션 + 주변 몬스터 목록 전송
-let lastTick = Date.now();
-setInterval(() => {
-  const now = Date.now();
-  const dt = (now - lastTick) / 1000;
-  lastTick = now;
-  regenPlayers(dt);
-  if (sim) {
-    try {
-      sim.update(dt, now, players, {
-        hurt: hurtPlayer,
-        kill: (pid) => { io.to(pid).emit('kill', { msg: '고블린을 처치했습니다!' }); giveLoot(pid, 'goblin'); }
-      });
-      for (const p of players.values()) {
-        if (p.spawned && p.y >= UNDER_Y) io.to(p.id).emit('gob', sim.snapshot(p.x, p.z));
-      }
-    } catch (e) {
-      console.error('고블린 업데이트 오류:', e);
-    }
-  }
-  if (rabSim) {
-    try {
-      rabSim.update(dt, now, players, {
-        hurt: hurtPlayer,
-        kill: (pid) => { io.to(pid).emit('kill', { msg: '토끼를 처치했습니다!' }); giveLoot(pid, 'rabbit'); }
-      });
-      for (const p of players.values()) {
-        if (p.spawned && p.y >= UNDER_Y) io.to(p.id).emit('rab', rabSim.snapshot(p.x, p.z));
-      }
-    } catch (e) {
-      console.error('토끼 업데이트 오류:', e);
-    }
-  }
-  if (sliSim) {
-    try {
-      sliSim.update(dt, now, players, {
-        hurt: hurtPlayer,
-        kill: (pid) => { io.to(pid).emit('kill', { msg: '슬라임을 처치했습니다!' }); giveLoot(pid, 'slime'); }
-      });
-      for (const p of players.values()) {
-        if (p.spawned && p.y >= UNDER_Y) io.to(p.id).emit('sli', sliSim.snapshot(p.x, p.z));
-      }
-    } catch (e) {
-      console.error('슬라임 업데이트 오류:', e);
-    }
-  }
-  if (bossSim) {
-    try {
-      bossSim.update(dt, now, players, {
-        hurt: hurtPlayer,
-        kill: (pid, b, hitters) => {
-          // 보스에게 피해를 준 사람마다 따로 스킬북 확률(items.mjs BOSS_BOOK_CHANCE)을 굴려요
-          for (const hid of (hitters && hitters.length ? hitters : [pid])) {
-            const hp = players.get(hid);
-            if (!hp) continue;
-            io.to(hid).emit('kill', { msg: '오크 대전사를 처치했습니다!' });
-            giveLoot(hid, 'boss');   // 하급 마정석 10~15개 (피해를 준 사람마다)
-            if (ITEMS_MOD && Math.random() < (Number(process.env.BOSS_BOOK_CHANCE) || ITEMS_MOD.BOSS_BOOK_CHANCE)) {   // 환경변수 BOSS_BOOK_CHANCE 로 확률을 바꿔 시험할 수 있어요 (예: 1 = 100%)
-              if (addItem(hp, 'book_slam')) { sendInv(hp); io.to(hid).emit('loot', { items: [{ id: 'book_slam', n: 1 }] }); }
-              else sendToast(hp, '인벤토리가 가득 차서 스킬북을 얻지 못했어요');
-            }
-          }
-        }
-      });
-      for (const p of players.values()) {
-        if (!p.spawned || p.y < UNDER_Y) continue;
-        const snap = bossSim.snapshot(p.x, p.z);
-        if (snap.length || p.bossOn) io.to(p.id).emit('boss', snap);   // 멀어지면 빈 목록을 한 번만 보내서 화면에서 지움
-        p.bossOn = snap.length > 0;
-      }
-    } catch (e) {
-      console.error('보스 업데이트 오류:', e);
-    }
-  }
-  if (golSim) {
-    try {
-      golSim.update(dt, now, players, {
-        hurt: hurtPlayer,
-        kill: (pid) => { io.to(pid).emit('kill', { msg: '골렘을 처치했습니다!' }); giveLoot(pid, 'golem'); }
-      });
-      for (const p of players.values()) {
-        if (p.spawned && p.y < UNDER_Y) io.to(p.id).emit('gol', golSim.snapshot(p.x, p.z));   // 동굴 안에 있는 사람에게만
-      }
-    } catch (e) {
-      console.error('골렘 업데이트 오류:', e);
-    }
-  }
-}, 50);
-
-// 15Hz 상태 전송 (나중에 주변 플레이어만 보내도록 변경 예정)
-setInterval(() => {
-  const list = [];
-  for (const p of players.values()) {
-    // 마지막 값 = 입은 옷 (1 = 갑옷, 2 = 바지, 3 = 둘 다) → 다른 플레이어 화면에도 입은 모습이 보임
-    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level, (p.gear && p.gear.armor ? 1 : 0) | (p.gear && p.gear.pants ? 2 : 0)]);
-  }
-  io.emit('state', list);
-}, 1000 / 15);
-
-// 진행 상황 자동 저장 (30초마다) + 서버가 꺼질 때(업데이트 배포 포함) 마지막으로 한 번 더 저장
-setInterval(() => { for (const p of players.values()) saveProfile(p); }, 30000);
-function shutdown() {
-  for (const p of players.values()) saveProfile(p);
-  acc.flushNow();
-  const t = setTimeout(() => process.exit(0), 10000);   // GitHub 백업이 오래 걸려도 10초 안에는 끝내요
-  acc.backupNow().catch(() => {}).finally(() => { clearTimeout(t); process.exit(0); });
 }
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
 
-const PORT = process.env.PORT || 3000;
-acc.ready.then(() => server.listen(PORT, () => console.log('listening on ' + PORT)));   // GitHub 복구가 끝난 뒤 서버를 열어요
+function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax: initExpMax, gold: initGold }, nick, mode) {
+  const touchMode = mode === 'touch';
+  let uiScale = touchMode ? computeUiScale() : 1;
+  document.body.classList.add(touchMode ? 'touch' : 'kbd');
+  $('login').style.display = 'none';
+
+  const T = makeTerrain(seed);
+  const zoneBanner = createZoneBanner((x, z) => T.biome(x, z));   // 지형 진입 알림
+
+  // 렌더러
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, touchMode ? 1.5 : 2));
+  document.body.appendChild(renderer.domElement);
+
+  renderer.domElement.style.position = 'fixed';
+  renderer.domElement.style.inset = '0';
+  renderer.domElement.style.zIndex = '0';
+  renderer.domElement.style.touchAction = 'none';
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xa8c8e8);
+  scene.fog = new THREE.Fog(0xa8c8e8, 70, VIEW * S - 8);
+
+  const camera = new THREE.PerspectiveCamera(
+    70,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    400
+  );
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x556655, 0.9));
+
+  const sun = new THREE.DirectionalLight(0xfff2d0, 1.0);
+  sun.position.set(80, 120, 40);
+  scene.add(sun);
+
+  // 물: 텍스처 + 물살(흐르는 무늬) + 위아래로 출렁이는 파도
+  // 안개가 152 밖은 가리므로 물 판은 플레이어 주변 400칸이면 충분 (촘촘하게 나눠 파도를 표현)
+  const WATER_SIZE = 400;
+  const WATER_SEG = 200;
+  const WATER_STEP = WATER_SIZE / WATER_SEG; // 격자 한 칸 크기
+
+  const waterLoader = new THREE.TextureLoader();
+  const loadWaterTex = (url) => {
+    const t = waterLoader.load(url);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    return t;
+  };
+
+  // 시간 값 (물과 용암이 같이 씀)
+  const waterUniforms = {
+    uTime: { value: 0 },
+    uRipple: { value: loadWaterTex('/textures/water_ripple.jpg') },
+    uBlotch: { value: loadWaterTex('/textures/water_blotch.jpg') },
+  };
+
+  const waterMat = new THREE.MeshLambertMaterial({
+    color: 0x2f6fb5,
+    transparent: true,
+    opacity: 0.9
+  });
+
+  waterMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = waterUniforms.uTime;
+    shader.uniforms.uRipple = waterUniforms.uRipple;
+    shader.uniforms.uBlotch = waterUniforms.uBlotch;
+
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\n' +
+        'uniform float uTime;\n' +
+        'varying vec2 vWaterXZ;\n' +
+        'varying vec2 vWaveSlope;\n' +
+        'varying float vWaveH;'
+      )
+      .replace(
+        '#include <beginnormal_vertex>',
+        `vec3 wp0 = (modelMatrix * vec4(position, 1.0)).xyz;
+        vec2 wxz = wp0.xz;
+        // 방향과 크기가 다른 파도 4겹 (파장 약 39, 22, 12, 7)
+        float ph1 = dot(wxz, vec2( 0.80,  0.60)) * 0.16 + uTime * 1.2;
+        float ph2 = dot(wxz, vec2(-0.55,  0.83)) * 0.29 + uTime * 1.6;
+        float ph3 = dot(wxz, vec2( 0.30, -0.95)) * 0.52 + uTime * 2.1;
+        float ph4 = dot(wxz, vec2(-0.95, -0.30)) * 0.90 + uTime * 2.7;
+        float wh = sin(ph1) * 0.28 + sin(ph2) * 0.16 + sin(ph3) * 0.08 + sin(ph4) * 0.04;
+        float c1 = cos(ph1) * 0.28 * 0.16;
+        float c2 = cos(ph2) * 0.16 * 0.29;
+        float c3 = cos(ph3) * 0.08 * 0.52;
+        float c4 = cos(ph4) * 0.04 * 0.90;
+        float wdx = (c1 * 0.80 - c2 * 0.55 + c3 * 0.30 - c4 * 0.95) * 2.5;
+        float wdz = (c1 * 0.60 + c2 * 0.83 - c3 * 0.95 - c4 * 0.30) * 2.5;
+        vec3 objectNormal = normalize(vec3(-wdx, 1.0, -wdz));`
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        transformed.y += wh;
+        vWaterXZ = wxz;
+        vWaveSlope = vec2(wdx, wdz);
+        vWaveH = wh;`
+      );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\n' +
+        'uniform float uTime;\n' +
+        'uniform sampler2D uRipple;\n' +
+        'uniform sampler2D uBlotch;\n' +
+        'varying vec2 vWaterXZ;\n' +
+        'varying vec2 vWaveSlope;\n' +
+        'varying float vWaveH;'
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        const float WS1 = 0.020;
+        const float WS2 = 0.030;
+        vec2 wq1 = vWaterXZ * WS1 + vec2(uTime * 0.008, uTime * 0.005);
+        vec2 wq2 = vWaterXZ * WS2 + vec2(-uTime * 0.007, uTime * 0.010) + vec2(0.37, 0.61);
+        vec2 wq3 = vWaterXZ * 0.012 + vec2(uTime * 0.004, -uTime * 0.003);
+        vec3 wr1 = texture2D(uRipple, wq1).rgb;
+        vec3 wr2 = texture2D(uRipple, wq2).rgb;
+        vec3 wb = texture2D(uBlotch, wq3).rgb;
+        float wl1 = dot(wr1, vec3(0.333));
+        float wl2 = dot(wr2, vec3(0.333));
+        vec3 wtex = mix((wr1 + wr2) * 0.5, wb, 0.2) * 1.3;
+        float wspark = smoothstep(0.68, 0.9, max(wl1, wl2));
+        diffuseColor.rgb = mix(diffuseColor.rgb, wtex, 0.9) + vec3(wspark * 0.25);
+        // 파도 마루는 살짝 밝고 골은 살짝 어둡게
+        diffuseColor.rgb *= 1.0 + vWaveH * 0.25;
+        diffuseColor.rgb += vec3(smoothstep(0.30, 0.50, vWaveH) * 0.10);`
+      )
+      .replace(
+        '#include <normal_fragment_begin>',
+        `#include <normal_fragment_begin>
+        {
+          float we = 1.5 / 512.0;
+          float h1x = dot(texture2D(uRipple, wq1 + vec2(we, 0.0)).rgb, vec3(0.333));
+          float h1z = dot(texture2D(uRipple, wq1 + vec2(0.0, we)).rgb, vec3(0.333));
+          float h2x = dot(texture2D(uRipple, wq2 + vec2(we, 0.0)).rgb, vec3(0.333));
+          float h2z = dot(texture2D(uRipple, wq2 + vec2(0.0, we)).rgb, vec3(0.333));
+          float gx = clamp(((h1x - wl1) * WS1 + (h2x - wl2) * WS2) / we, -2.0, 2.0);
+          float gz = clamp(((h1z - wl1) * WS1 + (h2z - wl2) * WS2) / we, -2.0, 2.0);
+          vec3 nw = normalize(vec3(-gx * 0.4 - vWaveSlope.x, 1.0, -gz * 0.4 - vWaveSlope.y));
+          normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz);
+        }`
+      );
+  };
+
+  // 물은 플레이어 주변에 배치
+  const water = new THREE.Mesh(
+    new THREE.PlaneGeometry(WATER_SIZE, WATER_SIZE, WATER_SEG, WATER_SEG).rotateX(-Math.PI / 2),
+    waterMat
+  );
+
+  water.position.y = WATER_LEVEL;
+  scene.add(water);
+
+  // ---------- 바닷속 ----------
+  // 푸른 화면 덮개 + 수면 밑면(위를 올려다보면 보이는 물 천장) + 해초·산호
+  const uwEl = document.createElement('div');
+  uwEl.style.cssText = 'position:fixed;inset:0;z-index:2;pointer-events:none;opacity:0;background:radial-gradient(ellipse at 50% 45%,rgba(60,170,210,.10) 25%,rgba(4,58,98,.58) 100%)';
+  document.body.appendChild(uwEl);
+  const ceilMat = new THREE.MeshBasicMaterial({ color: 0x2b9bc4, side: THREE.BackSide, transparent: true, opacity: 0, depthWrite: false });
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(500, 500).rotateX(-Math.PI / 2), ceilMat);
+  ceil.visible = false;
+  ceil.renderOrder = 5;
+  scene.add(ceil);
+  const fog0 = { near: scene.fog.near, far: scene.fog.far };
+  let uwK = 0, uwOn = false;                    // 물속 시야 정도(0~1) / 카메라가 물속인지
+  let swimming = false, swimVy = 0, waterDepth = 0;   // 수영 중인지 / 수직 속도 / 지금 위치의 물 깊이
+  const seaLife = createSeaLife({ scene, T, WATER_LEVEL, seed });
+
+  // 시작마을 터 (선으로만 표시)
+  buildVillage(scene);
+  buildHouses(scene);   // 여관 + 마을 집들
+
+  // 청크 공통 인덱스 (해상도별로 한 번만 만들어 재사용)
+  const indexCache = {};
+
+  function getIndex(res) {
+    if (indexCache[res]) return indexCache[res];
+
+    const idx = [];
+    for (let z = 0; z < res; z++) {
+      for (let x = 0; x < res; x++) {
+        const a = z * (res + 1) + x;
+        const b = a + 1;
+        const c = a + res + 1;
+        const d = c + 1;
+        idx.push(a, c, b, b, c, d);
+      }
+    }
+
+    indexCache[res] = new THREE.BufferAttribute(new Uint16Array(idx), 1);
+    return indexCache[res];
+  }
+
+  // 땅 텍스처 (잔디/흙/모래/돌/용암/눈/얼음)
+  const texLoader = new THREE.TextureLoader();
+  const loadTex = (url) => {
+    const t = texLoader.load(url);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    return t;
+  };
+  const texGrass = loadTex('/textures/grass.jpg');           // 평원: 일반 잔디
+  const texGold = loadTex('/textures/grass_gold.jpg');       // 평원: 연한 누런 잔디
+  const texJungle = loadTex('/textures/grass_dark.jpg');     // 정글: 진한 잔디
+  const texDirt = loadTex('/textures/dirt.jpg');             // 평원: 흙 얼룩
+  const texVillage = loadTex('/textures/village_dirt.jpg');  // 마을 흙바닥
+  const texSand = loadTex('/textures/desert_sand.jpg');      // 사막 모래
+  const texRock = loadTex('/textures/rock.jpg');             // 화산: 일반 돌
+  const texLavaRock = loadTex('/textures/lava_rock.jpg');    // 화산: 용암 섞인 돌
+  const texLava = loadTex('/textures/lava.jpg');             // 화산: 분출구 용암
+  const texSnow = loadTex('/textures/snow.jpg');             // 설원: 눈
+  const texSnowRock = loadTex('/textures/snow_rock.jpg');    // 설원: 눈 덮힌 바위
+  const texIce = loadTex('/textures/ice.jpg');               // 설원: 얼음
+
+  // 자연 오브젝트(나무·바위·풀·꽃 등): 땅 텍스처와 시간 uniform을 공유해서 GPU 중복 없이 쓴다.
+  // 지형별 배치는 nature-placement.js, 청크별 인스턴싱/거리별 LOD는 nature-world.js
+  const natureKit = createNatureKit({
+    time: waterUniforms.uTime,
+    textures: { grass: texGrass, grass_gold: texGold, grass_dark: texJungle, dirt: texDirt, village_dirt: texVillage, desert_sand: texSand, rock: texRock, lava_rock: texLavaRock, snow: texSnow, snow_rock: texSnowRock, ice: texIce },
+  });
+  const nature = createNatureWorld({ scene, kit: natureKit, T, seed, chunkSize: S });
+
+  const terrainMat = new THREE.MeshLambertMaterial({
+    vertexColors: true
+  });
+
+  terrainMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uGrass = { value: texGrass };
+    shader.uniforms.uGold = { value: texGold };
+    shader.uniforms.uJungle = { value: texJungle };
+    shader.uniforms.uDirt = { value: texDirt };
+    shader.uniforms.uVillage = { value: texVillage };
+    shader.uniforms.uSand = { value: texSand };
+    shader.uniforms.uRock = { value: texRock };
+    shader.uniforms.uLavaRock = { value: texLavaRock };
+    shader.uniforms.uLava = { value: texLava };
+    shader.uniforms.uSnow = { value: texSnow };
+    shader.uniforms.uSnowRock = { value: texSnowRock };
+    shader.uniforms.uIce = { value: texIce };
+    shader.uniforms.uTime = waterUniforms.uTime;
+
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\n' +
+        'uniform float uTime;\n' +
+        'attribute vec3 detail;\n' +
+        'attribute vec3 detail2;\n' +
+        'attribute vec3 detail3;\n' +
+        'attribute vec3 detail4;\n' +
+        'varying vec3 vDetail;\n' +
+        'varying vec3 vDetail2;\n' +
+        'varying vec3 vDetail3;\n' +
+        'varying vec3 vDetail4;\n' +
+        'varying float vNy;\n' +
+        'varying vec2 vWorldXZ;'
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        vDetail = detail;
+        vDetail2 = detail2;
+        vDetail3 = detail3;
+        vDetail4 = detail4;
+        vNy = normal.y;
+        vec3 wpL = (modelMatrix * vec4(position, 1.0)).xyz;
+        vWorldXZ = wpL.xz;
+        // 분화구 용암 표면이 위아래로 일렁임 (용암 가장자리는 0이라 땅과 갈라지지 않음)
+        float lpV = clamp(detail3.z, 0.0, 1.0);
+        transformed.y += lpV * (
+          sin(wpL.x * 0.55 + uTime * 1.4) * 0.07 +
+          sin(wpL.z * 0.47 - uTime * 1.2) * 0.07 +
+          sin((wpL.x + wpL.z) * 0.33 + uTime * 0.9) * 0.05
+        );`
+      );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\n' +
+        'uniform float uTime;\n' +
+        'uniform sampler2D uGrass;\n' +
+        'uniform sampler2D uGold;\n' +
+        'uniform sampler2D uJungle;\n' +
+        'uniform sampler2D uDirt;\n' +
+        'uniform sampler2D uVillage;\n' +
+        'uniform sampler2D uSand;\n' +
+        'uniform sampler2D uRock;\n' +
+        'uniform sampler2D uLavaRock;\n' +
+        'uniform sampler2D uLava;\n' +
+        'uniform sampler2D uSnow;\n' +
+        'uniform sampler2D uSnowRock;\n' +
+        'uniform sampler2D uIce;\n' +
+        'varying vec3 vDetail;\n' +
+        'varying vec3 vDetail2;\n' +
+        'varying vec3 vDetail3;\n' +
+        'varying vec3 vDetail4;\n' +
+        'varying float vNy;\n' +
+        'varying vec2 vWorldXZ;'
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        vec3 lavaGlow = vec3(0.0);
+        {
+          vec2 p = vWorldXZ;
+
+          // 평원: 일반 잔디 + 연한 누런 잔디
+          vec3 a1 = texture2D(uGrass, p * 0.25).rgb;
+          float l1 = dot(texture2D(uGrass, p * 0.04).rgb, vec3(0.333));
+          vec3 g1 = a1 * (0.6 + 0.8 * l1);
+
+          vec3 a2 = texture2D(uGold, p * 0.22).rgb;
+          float l2 = dot(texture2D(uGold, p * 0.035).rgb, vec3(0.333));
+          vec3 g2 = a2 * (0.6 + 0.8 * l2);
+
+          vec3 plainCol = mix(g1, g2, smoothstep(0.35, 0.65, vDetail.z));
+
+          // 정글: 진한 잔디
+          vec3 a4 = texture2D(uJungle, p * 0.22).rgb;
+          float l4 = dot(texture2D(uJungle, p * 0.035).rgb, vec3(0.333));
+          vec3 jungleCol = a4 * (0.6 + 1.6 * l4);
+
+          // 사막: 모래
+          vec3 a6 = texture2D(uSand, p * 0.2).rgb;
+          float l6 = dot(texture2D(uSand, p * 0.03).rgb, vec3(0.333));
+          vec3 sandCol = a6 * (0.75 + 0.35 * l6);
+
+          // 평원 흙 얼룩
+          vec3 a3 = texture2D(uDirt, p * 0.2).rgb;
+          float l3 = dot(texture2D(uDirt, p * 0.033).rgb, vec3(0.333));
+          vec3 dirtCol = a3 * (0.6 + 1.1 * l3);
+          // 보스 터: terrain.js 가 vDetail.z(=vari)를 1 위로 올려 표시함 → 흙을 어둡고 칙칙하게
+          float arenaA = clamp(vDetail.z - 1.0, 0.0, 1.0);
+          dirtCol = mix(dirtCol, dirtCol * vec3(0.36, 0.31, 0.29), arenaA);
+
+          // 마을 흙바닥
+          vec3 a5 = texture2D(uVillage, p * 0.15).rgb;
+          float l5 = dot(texture2D(uVillage, p * 0.03).rgb, vec3(0.333));
+          vec3 villageCol = a5 * (0.7 + 0.6 * l5);
+
+          // 화산: 일반 돌 + 용암 섞인 돌
+          vec3 rk = texture2D(uRock, p * 0.12).rgb;
+          float rkl = dot(texture2D(uRock, p * 0.02).rgb, vec3(0.333));
+          vec3 rockCol = rk * (1.4 + 2.0 * rkl);
+
+          vec3 lr = texture2D(uLavaRock, p * 0.09).rgb;
+          vec3 lavaRockCol = lr * 1.4;
+
+          float lrMix = clamp(vDetail3.y, 0.0, 1.0);
+          float volc = clamp(vDetail3.x, 0.0, 1.0);
+          vec3 volcCol = mix(rockCol, lavaRockCol, lrMix);
+
+          // 용암 섞인 돌의 주황 균열은 스스로 빛남
+          float vein = smoothstep(0.35, 0.75, lr.r) * lrMix * volc;
+          lavaGlow += lr * vein * 0.7;
+
+          // 분출구 용암: 액체처럼 출렁이며 흐르고 밝기가 맥동함
+          vec2 lw = vec2(sin(p.y * 0.30 + uTime * 0.9), cos(p.x * 0.27 + uTime * 0.8)) * 0.035;
+          vec2 lq1 = p * 0.040 + lw + vec2(uTime * 0.018, uTime * 0.010);
+          vec2 lq2 = p * 0.065 - lw * 1.4 + vec2(-uTime * 0.014, uTime * 0.022) + vec2(0.31, 0.57);
+          vec3 lava1 = texture2D(uLava, lq1).rgb;
+          vec3 lava2 = texture2D(uLava, lq2).rgb;
+          vec3 lavaCol = mix(lava1, lava2, 0.5);
+          float lflow = dot(lavaCol, vec3(0.333));
+          lavaCol *= 0.85 + 0.25 * sin(uTime * 1.3 + lflow * 6.0);
+          float lp = clamp(vDetail3.z, 0.0, 1.0);
+          lavaGlow += lavaCol * lp * 0.9;
+
+          // 설원: 눈 / 눈 덮힌 바위 / 얼음
+          // (반복 무늬가 티 나지 않도록 각도와 크기를 달리해 두 번 읽어서 섞음)
+          vec2 pr = vec2(p.x * 0.8 - p.y * 0.6, p.x * 0.6 + p.y * 0.8);
+          float tb = smoothstep(0.35, 0.65, vDetail.z);
+
+          vec3 snowCol = texture2D(uSnow, p * 0.10).rgb * 0.92;
+
+          vec3 srA = texture2D(uSnowRock, p * 0.085).rgb;
+          vec3 srB = texture2D(uSnowRock, pr * 0.061 + vec2(0.23, 0.47)).rgb;
+          vec3 snowRockCol = mix(srA, srB, tb) * 1.7;
+
+          vec3 icA = texture2D(uIce, p * 0.055).rgb;
+          vec3 icB = texture2D(uIce, pr * 0.038 + vec2(0.61, 0.17)).rgb;
+          vec3 iceCol = mix(icA, icB, tb) * 1.15;
+
+          // 가파른 곳은 바위, 바위 덩어리의 평평한 윗면은 눈이 쌓임
+          float slopeRock = 1.0 - smoothstep(0.55, 0.85, vNy);
+          float patchRock = clamp(vDetail4.y, 0.0, 1.0) * (1.0 - smoothstep(0.82, 0.95, vNy));
+          float rockAmt = clamp(max(slopeRock, patchRock), 0.0, 1.0);
+          vec3 snowGround = mix(snowCol, snowRockCol, rockAmt);
+
+          diffuseColor.rgb = mix(diffuseColor.rgb, plainCol, clamp(vDetail.x, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, jungleCol, clamp(vDetail2.y, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, sandCol, clamp(vDetail2.z, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, dirtCol, clamp(vDetail.y, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, villageCol, clamp(vDetail2.x, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, volcCol, volc);
+          diffuseColor.rgb = mix(diffuseColor.rgb, lavaCol * 0.45, lp);
+          diffuseColor.rgb = mix(diffuseColor.rgb, snowGround, clamp(vDetail4.x, 0.0, 1.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, iceCol, clamp(vDetail4.z, 0.0, 1.0));
+        }`
+      )
+      .replace(
+        '#include <emissivemap_fragment>',
+        '#include <emissivemap_fragment>\n' +
+        'totalEmissiveRadiance += lavaGlow;'
+      );
+  };
+
+  const chunks = new Map();
+  const E = 0.5;
+  let fast = false;
+  let fastMult = FAST_MAX;
+
+  // 청크 생성 (res가 클수록 정밀)
+  function buildChunk(cx, cz, res) {
+    const key = `${cx},${cz}`;
+
+    const old = chunks.get(key);
+    if (old) {
+      scene.remove(old);
+      old.geometry.dispose();
+    }
+
+    const V = (res + 1) * (res + 1);
+    const pos = new Float32Array(V * 3);
+    const nor = new Float32Array(V * 3);
+    const col = new Float32Array(V * 3);
+    const det = new Float32Array(V * 3);
+    const det2 = new Float32Array(V * 3);
+    const det3 = new Float32Array(V * 3);
+    const det4 = new Float32Array(V * 3);
+
+    let i = 0;
+
+    for (let z = 0; z <= res; z++) {
+      for (let x = 0; x <= res; x++, i++) {
+        const wx = cx * S + (x * S) / res;
+        const wz = cz * S + (z * S) / res;
+
+        const h = T.height(wx, wz);
+
+        let nx = T.height(wx - E, wz) - T.height(wx + E, wz);
+        let ny = 2 * E;
+        let nz = T.height(wx, wz - E) - T.height(wx, wz + E);
+
+        const len = Math.hypot(nx, ny, nz) || 1;
+        nx /= len;
+        ny /= len;
+        nz /= len;
+
+        let c = T.color(wx, wz, h);
+
+        const rock = 1 - Math.min(1, Math.max(0, (ny - 0.40) / 0.2));
+
+        c = [
+          c[0] + (0.45 - c[0]) * rock,
+          c[1] + (0.43 - c[1]) * rock,
+          c[2] + (0.40 - c[2]) * rock
+        ];
+
+        pos.set([(x * S) / res, h, (z * S) / res], i * 3);
+        nor.set([nx, ny, nz], i * 3);
+        col.set(c, i * 3);
+
+        const d = T.detail(wx, wz, h);
+        det.set([d[0], d[1], d[2]], i * 3);
+        det2.set([d[3], d[4], d[5]], i * 3);
+        det3.set([d[6], d[7], d[8]], i * 3);
+        det4.set([d[9], d[10], d[11]], i * 3);
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('detail', new THREE.BufferAttribute(det, 3));
+    geo.setAttribute('detail2', new THREE.BufferAttribute(det2, 3));
+    geo.setAttribute('detail3', new THREE.BufferAttribute(det3, 3));
+    geo.setAttribute('detail4', new THREE.BufferAttribute(det4, 3));
+    geo.setIndex(getIndex(res));
+    geo.computeBoundingSphere();
+
+    const mesh = new THREE.Mesh(geo, terrainMat);
+    mesh.position.set(cx * S, 0, cz * S);
+    mesh.userData = { cx, cz, res };
+
+    scene.add(mesh);
+    chunks.set(key, mesh);
+    nature.requestChunk(cx, cz);   // 이미 요청된 청크(해상도만 올리는 재생성)는 무시됨
+  }
+
+  // 주변 청크 로딩 및 먼 청크 제거
+  function updateChunks(px, pz) {
+    const pcx = Math.floor(px / S);
+    const pcz = Math.floor(pz / S);
+
+    for (const [key, mesh] of chunks) {
+      const distance = Math.max(
+        Math.abs(mesh.userData.cx - pcx),
+        Math.abs(mesh.userData.cz - pcz)
+      );
+
+      if (distance > UNLOAD) {
+        scene.remove(mesh);
+        mesh.geometry.dispose();
+        chunks.delete(key);
+        nature.removeChunk(mesh.userData.cx, mesh.userData.cz);
+      }
+    }
+
+    // 배율 30 이상으로 빠르게 이동할 때만 거친 해상도 사용
+    const lowMode = fast && fastMult >= 30;
+    const wantRes = lowMode ? RES_LOW : RES_HIGH;
+    const t0 = performance.now();
+    const budget = lowMode ? 8 : 0; // 거친 모드: 프레임당 8ms까지, 평소: 1개씩
+
+    do {
+      let best = null;
+      let bestDistance = Infinity;
+
+      for (let dz = -VIEW; dz <= VIEW; dz++) {
+        for (let dx = -VIEW; dx <= VIEW; dx++) {
+          const distance = dx * dx + dz * dz;
+
+          if (distance > VIEW * VIEW) continue;
+          if (distance >= bestDistance) continue;
+
+          const existing = chunks.get(`${pcx + dx},${pcz + dz}`);
+          if (existing && existing.userData.res >= wantRes) continue;
+
+          bestDistance = distance;
+          best = [pcx + dx, pcz + dz];
+        }
+      }
+
+      if (!best) break;
+      buildChunk(best[0], best[1], wantRes);
+    } while (performance.now() - t0 < budget);
+  }
+
+  // 육지 스폰 위치 찾기
+  let sx = 0;
+  let sz = 0;
+  let foundLand = false;
+
+  search:
+  for (let r = 0; r < 400; r += 8) {
+    for (let a = 0; a < Math.PI * 2; a += 0.5) {
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+
+      if (T.height(x, z) > WATER_LEVEL + 1) {
+        sx = x;
+        sz = z;
+        foundLand = true;
+        break search;
+      }
+    }
+  }
+
+  if (!foundLand) {
+    console.warn(
+      '스폰 주변에서 물보다 높은 지형을 찾지 못했습니다. terrain.js를 확인하세요.'
+    );
+  }
+
+  const me = {
+    x: sx,
+    z: sz,
+    y: T.height(sx, sz),
+    yaw: 0,
+    pitch: 0.45,
+    ry: 0
+  };
+  // 저장된 마지막 위치(땅 위)가 있으면 거기서 이어서 시작
+  if (spawn && Number.isFinite(spawn.x) && Number.isFinite(spawn.z)) {
+    me.x = spawn.x;
+    me.z = spawn.z;
+    me.y = T.height(spawn.x, spawn.z);
+  }
+
+  // 점프/중력 상태
+  let vy = 0;
+  let grounded = true;
+  let jumpBuffer = 0;
+  let jumpHeld = false;
+
+  // 조작 상태
+  let shiftLock = false;   // 시프트락 (로블록스식)
+  let runOn = false;       // 달리기 켜짐
+  let idleTime = 0;
+  let uiOpen = false;      // 인벤토리/장비/스킬/특성 창이 열려 있는지
+  let pinching = false;    // 두 손가락 확대/축소 중인지
+  let zoomRaw = 1;         // 카메라 거리 배율 (작을수록 확대)
+  const ZOOM_MIN = 0.1, ZOOM_FP = 0.12, ZOOM_MAX = 2.2;   // ZOOM_FP 이하로 끝까지 확대하면 1인칭
+  let slk = 0;             // 시프트락 카메라 이동 보간값
+
+  const myAvatar = makeAvatar('', 0xffffff);
+  myAvatar.children[1].visible = false;
+  scene.add(myAvatar);
+
+  // ---------- 나무검 (테스트): Q 장착/해제, 마우스 왼쪽 또는 J 공격 ----------
+  const myRig = myAvatar.userData.rig;
+  setWeaponHandlers(myRig, {
+    onStart: (side) => socket.emit('atk', { s: side }),   // 공격 모션이 시작될 때 한 번만 알림 (s = 베는 방향 0/1, 서버가 쿨다운을 다시 검사)
+    onHit: null                          // 시각상 타격 프레임. 피해는 나중에 서버 판정(server.js resolveAttack)으로 확정
+  });
+  function toggleWeapon() {   // 1번 키: 장착 ↔ 해제
+    if (uiOpen) return;
+    const eq = requestToggleWeapon(myRig);   // 모션 중이면 null (중복 입력 무시)
+    if (eq === null) return;
+    socket.emit('weapon', { eq });
+  }
+  function doAttack() {
+    if (uiOpen || !isWeaponEquipped(myRig)) return;
+    startWeaponAttack(myRig);
+  }
+
+  // ---------- 공통 UI: 닉네임 표시, 안내 메시지, 조준점 ----------
+  const toastEl = document.createElement('div');
+  toastEl.className = 'toast';
+  document.body.appendChild(toastEl);
+
+  let toastTimer = 0;
+  function toast(text) {
+    toastEl.textContent = text;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+  }
+
+  const cross = document.createElement('div');
+  cross.className = 'cross';
+  document.body.appendChild(cross);
+
+  let runBtn = null, lockBtn = null, runChip = null, lockChip = null;
+
+  function updateModeUI() {
+    if (runBtn) runBtn.classList.toggle('on', runOn);
+    if (lockBtn) lockBtn.classList.toggle('on', shiftLock);
+    if (runChip) runChip.classList.toggle('on', runOn);
+    if (lockChip) lockChip.classList.toggle('on', shiftLock);
+    cross.style.display = shiftLock ? 'block' : 'none';
+  }
+
+  function setRun(v) {
+    runOn = v;
+    updateModeUI();
+  }
+
+  function toggleShiftLock() {
+    shiftLock = !shiftLock;
+    if (shiftLock && !touchMode) {
+      try { renderer.domElement.requestPointerLock(); } catch (e) { /* 무시 */ }
+    }
+    updateModeUI();
+  }
+
+  // ---------- 오른쪽 위: 조작법 ----------
+  const stack = document.createElement('div');
+  stack.className = 'rt-stack';
+
+
+  // 조작법 버튼 (책 아이콘) + 조작법 창
+  const helpBtn = document.createElement('div');
+  helpBtn.className = 'helpbtn';
+  const helpImg = document.createElement('img');
+  helpImg.src = '/ui/book.png';
+  helpImg.alt = '';
+  helpImg.draggable = false;
+  const helpLabel = document.createElement('span');
+  helpLabel.textContent = touchMode ? '조작법' : '조작법 (H)';
+  helpBtn.append(helpImg, helpLabel);
+
+  const helpPanel = document.createElement('div');
+  helpPanel.className = 'helppanel';
+  const helpTitle = document.createElement('h4');
+  helpTitle.textContent = '조작법';
+  helpPanel.appendChild(helpTitle);
+
+  (touchMode ? HELP_TOUCH : HELP_KEYBOARD).forEach(([keyList, desc], idx) => {
+    const row = document.createElement('div');
+    row.className = 'hrow' + (idx === 0 ? ' first' : '');
+    const hk = document.createElement('div');
+    hk.className = 'hk';
+    for (const k of keyList) {
+      const cap = document.createElement('span');
+      cap.className = 'kcap';
+      cap.textContent = k;
+      hk.appendChild(cap);
+    }
+    const hd = document.createElement('div');
+    hd.className = 'hd';
+    hd.textContent = desc;
+    row.append(hk, hd);
+    helpPanel.appendChild(row);
+  });
+
+  let helpOpen = false;
+  function setHelp(v) {
+    helpOpen = v;
+    helpPanel.style.display = helpOpen ? 'block' : 'none';
+    stack.style.zIndex = helpOpen ? '1000' : '';   // 열려 있는 동안 모든 창 위로 올림
+  }
+  function toggleHelp() {
+    setHelp(!helpOpen);
+  }
+  helpBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    toggleHelp();
+  });
+  setHelp(false); // 조작법은 H를 눌러야 열림
+
+  stack.append(helpBtn, helpPanel);
+  document.body.appendChild(stack);
+
+  socket.emit('fast', false);
+
+  // ---------- 나침반 (위쪽 가운데) ----------
+  const compass = document.createElement('div');
+  compass.className = 'rpg-compass';
+  compass.style.cssText =
+    'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:5;' +
+    'width:min(' + (touchMode ? '420px,40vw' : '760px,56vw') + ');height:54px;overflow:hidden;border-radius:12px;' +
+    'background:rgba(20,14,38,.72);border:1px solid rgba(217,178,92,.75);' +
+    'color:#fff;pointer-events:none;font-family:sans-serif;text-shadow:0 0 3px #000';
+
+  const tick = document.createElement('div');
+  tick.style.cssText =
+    'position:absolute;left:50%;top:0;width:2px;height:100%;' +
+    'background:rgba(246,227,161,.45);transform:translateX(-50%)';
+  compass.appendChild(tick);
+
+  const compassItems = [];
+
+  function addCompassItem(text, bearing, style, landmark) {
+    const el = document.createElement('div');
+    el.style.cssText =
+      'position:absolute;transform:translateX(-50%);white-space:nowrap;' +
+      'display:none;' + style;
+    el.textContent = text;
+    compass.appendChild(el);
+    compassItems.push({ el, bearing, landmark, last: '' });
+  }
+
+  // 동서남북 (북쪽 = -z, 동쪽 = +x)
+  addCompassItem('N', 0, 'top:3px;font-size:20px;font-weight:bold;color:#ff5555');
+  addCompassItem('E', Math.PI / 2, 'top:3px;font-size:20px;font-weight:bold');
+  addCompassItem('S', Math.PI, 'top:3px;font-size:20px;font-weight:bold');
+  addCompassItem('W', Math.PI * 1.5, 'top:3px;font-size:20px;font-weight:bold');
+
+  // 지형 이름
+  for (const lm of LANDMARKS) {
+    addCompassItem(lm.name, 0, 'top:30px;font-size:13px;font-weight:bold;color:#ffe9a0', lm);
+  }
+
+  document.body.appendChild(compass);
+
+  function updateCompass() {
+    const heading = -me.yaw; // 바라보는 방향 (북쪽 기준, 시계 방향)
+
+    for (const item of compassItems) {
+      let bearing = item.bearing;
+      let label = null;
+
+      if (item.landmark) {
+        const dx = item.landmark.x - me.x;
+        const dz = item.landmark.z - me.z;
+        bearing = Math.atan2(dx, -dz);
+
+        const dist = Math.hypot(dx, dz);
+        const distText = dist >= 1000
+          ? (dist / 1000).toFixed(1) + 'km'
+          : Math.round(dist) + 'm';
+        label = `${item.landmark.name} ${distText}`;
+      }
+
+      let diff = bearing - heading;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      const deg = (diff * 180) / Math.PI;
+
+      if (Math.abs(deg) > 95) {
+        item.el.style.display = 'none';
+        continue;
+      }
+
+      item.el.style.display = 'block';
+      item.el.style.left = (50 + (deg / 100) * 50) + '%';
+
+      if (label !== null && label !== item.last) {
+        item.el.textContent = label;
+        item.last = label;
+      }
+    }
+  }
+
+  // ---------- 키보드 / 마우스 ----------
+  // ---------- 문 (E 키 또는 문 옆에 뜨는 반투명 안내를 누름) ----------
+  // 장식 건물: 문 열기 → (안쪽은 검음) → 집 들어가기 = 땅 밑 멀리 있는 방으로 이동. 방 안 출구: 밖으로 나가기.
+  // 여관 정문: 문 열기/닫기 (그냥 걸어 들어감). 여관 2층 복도의 방문: 장식 건물과 같은 방식.
+  let curRoom = -1;          // 지금 들어가 있는 방 (-1 = 땅 위)
+  let cave = null;           // 동굴 (서버가 입구 위치를 알려주면 만들어짐). cave.layout = 지도, cave.entrance = 땅 위 입구
+  let curCave = false;       // 지금 동굴 안(지하)에 있는지
+  const caveBg = new THREE.Color(0x010204), caveFog = new THREE.Fog(0x010204, 18, 120), caveAmb = [0.03, 0.035, 0.06];   // 동굴 안에서 그릴 때 쓰는 배경·안개·주변광 (아주 어둡게, 빛은 수정에서만)
+  let diving = false;        // 동굴 구멍에 뛰어든 뒤 화면이 어두워지는 중인지
+  const fadeEl = document.createElement('div');   // 동굴 출입할 때 잠깐 어두워지는 막
+  fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:15;transition:opacity .25s';
+  document.body.appendChild(fadeEl);
+  function fadeBlink() { fadeEl.style.opacity = '1'; setTimeout(() => { fadeEl.style.opacity = '0'; }, 280); }
+  function enterCave() {
+    if (!cave) return;
+    const e = cave.layout.entry;
+    curCave = true;
+    openedDoor = -1;
+    fadeBlink();
+    teleportTo(e.x, e.y, e.z, e.yaw);
+  }
+  function leaveCave() {
+    if (!cave) return;
+    const o = cave.entrance.out;
+    curCave = false;
+    fadeBlink();
+    teleportTo(o.x, o.y, o.z, o.yaw);
+  }
+  let openedDoor = -1;       // 내가 열어 둔 문 (멀어지면 자동으로 닫음)
+  const doorHint = document.createElement('div');
+  doorHint.style.cssText = 'position:fixed;left:0;top:0;transform:translate(-50%,-50%);padding:7px 16px;border-radius:12px;' +
+    'background:rgba(15,15,25,.38);border:1px solid rgba(255,255,255,.4);color:rgba(255,255,255,.9);font:600 16px sans-serif;' +
+    'z-index:20;display:none;cursor:pointer;user-select:none;text-shadow:0 1px 3px rgba(0,0,0,.6);backdrop-filter:blur(2px)';
+  document.body.appendChild(doorHint);
+  let hintAct = null;
+
+  function setDoor(i, open) { setDoorOpen(i, open); socket.emit('door', { i, open }); }
+  function teleportTo(x, y, z, yaw) {
+    me.x = x; me.y = y; me.z = z; vy = 0; grounded = true;
+    me.yaw = yaw; me.ry = yaw + Math.PI;           // 가는 방향을 바라봄
+    socket.emit('tp', { x, y, z });
+  }
+  function enterRoom(r) {
+    if (ROOMS[r].door >= 0) setDoor(ROOMS[r].door, false);   // 들어가면서 문은 닫힘
+    openedDoor = -1;
+    const e = roomEntry(r);
+    curRoom = r;
+    teleportTo(e.x, e.y, e.z, e.yaw);
+  }
+  function leaveRoom() {
+    const ret = roomRet(curRoom);                  // 장식 건물 방 → 문 앞 / 객실 → 복도 방문 앞 / 복도 → 여관 계단 앞
+    curRoom = ret.to === 'room' ? ret.room : -1;
+    teleportTo(ret.x, ret.y, ret.z, ret.yaw);
+  }
+  // 문 앞에서 할 수 있는 동작: 문 열기 → 집 들어가기 (여관 정문만 열고 닫기)
+  function doorAction(di) {
+    const d = doorInfo(di), open = isDoorOpen(di), pos = { x: d.x, y: d.y + (d.kind === 'room' ? 3.6 : 1.7), z: d.z };
+    if (d.kind === 'inn') return { text: open ? '문 닫기' : '문 열기', ...pos, run: () => setDoor(di, !open) };
+    if (!open) return { text: '문 열기', ...pos, run: () => { setDoor(di, true); openedDoor = di; } };
+    return { text: (d.name ? d.name : '집') + ' 들어가기', ...pos, run: () => enterRoom(d.room) };   // 가게는 "대장간 들어가기"처럼 이름이 뜸
+  }
+  // 지금 할 수 있는 동작 (없으면 null). 안내 문구가 뜰 위치(x,y,z)도 같이 돌려줌
+  function currentAction() {
+    if (cave) {
+      if (curCave) {   // 동굴 안: 출구 빛기둥 앞에서만 "나가기"
+        const ex = cave.layout.exit;
+        if (Math.hypot(me.x - ex.x, me.z - ex.z) < ex.reach) return { text: '동굴 나가기', x: ex.x, y: ex.y + 3.0, z: ex.z, run: leaveCave };
+        return null;
+      }
+    }
+    if (curRoom >= 0) {
+      const ex = roomExit(curRoom);
+      if (Math.hypot(me.x - ex.x, me.z - ex.z) < ex.reach) return { text: ex.text, x: ex.x, y: ex.y + 3.0, z: ex.z, run: leaveRoom };
+      const di = nearestDoor(me.x, me.z, me.y);    // 복도 방의 방문들
+      return di >= 0 ? doorAction(di) : null;
+    }
+    const di = nearestDoor(me.x, me.z, me.y);
+    if (di >= 0) return doorAction(di);
+    const st = stairsInfo();                       // 여관 안 계단: 올라갈 수는 없고, 누르면 복도 방으로 이동
+    if (Math.hypot(me.x - st.x, me.z - st.z) < st.reach && Math.abs(me.y - st.y) < 3) {
+      return { text: '계단 올라가기', x: st.x, y: st.hy, z: st.z, run: () => enterRoom(CORR_ROOM.id) };
+    }
+    return null;
+  }
+  const _hv = new THREE.Vector3();
+  function updateDoorHint() {
+    if (openedDoor >= 0) {                         // 열어 둔 문에서 멀어지면 닫음
+      const d = doorInfo(openedDoor);
+      if (Math.hypot(me.x - d.x, me.z - d.z) > 9 || Math.abs(me.y - d.y) > 4) { setDoor(openedDoor, false); openedDoor = -1; }
+    }
+    hintAct = currentAction();
+    if (!hintAct) { doorHint.style.display = 'none'; return; }
+    camera.updateMatrixWorld();
+    _hv.set(hintAct.x, hintAct.y, hintAct.z).project(camera);   // 문 위치를 화면 좌표로
+    if (_hv.z > 1) { doorHint.style.display = 'none'; return; }
+    doorHint.style.display = 'block';
+    doorHint.style.left = (_hv.x * 0.5 + 0.5) * window.innerWidth + 'px';
+    doorHint.style.top = (-_hv.y * 0.5 + 0.5) * window.innerHeight + 'px';
+    const txt = (touchMode ? '' : '[E] ') + hintAct.text;
+    if (doorHint.textContent !== txt) doorHint.textContent = txt;
+  }
+  function doDoorAction() { const a = hintAct || currentAction(); if (a) a.run(); }
+  doorHint.addEventListener('click', doDoorAction);
+  doorHint.addEventListener('touchstart', (e) => { e.preventDefault(); doDoorAction(); }, { passive: false });
+
+  const keys = {};
+  // ---------- 확대/축소 (마우스 휠, 두 손가락 핀치). 끝까지 확대하면 1인칭 ----------
+  function zoomBy(f) {
+    if (uiOpen) return;
+    if (zoomRaw <= ZOOM_FP) {                 // 1인칭에서 축소하면 3인칭으로 복귀
+      if (f > 1.01) zoomRaw = 0.4;
+      return;
+    }
+    zoomRaw = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomRaw * f));
+  }
+  window.addEventListener('wheel', (e) => {
+    if (uiOpen) return;
+    if (e.target !== renderer.domElement && document.pointerLockElement !== renderer.domElement) return;
+    e.preventDefault();
+    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    zoomBy(Math.exp(Math.max(-300, Math.min(300, dy)) * 0.0018));
+  }, { passive: false });
+
+  const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+  const GAME_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyH', 'Space'];
+
+  window.addEventListener('keydown', (e) => {
+    if (touchMode) return;
+
+    if (uiOpen) {   // 창이 열려 있으면 게임 조작은 막고 창 조작만 받음
+      if (e.code === 'Escape') closeWin();
+      e.preventDefault();
+      return;
+    }
+
+    if (ARROWS.includes(e.code) || e.code === 'Space') e.preventDefault();
+    if (e.ctrlKey && GAME_KEYS.includes(e.code)) e.preventDefault();
+
+    keys[e.code] = true;
+
+    if (e.repeat) return;
+
+    if (e.code === 'Space') jumpBuffer = 0.15;
+    if (e.code === 'KeyE') {   // 문/집 상호작용이 가능하면 그걸 하고, 아니면 스킬 E (휩쓸기)
+      if (hintAct || currentAction()) doDoorAction();
+      else useSkill('E');
+    }
+    if (e.code === 'KeyQ') useSkill('Q');
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') doAttack();   // 일반 공격
+    if (e.code === 'KeyR') useSkill('R');
+    if (e.code === 'KeyT') useSkill('T');
+    if (e.code === 'Digit1') toggleWeapon();
+    if (e.code === 'KeyH') toggleHelp();
+
+    if ((e.code === 'ControlLeft' || e.code === 'ControlRight') && RUN_TOGGLE) {
+      setRun(!runOn);
+    }
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+      toggleShiftLock();
+    }
+  });
+
+  window.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+  });
+
+  window.addEventListener('blur', () => {
+    for (const k in keys) keys[k] = false;
+    jumpHeld = false;
+  });
+
+  if (!touchMode) {
+    renderer.domElement.addEventListener('click', (e) => {
+      if (e.pointerType === 'touch') return; // 터치로 누른 건 마우스 잠금을 하지 않음
+      renderer.domElement.requestPointerLock();
+    });
+
+    // 마우스 왼쪽 = 공격 (마우스 잠금 중일 때만. 처음 클릭은 잠금용이라 공격되지 않음)
+    window.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || document.pointerLockElement !== renderer.domElement) return;
+      doAttack();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement !== renderer.domElement) return;
+
+      me.yaw -= e.movementX * 0.003;
+      me.pitch = wrapPitch(me.pitch + e.movementY * 0.003);
+    });
+
+    // Esc로 마우스 잠금이 풀리면 시프트락도 해제
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement !== renderer.domElement && shiftLock) {
+        shiftLock = false;
+        updateModeUI();
+      }
+    });
+
+    document.addEventListener('pointerlockerror', () => {
+      shiftLock = false;
+      updateModeUI();
+      toast('화면을 한 번 클릭한 뒤 Shift를 눌러 주세요');
+    });
+  }
+
+  // ---------- 화면 터치/드래그로 시점 회전 (키보드 모드에서도 가능) ----------
+  {
+    let lookId = null;
+    let lx = 0;
+    let ly = 0;
+    const canvas = renderer.domElement;
+
+    let tapX = 0, tapY = 0, tapT = 0, tapMoved = false;
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' || lookId !== null) return;
+      lookId = e.pointerId;
+      lx = e.clientX;
+      ly = e.clientY;
+      tapX = lx; tapY = ly; tapT = performance.now(); tapMoved = false;
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== lookId) return;
+      if (pinching) { lx = e.clientX; ly = e.clientY; tapMoved = true; return; }
+      if (Math.hypot(e.clientX - tapX, e.clientY - tapY) > 12) tapMoved = true;
+      me.yaw -= (e.clientX - lx) * 0.005;
+      me.pitch = wrapPitch(me.pitch + (e.clientY - ly) * 0.005);
+      lx = e.clientX;
+      ly = e.clientY;
+    });
+    const lookEnd = (e) => {
+      if (e.pointerId === lookId) lookId = null;
+    };
+    // 화면을 짧게 톡 터치(드래그/핀치 아님)하면 평타
+    canvas.addEventListener('pointerup', (e) => {
+      if (e.pointerId === lookId && !tapMoved && !pinching && performance.now() - tapT < 300) doAttack();
+    });
+    canvas.addEventListener('pointerup', lookEnd);
+    canvas.addEventListener('pointercancel', lookEnd);
+
+    // 두 손가락 벌리면 확대, 모으면 축소 (끝까지 확대하면 1인칭)
+    let pd = 0;
+    const tdist = (e) => Math.hypot(e.targetTouches[0].clientX - e.targetTouches[1].clientX, e.targetTouches[0].clientY - e.targetTouches[1].clientY);
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.targetTouches.length === 2) { pd = tdist(e); pinching = true; }
+    }, { passive: true });
+    canvas.addEventListener('touchmove', (e) => {
+      if (e.targetTouches.length === 2 && pd > 0) {
+        const d = tdist(e);
+        if (d > 0) { zoomBy(pd / d); pd = d; }
+        e.preventDefault();
+      }
+    }, { passive: false });
+    const pinchEnd = (e) => { if (e.targetTouches.length < 2) { pd = 0; pinching = false; } };
+    canvas.addEventListener('touchend', pinchEnd);
+    canvas.addEventListener('touchcancel', pinchEnd);
+  }
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---------- 방 창문: 실제 바깥 풍경 (포털) ----------
+  // 방은 땅 밑에 있지만 방마다 마을 바깥 둘레에 "유령 위치"가 있다. 방 안에 있을 때 플레이어 카메라를 그 위치로 옮겨 놓은
+  // 가짜 카메라로 월드를 한 번 더 그려서(renderTarget) 창 구멍 자리에 화면 좌표 그대로 입힌다 → 창으로 진짜 바깥이 보임.
+  const portalRT = new THREE.WebGLRenderTarget(2, 2, { samples: 2 });
+  const vcam = new THREE.PerspectiveCamera();
+  const _pq = new THREE.Quaternion(), _pv = new THREE.Vector3(), _pUp = new THREE.Vector3(0, 1, 0), _pdb = new THREE.Vector2();
+  function updatePortalCamera() {
+    const g = roomGhost(curRoom);
+    const gs = g.s || 1;   // 여관 2층 방은 가로를 줄여서 매핑 (복도 59칸 → 여관 폭)
+    _pv.set((camera.position.x - g.room.x) * gs, camera.position.y - g.room.y, (camera.position.z - g.room.z) * gs);
+    _pq.setFromAxisAngle(_pUp, g.rot);
+    _pv.applyQuaternion(_pq);
+    vcam.copy(camera, false);
+    vcam.position.set(g.x + _pv.x, g.y + _pv.y, g.z + _pv.z);
+    vcam.quaternion.copy(camera.quaternion).premultiply(_pq);
+    vcam.updateMatrixWorld(true);
+  }
+  function renderPortal() {
+    const w = Math.max(2, Math.floor(renderer.domElement.width * 0.7)), h = Math.max(2, Math.floor(renderer.domElement.height * 0.7));
+    if (portalRT.width !== w || portalRT.height !== h) portalRT.setSize(w, h);
+    renderer.getDrawingBufferSize(_pdb);
+    setPortalTexture(portalRT.texture, _pdb.x, _pdb.y);
+    setRoomsHidden(true, curRoom);                 // 방 자체는 가짜 시점에 안 나오게 숨김
+    const prev = renderer.getRenderTarget();
+    renderer.localClippingEnabled = !!roomGhost(curRoom).clip;   // 여관 방: 여관 본체(2층 이상)를 잘라서 벽에 안 가려지게
+    renderer.setRenderTarget(portalRT);
+    renderer.render(scene, vcam);
+    renderer.setRenderTarget(prev);
+    renderer.localClippingEnabled = false;
+    setRoomsHidden(false, curRoom);
+  }
+
+  // ---------- 키보드 모드 전용 UI: 조작 안내, 달리기/시점고정 표시 ----------
+  if (!touchMode) {
+    const hintbar = document.createElement('div');
+    hintbar.className = 'hintbar';
+    hintbar.textContent =
+      'WASD 이동 · Space 점프 · Ctrl 달리기 · Shift 시점고정 · 1 칼 · Enter/클릭 공격 · Q 대쉬 · E 문 · H 조작법';
+    document.body.appendChild(hintbar);
+
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    runChip = document.createElement('div');
+    runChip.className = 'chip';
+    runChip.textContent = '🏃 달리기';
+    lockChip = document.createElement('div');
+    lockChip.className = 'chip';
+    lockChip.textContent = '🔒 시점고정';
+    chips.append(runChip, lockChip);
+    document.body.appendChild(chips);
+
+    toast('화면을 클릭하면 마우스로 시점을 돌릴 수 있어요 (방향키, 터치도 가능)');
+  }
+
+  // ---------- 터치 모드 전용 UI: 조이스틱, 버튼 ----------
+  const joy = { x: 0, y: 0 };
+
+  if (touchMode) {
+    // 조이스틱
+    const base = document.createElement('div');
+    base.className = 'joy-base';
+    const knob = document.createElement('div');
+    knob.className = 'joy-knob';
+    base.appendChild(knob);
+    document.body.appendChild(base);
+
+    const JOY_R = 44;
+    let joyId = null;
+
+    const joyMove = (e) => {
+      const rect = base.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      let dx = e.clientX - cx;
+      let dy = e.clientY - cy;
+      const R = JOY_R * uiScale;
+      const d = Math.hypot(dx, dy);
+      const k = d > R ? R / d : 1;
+      dx *= k;
+      dy *= k;
+      knob.style.transform = `translate(${dx / uiScale}px, ${dy / uiScale}px)`;
+      joy.x = dx / R;
+      joy.y = -dy / R;
+    };
+
+    const joyEnd = (e) => {
+      if (e.pointerId !== joyId) return;
+      joyId = null;
+      joy.x = 0;
+      joy.y = 0;
+      knob.style.transform = 'translate(0, 0)';
+    };
+
+    base.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      joyId = e.pointerId;
+      base.setPointerCapture(e.pointerId);
+      joyMove(e);
+    });
+    base.addEventListener('pointermove', (e) => {
+      if (e.pointerId === joyId) joyMove(e);
+    });
+    base.addEventListener('pointerup', joyEnd);
+    base.addEventListener('pointercancel', joyEnd);
+
+    // 버튼 (오른쪽 아래 묶음)
+    const tgroup = document.createElement('div');
+    tgroup.className = 'tgroup';
+    document.body.appendChild(tgroup);
+
+    const makeBtn = (cls, icon, label, onDown, onUp) => {
+      const b = document.createElement('div');
+      b.className = 'tbtn ' + cls;
+      b.innerHTML = '<span>' + icon + '</span>' + (label || '');
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        b.classList.add('press');
+        if (onDown) onDown();
+      });
+      const up = () => {
+        b.classList.remove('press');
+        if (onUp) onUp();
+      };
+      b.addEventListener('pointerup', up);
+      b.addEventListener('pointercancel', up);
+      b.addEventListener('pointerleave', up);
+      tgroup.appendChild(b);
+      return b;
+    };
+
+    const jumpBtn = makeBtn('jump', '', '',
+      () => { jumpHeld = true; jumpBuffer = 0.15; },
+      () => { jumpHeld = false; });
+    jumpBtn.insertAdjacentHTML('beforeend', '<i class="lbl">점프</i>');
+    const atkBtn = makeBtn('atk', '', '', () => { if (isWeaponEquipped(myRig)) doAttack(); else toggleWeapon(); });
+    atkBtn.insertAdjacentHTML('beforeend', '<i class="lbl">공격</i>');
+    runBtn = makeBtn('run', '', '', () => setRun(!runOn));
+    runBtn.insertAdjacentHTML('beforeend', '<i class="lbl">달리기</i>');
+    lockBtn = makeBtn('lock', '', '', () => toggleShiftLock());
+    lockBtn.insertAdjacentHTML('beforeend', '<i class="lbl">쉬프트락</i>');
+
+    toast('왼쪽 조이스틱으로 이동, 화면을 드래그하면 시점이 돌아가요');
+  }
+
+  updateModeUI();
+
+  // ---------- 하단 중앙 UI (레벨, HP/MP, 메뉴 버튼) ----------
+  // 지금은 모양만 있는 임시 값이에요. 나중에 실제 값으로 바꾸면 돼요.
+  const expNeed = (lv) => { lv = Math.max(1, lv); return (10 + 5 * lv) * (10 + lv); };   // 레벨별 필요 경험치 (임시 공식: 레벨 1 = 1000. 나중에 원하는 공식으로 바꾸세요)
+  const PLAYER = { level: Number.isFinite(initLevel) && initLevel >= 1 ? Math.floor(initLevel) : 1, hp: 100, hpMax: 100, mp: 50, mpMax: 50, exp: Number.isFinite(initExp) && initExp >= 0 ? Math.floor(initExp) : 0, expMax: 1000, gold: Number.isFinite(initGold) && initGold >= 0 ? Math.floor(initGold) : 0 };
+  PLAYER.expMax = Number.isFinite(initExpMax) && initExpMax > 0 ? Math.floor(initExpMax) : expNeed(PLAYER.level);
+
+  const fmt = (n) => {
+    if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.?0+$/, '') + 'M';
+    if (n >= 1e4) return (n / 1e3).toFixed(1).replace(/\.?0+$/, '') + 'K';
+    return String(n);
+  };
+  const pct = (a, b) => Math.max(0, Math.min(100, (a / b) * 100));
+
+  const bottomWrap = document.createElement('div');
+  bottomWrap.className = 'bottom-wrap';
+
+  // 키보드 모드의 조작 안내와 달리기/시점고정 표시를 패널 위로 옮김
+  for (const sel of ['.hintbar', '.chips']) {
+    const el = document.querySelector(sel);
+    if (el) bottomWrap.appendChild(el);
+  }
+
+  const hpmp = (cls, icon, cur, max) =>
+    '<div class="hpmp ' + cls + '">' +
+      '<div class="hpmp-ic"><img src="' + icon + '" alt="" draggable="false"></div>' +
+      '<div class="hpmp-bar"><div class="hpmp-in">' +
+        '<i style="width:' + pct(cur, max) + '%"></i>' +
+        '<span>' + fmt(cur) + ' / ' + fmt(max) + '</span>' +
+      '</div></div>' +
+    '</div>';
+
+  const bui = document.createElement('div');
+  bui.className = 'bui';
+  bui.innerHTML =
+    '<div class="lvnum rollbox"><span>Lv.' + PLAYER.level + '</span></div>' +
+    '<div class="xpbar">' +
+      '<img class="xp-frame" src="/ui/exp_bar.png" alt="" draggable="false">' +
+      '<div class="xp-lvtxt rollbox"><span>Lv. ' + PLAYER.level + '</span></div>' +
+      '<div class="xp-gauge"><i style="width:' + pct(PLAYER.exp, PLAYER.expMax) + '%"></i></div>' +
+      '<span class="xp-num">' + fmt(PLAYER.exp) + ' / ' + fmt(PLAYER.expMax) + '</span>' +
+    '</div>' +
+    hpmp('hp', '/ui/icon_heart.png', PLAYER.hp, PLAYER.hpMax) +
+    hpmp('mp', '/ui/icon_drop.png', PLAYER.mp, PLAYER.mpMax) +
+    '<div class="bui-menu"></div>';
+  const MENUS = [
+    ['/ui/icon_bag.png', '인벤토리'],
+    ['/ui/icon_gear.png', '장비'],
+    ['/ui/skill_btn.png', '스킬'],
+    ['/ui/icon_trait.png', '특성'],
+    ['/ui/status_frame.png', '상태창'],
+    ['/ui/icon_quest.png', '퀘스트'],
+    ['/ui/icon_trade.png', '거래'],
+  ];
+  const menuSlots = [];
+  const menuEl = bui.querySelector('.bui-menu');
+
+  MENUS.forEach(([icon, name], i) => {
+    const b = document.createElement('div');
+    b.className = 'mbtn';
+    const img = document.createElement('img');
+    img.src = icon;
+    img.alt = '';
+    img.draggable = false;
+    const label = document.createElement('b');
+    label.textContent = name;
+    b.append(img, label);
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      menuPress(i);
+    });
+    menuEl.appendChild(b);
+    menuSlots.push(b);
+  });
+
+  bottomWrap.appendChild(bui);
+  document.body.appendChild(bottomWrap);
+
+  function menuPress(i) {
+    const b = menuSlots[i];
+    if (!b) return;
+    b.classList.add('flash');
+    setTimeout(() => b.classList.remove('flash'), 150);
+    if (i === WIN_TABS.length) { toggleStatus(); return; }   // 5번째 = 상태창(두루마리)
+    if (i === WIN_TABS.length + 1) { toggleQuest(); return; }   // 6번째 = 퀘스트
+    if (i === WIN_TABS.length + 2) { toggleTrade(); return; }   // 7번째 = 거래 (주변 플레이어 목록)
+    toggleWin(i);
+  }
+
+  // ---------- 전체 화면 창: 인벤토리 · 장비 · 스킬 · 특성 (열면 UI만 보임) ----------
+  const WIN_TABS = [
+    ['/ui/icon_bag.png', '인벤토리'],
+    ['/ui/icon_gear.png', '장비'],
+    ['/ui/skill_btn.png', '스킬'],
+    ['/ui/icon_trait.png', '특성'],
+  ];
+  const winStyle = document.createElement('style');
+  winStyle.textContent = `
+.uiwin{position:fixed;inset:0;z-index:60;display:none;background:rgba(0,0,0,.14);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#2a1a0c;user-select:none;-webkit-user-select:none;overflow:hidden}
+body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-open .tgroup,body.uw-open .tbtn.dash,body.uw-open .skillbar,body.uw-open .rpg-compass,body.uw-open #hud,body.uw-open .cross{display:none!important}
+.uwb-stage{position:absolute;left:50%;top:50%;width:1536px;height:1024px;margin:-512px 0 0 -768px;transform-origin:50% 50%;background:#3a2a1c url(/ui/book_bg.png) 0 0/100% 100% no-repeat;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+.uwb-tab{position:absolute;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:14px;cursor:pointer;font-size:32px;font-weight:700;color:#2e1d0e;text-shadow:0 1px 0 rgba(255,235,190,.35);padding-bottom:6px}
+.uwb-tab img{width:54px;height:54px;object-fit:contain;pointer-events:none;filter:sepia(.6) brightness(.55)}
+.uwb-tab.on{background:url(/ui/tab_on.png) 0 0/100% 100% no-repeat;color:#f1dfb6;text-shadow:0 2px 0 #000}
+.uwb-tab.on img{filter:none}
+.uwb-h{position:absolute;display:flex;align-items:center;gap:10px;height:48px;font-size:36px;font-weight:700;color:#2a1a0c;text-shadow:0 1px 0 rgba(255,235,190,.4)}
+.uwb-h i{font-style:normal;font-size:30px;color:#6b4a2a}
+.uw-slot{box-sizing:border-box;background:#2b1f14 url(/ui/slot_empty.png) 0 0/100% 100% no-repeat;cursor:pointer}
+.uw-slot.sel{filter:drop-shadow(0 0 6px #ffd77a) brightness(1.3)}
+.uwb-grid{position:absolute;display:grid;gap:4px}
+.uwb-eq{position:absolute}
+.uwb-lb{position:absolute;width:160px;margin-left:-80px;text-align:center;font-size:24px;font-weight:700;color:#2a1a0c}
+.uwb-detail{position:absolute;left:840px;top:270px;width:560px;height:520px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;font-size:30px;line-height:1.9;color:#5a4328}
+.uwb-orn{font-size:34px;color:rgba(90,60,28,.5);line-height:1}
+.uwb-x{position:absolute;left:1380px;top:146px;width:52px;height:48px;font-size:40px;line-height:48px;text-align:center;cursor:pointer;color:#3a2814}
+.uwb-x:hover{color:#000}
+.uw-node{fill:#2b1f14;stroke:#7a5d34;stroke-width:5;cursor:pointer}
+.uw-node.sel{stroke:#ffd77a}
+.uw-slot{position:relative}
+.uw-slot .ic{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:54px;line-height:1;pointer-events:none}
+.uw-slot .ic small{font-size:16px;margin-top:4px;font-weight:700;color:#f1dfb6;text-shadow:0 1px 0 #000,0 0 3px #000}
+.uw-slot .cnt{position:absolute;right:8px;bottom:4px;font-size:22px;font-weight:700;color:#fff;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000;pointer-events:none}
+.uwb-dt{font-size:34px;font-weight:700;color:#2a1a0c;line-height:1.3}
+.uwb-dsc{font-size:22px;line-height:1.5;color:#4a3720}
+.uwb-dsc b{color:#8a2a14}
+.uwb-btn{display:inline-block;margin-top:6px;padding:8px 38px;font-size:30px;font-weight:700;color:#f1dfb6;background:#5a3b1c;border:3px solid #2a1a0c;border-radius:6px;cursor:pointer;box-shadow:0 3px 0 #2a1a0c}
+.uwb-btn:hover{filter:brightness(1.2)}
+.uwb-btn.off{background:#7a7468;color:#c8c0b0;cursor:default;box-shadow:none}
+`;
+  document.head.appendChild(winStyle);
+  const winEl = document.createElement('div');
+  winEl.className = 'uiwin';
+  document.body.appendChild(winEl);
+  let winIdx = 0;
+
+  const at = (x, y, w, h) => 'left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px';
+  const wHead = (x, y, t) => '<div class="uwb-h" style="left:' + x + 'px;top:' + y + 'px"><i>◈</i>' + t + '</div>';
+  const wDetail = (txt) => '<div class="uwb-detail"><div class="uwb-orn">❖</div><div class="uw-dtxt">' + txt + '</div><div class="uwb-orn">❖</div></div>';
+  // ----- 인벤토리 · 스킬 데이터 (서버가 보내줌: 'inv' / 'skills') -----
+  let invItems = [];            // [{ id, n }]
+  let learnedSk = [];           // 배운 스킬 id
+  let slotRSkill = null;        // R 칸(E 칸 아래)에 장착한 스킬
+  let gearEq = { armor: null, pants: null };   // 입고 있는 장비 (서버가 정함)
+  const winSel = { inv: -1, sk: null };   // 창에서 선택한 칸 (다시 그려도 유지)
+  const SK_ICON = { sweep: '🌀', slam: '💥' };
+  // 아이템 그림: 그림 파일(img)이 있으면 그림, 없으면 이모지
+  const iconHtml = (def, px) => def.img
+    ? '<img src="' + def.img + '" alt="" draggable="false" style="width:' + px + 'px;height:' + px + 'px;object-fit:contain;pointer-events:none">'
+    : '<span style="font-size:' + Math.round(px * 0.85) + 'px;line-height:1">' + def.icon + '</span>';
+  const itemSlot = (i) => {
+    const it = invItems[i], def = it && ITEMS[it.id];
+    return '<div class="uw-slot' + (winSel.inv === i ? ' sel' : '') + '" data-inv="' + i + '">' +
+      (def ? '<div class="ic">' + iconHtml(def, 66) + '<small>' + (def.label || '아이템') + '</small></div>' + (it.n > 1 ? '<span class="cnt">' + it.n + '</span>' : '') : '') + '</div>';
+  };
+  const wInv = () => wHead(138, 158, '인벤토리') +
+    '<div class="uwb-grid" style="' + at(147, 249, 581, 551) + ';grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(5,1fr)">' + Array.from({ length: 30 }, (_, i) => itemSlot(i)).join('') + '</div>' +
+    '<img src="/ui/icon_bag.png" alt="" style="position:absolute;left:153px;top:831px;width:40px;height:40px;object-fit:contain;filter:sepia(.7) brightness(.45)">' +
+    '<div style="position:absolute;left:205px;top:832px;font-size:30px;font-weight:700">' + invItems.length + ' / ' + INV_CAP + '</div>';
+  const invDetail = () => {
+    if (winSel.inv < 0) return '아이템을 선택하면<br>상세 정보가 표시됩니다.';
+    const it = invItems[winSel.inv], def = it && ITEMS[it.id];
+    if (!def) return '비어 있는 칸이에요';
+    let btn = '';
+    if (def.kind === 'skillbook') btn = learnedSk.includes(def.skill)
+      ? '<div class="uwb-btn off">이미 배운 스킬</div>'
+      : '<div class="uwb-btn" data-act="learn" data-id="' + it.id + '">배우기</div>';
+    if (def.kind === 'gear') {
+      const worn = gearEq[def.slot] ? ITEMS[gearEq[def.slot]] : null;
+      btn = '<div class="uwb-dsc" style="color:#2a6a2a">최대 체력 +' + def.hp + '</div>' +
+        (worn ? '<div class="uwb-dsc" style="color:#7a5a30;font-size:18px">(지금 입은 ' + worn.name + '과(와) 서로 바뀌어요)</div>' : '') +
+        '<div class="uwb-btn" data-act="wear" data-id="' + it.id + '">장착</div>';
+    }
+    return '<div class="uwb-dt">' + iconHtml(def, 74) + '<br>' + def.name + (it.n > 1 ? ' ×' + it.n : '') + '</div><div class="uwb-dsc">' + def.desc + '</div>' + btn;
+  };
+  const skillList = () => ['sweep', ...learnedSk.filter((id) => SKILL_INFO[id] && id !== 'sweep')];
+  const wSkillGrid = () => {
+    const list = skillList();
+    let h = '';
+    for (let i = 0; i < 20; i++) {
+      const id = list[i], info = id && SKILL_INFO[id];
+      h += info
+        ? '<div class="uw-slot' + (winSel.sk === id ? ' sel' : '') + '" data-sk="' + id + '"><div class="ic">' + (SK_ICON[id] || '✦') + '<small>' + info.name + '</small></div></div>'
+        : '<div class="uw-slot"></div>';
+    }
+    return '<div class="uwb-grid" style="' + at(153, 298, 568, 452) + ';grid-template-columns:repeat(5,104px);grid-template-rows:repeat(4,104px);gap:12px">' + h + '</div>';
+  };
+  const skillDetail = () => {
+    const info = winSel.sk && SKILL_INFO[winSel.sk];
+    if (!info) return '스킬을 선택하면<br>상세 정보가 표시됩니다.';
+    let tail;
+    if (info.base) tail = '<div class="uwb-dsc" style="color:#7a5a30">기본 스킬 · ' + info.slot + ' 칸에 고정되어 있어요</div>';
+    else if (slotRSkill === winSel.sk) tail = '<div class="uwb-dsc" style="color:#2a6a2a">장착 중 (' + info.slot + ' 칸)</div><div class="uwb-btn" data-act="unequip">장착 해제</div>';
+    else tail = '<div class="uwb-btn" data-act="equip" data-skill="' + winSel.sk + '">' + info.slot + ' 칸에 장착</div>';
+    return '<div class="uwb-dt">' + (SK_ICON[winSel.sk] || '✦') + ' ' + info.name + '</div><div class="uwb-dsc">' + info.desc + '</div>' + tail;
+  };
+  const wEquip = () => {
+    const sl = (img, x, y, w, h, lx, ly, name, key) => {
+      const worn = key && gearEq[key] ? ITEMS[gearEq[key]] : null;
+      return '<div class="uw-slot uwb-eq" ' + (worn ? 'data-eq="' + key + '" title="누르면 벗어요" ' : '') + 'style="' + at(x, y, w, h) + ';background-image:url(/ui/' + img + '.png)">' +
+        (worn ? '<div class="ic">' + iconHtml(worn, 84) + '<small>+' + worn.hp + ' 체력</small></div>' : '') + '</div>' +
+      '<div class="uwb-lb" style="left:' + lx + 'px;top:' + ly + 'px">' + name + '</div>';
+    };
+    return wHead(820, 152, '장비') +
+      '<img src="/ui/silhouette.png" alt="" style="position:absolute;left:991px;top:378px;width:211px;height:270px;pointer-events:none">' +
+      sl('slot_head', 1043, 252, 112, 107, 1099, 363, '투구') +
+      sl('slot_armor', 858, 426, 118, 118, 917, 548, '갑옷', 'armor') +
+      sl('slot_weapon', 1225, 426, 119, 118, 1284, 548, '무기') +
+      sl('slot_pants', 1038, 626, 121, 121, 1099, 752, '바지', 'pants') +
+      '<div style="position:absolute;left:820px;top:840px;width:560px;text-align:center;font-size:22px;color:#6a4a28">장비 아이템을 누르면 입고, 입은 장비를 누르면 벗어요</div>';
+  };
+  const wTree = () => {
+    const cx = 290, cy = 275, R = 185;
+    let svg = '<svg viewBox="0 0 581 551" style="position:absolute;' + at(147, 249, 581, 551) + '"><g stroke="#6b4c2a" stroke-width="4" fill="none" stroke-opacity=".75"><circle cx="' + cx + '" cy="' + cy + '" r="' + R + '"/>';
+    const N = [];
+    for (let k = 0; k < 10; k++) { const an = -Math.PI / 2 + k * Math.PI / 5; N.push([cx + R * Math.cos(an), cy + R * Math.sin(an)]); }
+    for (const [x, y] of N) svg += '<line x1="' + cx + '" y1="' + cy + '" x2="' + x.toFixed(1) + '" y2="' + y.toFixed(1) + '"/>';
+    svg += '</g>';
+    for (const [x, y] of N) svg += '<circle class="uw-node" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="26"/>';
+    svg += '<circle class="uw-node" cx="' + cx + '" cy="' + cy + '" r="56"/><image href="/ui/icon_trait.png" x="' + (cx - 36) + '" y="' + (cy - 36) + '" width="72" height="72" pointer-events="none"/></svg>';
+    return wHead(138, 158, '특성') + svg;
+  };
+
+  function winBody(i) {
+    if (i === 0) return wInv() + wDetail(invDetail());
+    if (i === 1) return wInv() + wEquip();
+    if (i === 2) return wHead(138, 158, '스킬') + wSkillGrid() + wDetail(skillDetail());
+    return wTree() + wDetail('특성을 선택하면<br>상세 정보가 표시됩니다.');
+  }
+
+  const TAB_BOX = [[143, 37, 298, 88], [451, 37, 265, 88], [727, 37, 259, 89], [997, 37, 250, 87]];
+  function fitWin() {
+    const st = winEl.firstElementChild;
+    if (!st) return;
+    st.style.transform = 'scale(' + (Math.min(window.innerWidth / 1536, window.innerHeight / 1024) * 0.98) + ')';
+  }
+  window.addEventListener('resize', fitWin);
+  function renderWin() {
+    let h = '<div class="uwb-stage">';
+    WIN_TABS.forEach(([ti, tn], k) => {
+      const [x, y, w, hh] = TAB_BOX[k], on = k === winIdx;
+      h += '<div class="uwb-tab' + (on ? ' on' : '') + '" data-tab="' + k + '" style="' + at(x, on ? 35 : y, w, on ? 92 : hh) + '"><img src="' + ti + '" alt="">' + tn + '</div>';
+    });
+    h += winBody(winIdx) + '<div class="uwb-x" data-close="1">✕</div></div>';
+    winEl.innerHTML = h;
+    fitWin();
+  }
+
+  winEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (t.closest('[data-close]')) { closeWin(); return; }
+    const tab = t.closest('[data-tab]');
+    if (tab) { winIdx = Number(tab.getAttribute('data-tab')); renderWin(); return; }
+    if (t === winEl) { closeWin(); return; }
+    const act = t.closest('[data-act]');   // 배우기 / 장착 / 장착 해제 버튼 (결과는 서버가 인벤토리·스킬 정보로 다시 보내줌)
+    if (act) {
+      const a = act.getAttribute('data-act');
+      if (a === 'learn') socket.emit('learn', { id: act.getAttribute('data-id') });
+      else if (a === 'equip') socket.emit('equip', { skill: act.getAttribute('data-skill') });
+      else if (a === 'unequip') socket.emit('equip', { skill: null });
+      else if (a === 'wear') socket.emit('wear', { id: act.getAttribute('data-id') });
+      return;
+    }
+    const eqSlot = t.closest('[data-eq]');
+    if (eqSlot) { socket.emit('unwear', { slot: eqSlot.getAttribute('data-eq') }); return; }
+    const iv = t.closest('[data-inv]');
+    if (iv) {
+      winSel.inv = Number(iv.getAttribute('data-inv'));
+      const picked = invItems[winSel.inv], pdef = picked && ITEMS[picked.id];
+      if (winIdx === 1 && pdef && pdef.kind === 'gear') { socket.emit('wear', { id: picked.id }); return; }   // 장비 탭에서는 장비를 누르면 바로 입음
+      renderWin(); return;
+    }
+    const sk = t.closest('[data-sk]');
+    if (sk) { winSel.sk = sk.getAttribute('data-sk'); renderWin(); return; }
+    const sl = t.closest('.uw-slot, .uw-node');
+    if (sl) {
+      winEl.querySelectorAll('.sel').forEach((n) => n.classList.remove('sel'));
+      sl.classList.add('sel');
+      const d = winEl.querySelector('.uw-dtxt');
+      if (d) d.textContent = '비어 있는 칸이에요';
+    }
+  });
+
+  function openWin(i) {
+    closeTrade();
+    closeQuest();
+    scrEl.classList.remove('open', 'show');   // 상태창 두루마리가 열려 있으면 바로 닫음
+    winIdx = i;
+    renderWin();
+    winEl.style.display = 'flex';
+    if (!uiOpen) {
+      uiOpen = true;
+      document.body.classList.add('uw-open');
+      for (const k in keys) keys[k] = false;
+      jumpHeld = false;
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
+    }
+  }
+  function closeWin() {
+    closeStatus();
+    closeTrade();
+    closeQuest();
+    uiOpen = false;
+    document.body.classList.remove('uw-open');
+    winEl.style.display = 'none';
+  }
+  function toggleWin(i) {
+    if (uiOpen && winIdx === i) closeWin();
+    else openWin(i);
+  }
+
+
+  // ---------- 상태창: 두루마리가 위아래로 펼쳐지며 내 정보가 나옴 (기능 없이 모양만) ----------
+  const scrStyle = document.createElement('style');
+  scrStyle.textContent = `
+.scr{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0);transition:background .4s;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;user-select:none;-webkit-user-select:none}
+.scr.show{display:flex}
+.scr.open{background:rgba(0,0,0,.6)}
+.scr-wrap{--rh:clamp(40px,8vh,64px);position:relative;display:flex;flex-direction:column;align-items:center;width:min(98vw,1040px);filter:drop-shadow(0 10px 24px rgba(0,0,0,.75))}
+.scr-r{position:relative;z-index:2;flex:none;display:flex;width:100%;height:var(--rh)}
+.scr-r i{display:block;height:100%;background-repeat:no-repeat;background-size:100% 100%}
+.scr-r .bd{flex:1 1 0;min-width:0}
+.scr-r.top .cl{flex:none;width:calc(var(--rh)*.893);background-image:url(/ui/scr_cap_l.png)}
+.scr-r.top .cr{flex:none;width:calc(var(--rh)*.917);background-image:url(/ui/scr_cap_r.png)}
+.scr-r.top .bl{background-image:url(/ui/scr_top_bl.png)}
+.scr-r.top .br{background-image:url(/ui/scr_top_br.png)}
+.scr-r.top .st{flex:none;width:calc(var(--rh)*.69);background-image:url(/ui/scr_top_strap.png)}
+.scr-r.bot .cl{flex:none;width:calc(var(--rh)*.893);background-image:url(/ui/scr_cap_l_b.png)}
+.scr-r.bot .cr{flex:none;width:calc(var(--rh)*.917);background-image:url(/ui/scr_cap_r_b.png)}
+.scr-r.bot .bd{background-image:url(/ui/scr_bot_body.png)}
+.scr-paper{position:relative;z-index:1;flex:none;width:calc(100% - var(--rh)*1.75);margin:calc(var(--rh)*-.1) 0;height:0;overflow:hidden;transition:height .6s cubic-bezier(.22,.8,.25,1);background:url(/ui/scr_paper.png) 0 0/100% 100% no-repeat}
+.scr.open .scr-paper{height:min(70vh,520px)}
+.scr-in{position:absolute;inset:0;display:flex;gap:14px;padding:20px 24px 16px;box-sizing:border-box;color:#33200d;text-shadow:0 1px 0 rgba(255,235,190,.35);opacity:0;transition:opacity .35s .3s}
+.scr.open .scr-in{opacity:1}
+.scr-col{flex:1 1 0;min-width:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;padding-right:2px}
+.scr-x{position:absolute;top:4px;right:12px;font-size:20px;line-height:1;cursor:pointer;color:#4a2f12;z-index:4;padding:3px}
+.scr-col,.scr-in{scrollbar-width:none;-ms-overflow-style:none}
+.scr-col::-webkit-scrollbar,.scr-in::-webkit-scrollbar{display:none;width:0;height:0}
+.scr-card{border:1.5px solid rgba(70,42,18,.55);border-radius:3px;background:rgba(80,50,20,.1);box-shadow:inset 0 0 0 1px rgba(255,235,190,.25);padding:10px 12px;margin-bottom:10px}
+.scr-h{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:16px;font-weight:700;color:#3a2410}
+.scr-h img{width:18px;height:auto}
+.scr-h img.ic{width:24px;height:24px;object-fit:contain}
+.scr-h img.sp{filter:sepia(.7) brightness(.5)}
+.scr-prof{display:flex;gap:12px;align-items:stretch}
+.scr-prof>img{width:84px;height:auto;align-self:flex-start;flex:none;filter:drop-shadow(0 3px 4px rgba(0,0,0,.5))}
+.scr-pi{flex:1;min-width:0}
+.scr-lvl{font-size:21px;font-weight:700;color:#2a1a0c}
+.scr-nick{font-size:16px;font-weight:700;margin-top:1px;word-break:break-all}
+.scr-hr{height:2px;margin:6px 0;background:linear-gradient(90deg,rgba(70,42,18,0),rgba(70,42,18,.6),rgba(70,42,18,0))}
+.scr-kv{display:flex;justify-content:space-between;font-size:13px;padding:1px 0}
+.scr-kv span:first-child{color:#6b4c2a}
+.scr-bw{margin-top:6px}
+.scr-bt{display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px;color:#4a2f12}
+.scr-bar{height:13px;border:1.5px solid #2b1a08;border-radius:2px;background:#2a1c10;overflow:hidden;box-shadow:inset 0 1px 3px rgba(0,0,0,.7)}
+.scr-bar i{display:block;height:100%}
+.scr-bar.xp i{background:linear-gradient(#f0cf7a,#b8862c)}
+.scr-bar.hp i{background:linear-gradient(#e0524a,#8c1f1a)}
+.scr-bar.mp i{background:linear-gradient(#5aa0ea,#1f4f95)}
+.scr-row{display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid rgba(70,42,18,.28);font-size:14px}
+.scr-row:last-child{border-bottom:0}
+.scr-row img{width:20px;height:20px;object-fit:contain;filter:sepia(.7) brightness(.5)}
+.scr-row b{margin-left:auto;font-size:15px}
+.scr-slots{display:flex;gap:7px;flex-wrap:wrap}
+.scr-slots i{width:44px;height:50px;box-sizing:border-box;background:#2b1f14 url(/ui/slot_empty.png) 0 0/100% 100% no-repeat}
+.scr-note{margin-top:6px;font-size:12px;color:#6b5636}
+.scr-pts{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700}
+.scr-pts b{font-size:19px;color:#7a2a14;margin-left:2px}
+.scr-btn{margin-left:auto;padding:6px 12px;border:2px solid #3d2810;border-radius:3px;background:linear-gradient(#8a6230,#5e3f1c);color:#ecd49a;font:700 13px 'Galmuri11','Malgun Gothic',sans-serif;opacity:.6;box-shadow:inset 0 1px 0 rgba(255,235,190,.35)}
+.scr-st{display:flex;align-items:center;gap:10px;padding:9px 10px;margin-bottom:8px;border:1.5px solid rgba(70,42,18,.5);border-radius:3px;background:rgba(80,50,20,.1);box-shadow:inset 0 0 0 1px rgba(255,235,190,.25)}
+.scr-ic{flex:none;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;background:radial-gradient(circle at 35% 30%,#4a3622,#1f160c);border:2px solid #8a6a3a;box-shadow:0 1px 3px rgba(0,0,0,.5)}
+.scr-ic img{width:24px;height:24px;object-fit:contain}
+.scr-sn{flex:1;min-width:0}
+.scr-sn b{font-size:16px}
+.scr-sn small{margin-left:5px;font-size:12px;color:#5e4828}
+.scr-sn div{margin-top:2px;font-size:11.5px;color:#5e4828}
+.scr-vl{width:34px;text-align:center;font-size:18px;font-weight:700}
+.scr-pm{display:flex;gap:5px}
+.scr-pm button{width:30px;height:30px;border:2px solid #3d2810;border-radius:3px;background:linear-gradient(#8a6230,#5e3f1c);color:#ecd49a;font:700 18px/1 sans-serif;opacity:.6;box-shadow:inset 0 1px 0 rgba(255,235,190,.35)}
+@media (max-width:620px){
+.scr-in{flex-direction:column;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain}
+.scr-col{flex:none;overflow:visible}
+.scr.open .scr-paper{height:min(74vh,620px)}
+}
+`;
+  document.head.appendChild(scrStyle);
+  const scrEl = document.createElement('div');
+  scrEl.className = 'scr';
+  document.body.appendChild(scrEl);
+  let scrHideT = 0, scrOpenT = 0;
+  // 스탯 (기능 없이 모양만): [약어, 이름, 설명]
+  const STATS = [
+    ['STR', '힘', '공격력 증가, 무기 공격력 상승'],
+    ['DEX', '민첩', '치명타 확률 증가, 명중률 상승'],
+    ['CON', '체력', '최대 HP 증가, 방어력 상승'],
+    ['INT', '지능', '최대 MP 증가, 마법 공격력 상승'],
+    ['LUK', '운', '아이템 획득 확률 증가, 치명타 피해 상승'],
+    ['AGI', '공속/회피', '공격 속도 증가, 회피율 상승']
+  ];
+  const scrSlots = (n) => '<div class="scr-slots">' + '<i></i>'.repeat(n) + '</div>';
+  const scrBar = (cls, label, a, b) =>
+    '<div class="scr-bw"><div class="scr-bt"><span>' + label + '</span><span>' + fmt(a) + ' / ' + fmt(b) + '</span></div><div class="scr-bar ' + cls + '"><i style="width:' + pct(a, b) + '%"></i></div></div>';
+  const scrRow = (icon, name, val) => '<div class="scr-row"><img src="' + icon + '" alt="">' + name + '<b>' + val + '</b></div>';
+
+  function renderScr() {
+    const left =
+      '<div class="scr-card"><div class="scr-prof"><img src="/ui/status_frame.png" alt="" draggable="false"><div class="scr-pi">' +
+      '<div class="scr-lvl">Lv. ' + PLAYER.level + '</div><div class="scr-nick"></div><div class="scr-hr"></div>' +
+      '<div class="scr-kv"><span>직업</span><span>초보자</span></div><div class="scr-kv"><span>길드</span><span>없음</span></div><div class="scr-hr"></div>' +
+      scrBar('xp', '경험치', PLAYER.exp, PLAYER.expMax) + scrBar('hp', 'HP', PLAYER.hp, PLAYER.hpMax) + scrBar('mp', 'MP', PLAYER.mp, PLAYER.mpMax) +
+      '</div></div></div>' +
+      '<div class="scr-card"><div class="scr-h"><img src="/ui/orn_diamond.png" alt="">기본 정보</div>' +
+      scrRow('/ui/icon_heart.png', '체력', fmt(PLAYER.hpMax)) + scrRow('/ui/icon_drop.png', '마나', fmt(PLAYER.mpMax)) +
+      scrRow('/ui/slot_weapon.png', '공격력', '0') + scrRow('/ui/slot_armor.png', '방어력', '0') +
+      scrRow('/ui/icon_gear.png', '치명타 확률', '0%') + scrRow('/ui/icon_gear.png', '치명타 피해', '150%') + scrRow('/ui/slot_boots.png', '이동 속도', '100%') +
+      '</div>' +
+      '<div class="scr-card"><div class="scr-h"><img class="ic" src="/ui/skill_btn.png" alt="">보유 스킬</div>' + scrSlots(5) + '<div class="scr-note">아직 배운 스킬이 없어요</div></div>' +
+      '<div class="scr-card"><div class="scr-h"><img class="ic sp" src="/ui/icon_trait.png" alt="">특성</div>' + scrSlots(5) + '<div class="scr-note">아직 얻은 특성이 없어요</div></div>';
+    const right =
+      '<div class="scr-card"><div class="scr-h"><img src="/ui/orn_diamond.png" alt="">스탯 포인트</div>' +
+      '<div class="scr-pts"><span>사용 가능한 포인트</span><b>0</b><button class="scr-btn" disabled>초기화</button></div></div>' +
+      STATS.map(([k, n, d]) =>
+        '<div class="scr-st">' +
+        '<div class="scr-sn"><b>' + k + '</b><small>(' + n + ')</small><div>' + d + '</div></div>' +
+        '<span class="scr-vl">0</span><span class="scr-pm"><button disabled>−</button><button disabled>+</button></span></div>').join('') +
+      '<div class="scr-note">스탯 찍기는 아직 준비 중이에요</div>';
+    scrEl.innerHTML =
+      '<div class="scr-wrap"><div class="scr-r top"><i class="cl"></i><i class="bd bl"></i><i class="st"></i><i class="bd br"></i><i class="cr"></i></div>' +
+      '<div class="scr-paper"><div class="scr-x" data-sclose="1">✕</div>' +
+      '<div class="scr-in"><div class="scr-col">' + left + '</div><div class="scr-col">' + right + '</div></div></div>' +
+      '<div class="scr-r bot"><i class="cl"></i><i class="bd"></i><i class="cr"></i></div></div>';
+    const nk = scrEl.querySelector('.scr-nick');
+    if (nk) nk.textContent = nick;
+  }
+
+  scrEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (performance.now() - scrOpenT < 500) return;   // 상태창을 연 그 터치의 click 이 어두운 배경에 떨어져 바로 닫히는 것 방지
+    if (t === scrEl || t.closest('[data-sclose]')) { closeWin(); return; }
+  });
+
+  function openStatus() {
+    closeTrade();
+    closeQuest();
+    winEl.style.display = 'none';
+    renderScr();
+    clearTimeout(scrHideT);
+    scrOpenT = performance.now();
+    scrEl.classList.add('show');
+    void scrEl.offsetWidth;            // 펼쳐지는 애니메이션이 처음부터 재생되도록
+    scrEl.classList.add('open');
+    if (!uiOpen) {
+      uiOpen = true;
+      document.body.classList.add('uw-open');
+      for (const k in keys) keys[k] = false;
+      jumpHeld = false;
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
+    }
+  }
+  function closeStatus() {
+    if (!scrEl.classList.contains('open')) return;
+    scrEl.classList.remove('open');
+    clearTimeout(scrHideT);
+    scrHideT = setTimeout(() => scrEl.classList.remove('show'), 650);
+  }
+  function toggleStatus() {
+    if (uiOpen && scrEl.classList.contains('open')) closeWin();
+    else openStatus();
+  }
+
+  // ---------- 거래 창: 주변 플레이어 목록 (이름 + 레벨만 표시, 직업은 표시 안 함) ----------
+  const TRADE_RANGE = Infinity;   // 이 거리(m) 안의 플레이어만 목록에 표시. 지금은 접속자 전부 (예: 80 으로 바꾸면 가까운 사람만)
+  const tradeStyle = document.createElement('style');
+  tradeStyle.textContent = `
+.trade{position:fixed;inset:0;z-index:61;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#e8dcc0;user-select:none;-webkit-user-select:none}
+.trade-box{position:relative;display:flex;flex-direction:column;box-sizing:border-box;width:min(94vw,460px);max-height:min(88vh,720px);border:2px solid #4a4030;border-radius:6px;background:linear-gradient(#1c1a18,#121110);box-shadow:0 0 0 2px #070605,inset 0 0 0 1px #5a4a30,0 12px 40px rgba(0,0,0,.8)}
+.trade-hd{flex:none;display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid #3a3226;background:linear-gradient(#26221c,#1a1814)}
+.trade-hd .ic{flex:none;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 35% 30%,#4a3a22,#1f170c);border:2px solid #b8924a}
+.trade-hd .ic img{width:28px;height:28px;object-fit:contain}
+.trade-hd h2{margin:0;font-size:24px;font-weight:700;color:#f1e6c8;text-shadow:0 2px 0 #000}
+.trade-x{margin-left:auto;font-size:24px;line-height:1;padding:6px 8px;cursor:pointer;color:#bba880}
+.trade-x:hover{color:#fff}
+.trade-sec{flex:none;padding:14px 16px 8px;font-size:19px;font-weight:700;color:#e2c98a;text-shadow:0 1px 0 #000}
+.trade-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding:0 12px 14px;touch-action:pan-y;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#5a4a30 transparent}
+.trade-row{display:flex;align-items:center;gap:12px;padding:8px 10px;margin-bottom:8px;border:1px solid #3a3226;border-radius:5px;background:linear-gradient(#24211d,#1a1816);box-shadow:inset 0 0 0 1px rgba(255,235,190,.04)}
+.trade-pt{position:relative;flex:none;width:58px;height:58px;box-sizing:border-box;border:2px solid #8a6b3a;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;color:#fff;text-shadow:0 2px 3px #000;box-shadow:0 0 0 1px #0a0705}
+.trade-pt i{position:absolute;right:-5px;bottom:-5px;width:11px;height:11px;border-radius:50%;background:#46d560;border:2px solid #121110;box-shadow:0 0 5px #46d560}
+.trade-info{flex:1;min-width:0}
+.trade-nm{font-size:18px;font-weight:700;color:#f4ead0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trade-lv{margin-top:4px;font-size:14px;color:#a89c82}
+.trade-btn{flex:none;padding:10px 16px;border:2px solid #9a7a3e;border-radius:4px;background:linear-gradient(#4a3a24,#2e2416);color:#f1dfb6;font:700 16px 'Galmuri11','Malgun Gothic',sans-serif;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,235,190,.25),0 2px 4px rgba(0,0,0,.5);text-shadow:0 1px 0 #000}
+.trade-btn:hover{filter:brightness(1.2)}
+.trade-btn:active{transform:translateY(1px)}
+.trade-empty{padding:30px 10px;text-align:center;font-size:15px;color:#8f846c;line-height:1.7}
+`;
+  document.head.appendChild(tradeStyle);
+  const tradeEl = document.createElement('div');
+  tradeEl.className = 'trade';
+  document.body.appendChild(tradeEl);
+  let tradeOn = false, tradeTimer = 0, tradeOpenT = 0, tradeKey = '';
+
+  const portraitColor = (name) => {
+    let h = 0;
+    for (const ch of String(name)) h = (h * 31 + ch.codePointAt(0)) % 360;
+    return 'linear-gradient(135deg,hsl(' + h + ',32%,34%),hsl(' + ((h + 40) % 360) + ',36%,16%))';
+  };
+  const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function tradePlayers() {
+    const list = [];
+    for (const [pid, r] of remotes) {
+      const d = Math.hypot(r.t.x - me.x, r.t.z - me.z);
+      if (d <= TRADE_RANGE) list.push({ pid, nick: r.nick || '플레이어', level: r.level || 1, d });
+    }
+    list.sort((a, b) => a.d - b.d);
+    return list;
+  }
+
+  function renderTrade(force) {
+    const ps = tradePlayers();
+    const key = ps.map((p) => p.pid + '|' + p.nick + '|' + p.level).join(',');
+    if (!force && key === tradeKey) return;   // 바뀐 게 없으면 다시 그리지 않음 (스크롤·버튼 눌림 유지)
+    tradeKey = key;
+    const prev = tradeEl.querySelector('.trade-list');
+    const scrollTop = prev ? prev.scrollTop : 0;
+    const rows = ps.length
+      ? ps.map((p) =>
+          '<div class="trade-row"><div class="trade-pt" style="background:' + portraitColor(p.nick) + '">' + esc(Array.from(p.nick)[0] || '?') + '<i></i></div>' +
+          '<div class="trade-info"><div class="trade-nm">' + esc(p.nick) + '</div><div class="trade-lv">Lv.' + p.level + '</div></div>' +
+          '<button class="trade-btn" data-trade="' + esc(p.pid) + '">거래하기</button></div>').join('')
+      : '<div class="trade-empty">주변에 거래할 수 있는<br>플레이어가 없어요</div>';
+    tradeEl.innerHTML =
+      '<div class="trade-box"><div class="trade-hd"><div class="ic"><img src="/ui/icon_trade.png" alt="" draggable="false"></div><h2>거래하기</h2><div class="trade-x" data-tclose="1">✕</div></div>' +
+      '<div class="trade-sec">주변 플레이어</div><div class="trade-list">' + rows + '</div></div>';
+    const lst = tradeEl.querySelector('.trade-list');
+    if (lst) lst.scrollTop = scrollTop;
+  }
+
+  tradeEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (performance.now() - tradeOpenT < 400) return;   // 메뉴를 연 그 터치의 click 이 바로 닫기로 처리되는 것 방지
+    if (t === tradeEl || t.closest('[data-tclose]')) { closeWin(); return; }
+    const b = t.closest('[data-trade]');
+    if (b) {
+      const r = remotes.get(b.getAttribute('data-trade'));
+      toast((r && r.nick ? r.nick + '님과의 ' : '') + '거래는 아직 준비 중이에요');   // TODO: 거래 신청 소켓 이벤트 연결
+    }
+  });
+
+  function openTrade() {
+    closeQuest();
+    winEl.style.display = 'none';
+    scrEl.classList.remove('open', 'show');
+    tradeOn = true;
+    tradeOpenT = performance.now();
+    renderTrade(true);
+    tradeEl.style.display = 'flex';
+    clearInterval(tradeTimer);
+    tradeTimer = setInterval(() => renderTrade(false), 500);   // 열려 있는 동안 접속·퇴장을 바로 반영
+    if (!uiOpen) {
+      uiOpen = true;
+      document.body.classList.add('uw-open');
+      for (const k in keys) keys[k] = false;
+      jumpHeld = false;
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
+    }
+  }
+  function closeTrade() {
+    tradeOn = false;
+    clearInterval(tradeTimer);
+    tradeEl.style.display = 'none';
+  }
+  function toggleTrade() {
+    if (uiOpen && tradeOn) closeWin();
+    else openTrade();
+  }
+
+  // ---------- 퀘스트 창: 진행중 / 전체 / 완료 / 실패 ----------
+  // 퀘스트 데이터. 지금은 퀘스트가 하나도 없어서 비어 있어요. 나중에 아래 모양으로 넣으면 목록에 바로 나타나요.
+  // { id: 'q1', title: '잃어버린 마을의 흔적', status: 'active'(진행중) | 'done'(완료) | 'fail'(실패),
+  //   summary: '숲의 경계 지역으로 이동하기', dist: '342m', desc: '설명...',
+  //   goals: [{ text: '숲의 경계 지역으로 이동하기', dist: '342m' }],
+  //   rewards: [{ kind: 'gold', text: '골드 500' }, { kind: 'exp', text: '경험치 1,200' }] }
+  const QUESTS = [];
+  const QUEST_TABS = [
+    ['active', '진행중', '진행중인 퀘스트가 없습니다'],
+    ['all', '전체', '퀘스트가 없습니다'],
+    ['done', '완료', '완료한 퀘스트가 없습니다'],
+    ['fail', '실패', '실패한 퀘스트가 없습니다'],
+  ];
+  const questStyle = document.createElement('style');
+  questStyle.textContent = `
+.quest{position:fixed;inset:0;z-index:61;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#e8dcc0;user-select:none;-webkit-user-select:none}
+.q-box{position:relative;display:flex;flex-direction:column;box-sizing:border-box;width:min(96vw,1000px);height:min(88vh,640px);border:2px solid #4a4030;border-radius:6px;background:linear-gradient(#1c1a18,#121110);box-shadow:0 0 0 2px #070605,inset 0 0 0 1px #5a4a30,0 12px 40px rgba(0,0,0,.8)}
+.q-hd{flex:none;display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #3a3226;background:linear-gradient(#26221c,#1a1814)}
+.q-hd .ic{flex:none;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 35% 30%,#4a3a22,#1f170c);border:2px solid #b8924a}
+.q-hd .ic img{width:28px;height:28px;object-fit:contain}
+.q-hd h2{margin:0;font-size:24px;font-weight:700;color:#f1e6c8;text-shadow:0 2px 0 #000}
+.q-x{margin-left:auto;font-size:24px;line-height:1;padding:6px 8px;cursor:pointer;color:#bba880}
+.q-x:hover{color:#fff}
+.q-body{flex:1 1 auto;min-height:0;display:flex;gap:12px;padding:12px}
+.q-left{flex:0 0 42%;min-width:0;display:flex;flex-direction:column}
+.q-tabs{flex:none;display:flex;margin-bottom:10px;border:1px solid #3a3226;border-radius:4px;overflow:hidden}
+.q-tab{flex:1;text-align:center;padding:10px 0;font-size:15px;font-weight:700;color:#a89c82;background:#17150f;cursor:pointer;border-right:1px solid #3a3226}
+.q-tab:last-child{border-right:0}
+.q-tab.on{color:#f4e2ac;background:linear-gradient(#3a2e1a,#251d10);box-shadow:inset 0 0 0 2px #b8924a}
+.q-list{flex:1 1 auto;min-height:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#5a4a30 transparent}
+.q-row{display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:8px;border:1px solid #2e2820;border-radius:4px;background:linear-gradient(#1f1c18,#171512);cursor:pointer}
+.q-row.sel{border-color:#d9a43c;box-shadow:0 0 0 1px #d9a43c,0 0 10px rgba(217,164,60,.35)}
+.q-dia{flex:none;width:34px;height:34px;display:flex;align-items:center;justify-content:center}
+.q-dia b{display:block;width:24px;height:24px;transform:rotate(45deg);border:2px solid #d9a43c;display:flex;align-items:center;justify-content:center}
+.q-dia b i{transform:rotate(-45deg);font-style:normal;font-weight:700;font-size:15px;color:#f4c24a}
+.q-row.done .q-dia b{border-color:#5aa0ea}.q-row.done .q-dia b i{color:#8ec4ff}
+.q-row.fail .q-dia b{border-color:#9a9a9a}.q-row.fail .q-dia b i{color:#bdbdbd}
+.q-ri{flex:1;min-width:0}
+.q-rt{font-size:16px;font-weight:700;color:#f4ead0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-rs{margin-top:3px;font-size:12.5px;color:#a89c82;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-rd{flex:none;font-size:12.5px;color:#a89c82}
+.q-empty{padding:40px 10px;text-align:center;font-size:16px;color:#8f846c}
+.q-right{flex:1 1 0;min-width:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;box-sizing:border-box;padding:18px 20px;border:2px solid #6b5636;border-radius:4px;background:url(/ui/parchment.jpg) 0 0/cover #cdb88d;color:#33200d;text-shadow:0 1px 0 rgba(255,235,190,.35);scrollbar-width:none}
+.q-right::-webkit-scrollbar{display:none}
+.q-dt{display:flex;align-items:center;gap:12px;font-size:22px;font-weight:700;color:#2a1a0c;padding-bottom:10px;border-bottom:1px solid rgba(70,42,18,.5)}
+.q-desc{margin:12px 0 16px;font-size:14.5px;line-height:1.8;color:#3d2a14}
+.q-sh{display:flex;align-items:center;gap:10px;margin:14px 0 8px;font-size:16px;font-weight:700;color:#2a1a0c}
+.q-sh::after{content:'';flex:1;height:1px;background:rgba(70,42,18,.55)}
+.q-goal{display:flex;align-items:center;gap:10px;padding:5px 2px;font-size:14.5px;color:#33200d}
+.q-goal span:last-child{margin-left:auto;color:#5e4828}
+.q-rw{display:flex;align-items:center;gap:12px;padding:5px 2px;font-size:14.5px}
+.q-rwi{flex:none;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:2px solid #3d2810;border-radius:3px;background:#2b1f14;font-size:18px;font-weight:700;color:#e8c050}
+.q-track{display:block;margin:20px auto 4px;padding:10px 40px;border:2px solid #3d2810;border-radius:4px;background:linear-gradient(#2a2f3a,#14171e);color:#eadfc0;font:700 16px 'Galmuri11','Malgun Gothic',sans-serif;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,235,190,.2)}
+.q-track:hover{filter:brightness(1.25)}
+.q-none{display:flex;align-items:center;justify-content:center;height:100%;text-align:center;line-height:1.9;font-size:16px;color:#6b5636}
+@media (max-width:620px){
+.q-body{flex-direction:column}
+.q-left{flex:0 0 46%}
+.q-right{flex:1 1 0;padding:12px 14px}
+.q-tab{font-size:13px;padding:8px 0}
+}
+`;
+  document.head.appendChild(questStyle);
+  const questEl = document.createElement('div');
+  questEl.className = 'quest';
+  document.body.appendChild(questEl);
+  let questOn = false, questTab = 0, questSel = null, questOpenT = 0;
+
+  function questList() {
+    const key = QUEST_TABS[questTab][0];
+    return QUESTS.filter((q) => key === 'all' || q.status === key);
+  }
+  const questMark = (st) => (st === 'done' ? '✓' : st === 'fail' ? '✕' : '!');
+
+  function questDetail(q) {
+    if (!q) return '<div class="q-none">퀘스트를 선택하면<br>상세 정보가 표시됩니다.</div>';
+    const goals = (q.goals || []).map((g) =>
+      '<div class="q-goal"><span>◆</span><span>' + esc(g.text) + '</span><span>' + esc(g.dist || '') + '</span></div>').join('');
+    const rewards = (q.rewards || []).map((r) =>
+      '<div class="q-rw"><div class="q-rwi">' + (r.kind === 'exp' ? 'EXP' : '●') + '</div><span>' + esc(r.text) + '</span></div>').join('');
+    return '<div class="q-dt"><span class="q-dia"><b><i>' + questMark(q.status) + '</i></b></span>' + esc(q.title) + '</div>' +
+      '<div class="q-desc">' + esc(q.desc || '').replace(/\n/g, '<br>') + '</div>' +
+      (goals ? '<div class="q-sh">목표</div>' + goals : '') +
+      (rewards ? '<div class="q-sh">보상</div>' + rewards : '') +
+      (q.status === 'active' ? '<button class="q-track" data-qtrack="' + esc(q.id) + '">추적하기</button>' : '');
+  }
+
+  function renderQuest() {
+    const list = questList();
+    if (!list.some((q) => q.id === questSel)) questSel = list.length ? list[0].id : null;
+    const cur = list.find((q) => q.id === questSel) || null;
+    const prev = questEl.querySelector('.q-list');
+    const scrollTop = prev ? prev.scrollTop : 0;
+    const tabs = QUEST_TABS.map((t, k) => '<div class="q-tab' + (k === questTab ? ' on' : '') + '" data-qtab="' + k + '">' + t[1] + '</div>').join('');
+    const rows = list.length
+      ? list.map((q) =>
+          '<div class="q-row ' + esc(q.status) + (q.id === questSel ? ' sel' : '') + '" data-qid="' + esc(q.id) + '">' +
+          '<div class="q-dia"><b><i>' + questMark(q.status) + '</i></b></div>' +
+          '<div class="q-ri"><div class="q-rt">' + esc(q.title) + '</div><div class="q-rs">' + esc(q.summary || '') + '</div></div>' +
+          '<div class="q-rd">' + esc(q.dist || '') + '</div></div>').join('')
+      : '<div class="q-empty">' + QUEST_TABS[questTab][2] + '</div>';
+    questEl.innerHTML =
+      '<div class="q-box"><div class="q-hd"><div class="ic"><img src="/ui/icon_quest.png" alt="" draggable="false"></div><h2>퀘스트</h2><div class="q-x" data-qclose="1">✕</div></div>' +
+      '<div class="q-body"><div class="q-left"><div class="q-tabs">' + tabs + '</div><div class="q-list">' + rows + '</div></div>' +
+      '<div class="q-right">' + questDetail(cur) + '</div></div></div>';
+    const lst = questEl.querySelector('.q-list');
+    if (lst) lst.scrollTop = scrollTop;
+  }
+
+  questEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (performance.now() - questOpenT < 400) return;   // 메뉴를 연 그 터치의 click 이 바로 닫기로 처리되는 것 방지
+    if (t === questEl || t.closest('[data-qclose]')) { closeWin(); return; }
+    const tab = t.closest('[data-qtab]');
+    if (tab) { questTab = Number(tab.getAttribute('data-qtab')); questSel = null; renderQuest(); return; }
+    const row = t.closest('[data-qid]');
+    if (row) { questSel = row.getAttribute('data-qid'); renderQuest(); return; }
+    if (t.closest('[data-qtrack]')) toast('퀘스트 추적은 아직 준비 중이에요');   // TODO: 추적 표시 연결
+  });
+
+  function openQuest() {
+    closeTrade();
+    winEl.style.display = 'none';
+    scrEl.classList.remove('open', 'show');
+    questOn = true;
+    questOpenT = performance.now();
+    questTab = 0;   // 열 때는 항상 진행중 탭부터
+    questSel = null;
+    renderQuest();
+    questEl.style.display = 'flex';
+    if (!uiOpen) {
+      uiOpen = true;
+      document.body.classList.add('uw-open');
+      for (const k in keys) keys[k] = false;
+      jumpHeld = false;
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
+    }
+  }
+  function closeQuest() {
+    questOn = false;
+    questEl.style.display = 'none';
+  }
+  function toggleQuest() {
+    if (uiOpen && questOn) closeWin();
+    else openQuest();
+  }
+
+  // ---------- 화면 크기에 맞춰 터치 UI 크기 조절 ----------
+  function applyUiScale() {
+    if (!touchMode) return;
+    uiScale = computeUiScale();
+    document.documentElement.style.setProperty('--ui', String(uiScale));
+
+    // 아래 가운데 패널: 조이스틱과 오른쪽 버튼 사이 공간에 맞춤
+    const reserve = Math.max(26 + 130 * uiScale, 200 * uiScale) + 12;
+    const wScreen = Math.max(220 * uiScale, Math.min(420 * uiScale, window.innerWidth - 2 * reserve));
+    bottomWrap.style.width = (wScreen / uiScale) + 'px';
+
+    // 나침반: 화면 폭의 40%까지
+    compass.style.width = Math.min(420, (window.innerWidth * 0.4) / uiScale) + 'px';
+    compass.style.transform = 'translateX(-50%) scale(' + uiScale + ')';
+    compass.style.transformOrigin = 'center top';
+  }
+  window.addEventListener('resize', applyUiScale);
+  window.addEventListener('orientationchange', applyUiScale);
+  applyUiScale();
+
+  // ---------- 다른 플레이어 ----------
+  const remotes = new Map();
+
+  // 다른 사람이 연 문도 같이 보이게 (서버가 전달)
+  socket.on('doors', (list) => { if (Array.isArray(list)) for (const i of list) setDoorOpen(i, true); });
+  socket.on('door', (d) => { if (d) setDoorOpen(d.i, d.open); });
+  socket.emit('doors?');
+
+  socket.on('state', (data) => {
+    const list = normalizePlayers(data);
+    const seen = new Set();
+
+    for (const rawPlayer of list) {
+      const p = parsePlayer(rawPlayer);
+
+      if (
+        !p ||
+        p.id == null ||
+        !Number.isFinite(Number(p.x)) ||
+        !Number.isFinite(Number(p.z))
+      ) {
+        continue;
+      }
+
+      const pid = p.id;
+      const x = Number(p.x);
+      const y = Number(p.y) || 0;
+      const z = Number(p.z);
+      const ry = Number(p.ry) || 0;
+
+      if (String(pid) === String(id)) continue;
+
+      seen.add(pid);
+
+      let remote = remotes.get(pid);
+
+      if (!remote) {
+        remote = {
+          g: makeAvatar(p.nick || '플레이어', 0xffa040),
+          t: { x, y, z, ry }
+        };
+
+        remote.g.position.set(x, y, z);
+        scene.add(remote.g);
+        remotes.set(pid, remote);
+        setRemoteWeapon(remote.g.userData.rig, p.eq, true);   // 처음 보이는 순간에 이미 들고 있으면 모션 없이 든 상태로
+        remote.gm = -1;
+      } else if (!!p.eq !== !!remote.eq) {
+        setRemoteWeapon(remote.g.userData.rig, p.eq);          // 장착/해제 모션 재생
+      }
+
+      if (remote.gm !== p.gm) { remote.gm = p.gm; setOutfit(remote.g, { armor: !!(p.gm & 1), pants: !!(p.gm & 2) }); }   // 다른 플레이어가 입은 옷
+      remote.eq = !!p.eq;
+      remote.nick = p.nick || '플레이어';
+      remote.level = p.level || 1;
+      remote.t = { x, y, z, ry };
+    }
+
+    for (const [pid, remote] of remotes) {
+      if (!seen.has(pid)) {
+        scene.remove(remote.g);
+        remotes.delete(pid);
+      }
+    }
+  });
+
+  // 다른 플레이어의 평타 모션 (서버가 장착·쿨다운을 검사한 뒤 전달)
+  socket.on('atk', (d) => {
+    const remote = d && remotes.get(d.id);
+    if (remote) startWeaponAttack(remote.g.userData.rig, true, d.s);
+  });
+
+  socket.on('correct', (p) => {
+    if (!p) return;
+
+    if (Number.isFinite(p.x)) me.x = p.x;
+    if (Number.isFinite(p.z)) me.z = p.z;
+  });
+
+  // ---------- 스킬 (E / R / T) ----------
+  // 지금은 E = 휩쓸기만 있고 R·T 는 빈 칸이에요. 스킬을 더하려면 SKILL_SLOTS 의 id 를 채우고 useSkill 에 동작을 넣으면 돼요.
+  // 실제 피해·범위·쿨타임 확정은 서버(server.js 'skill' + goblin-ai.mjs SKILLS). 여기는 입력·모션·이펙트·쿨타임 표시.
+  const SKILL_SLOTS = [
+    { key: 'Q', id: 'dash', name: '대쉬', cd: 1, img: '/ui/dash_btn.png' },   // 대쉬는 아래 "대쉬 (Q)" 구역 참고
+    { key: 'E', id: 'sweep', name: '휩쓸기', cd: 10 },   // cd = 쿨타임(초). 서버 값(goblin-ai.mjs SKILLS.sweep.COOLDOWN)과 같게
+    { key: 'R', id: null, name: '없음', cd: 0 },   // R = E 칸 바로 아래 칸: 스킬 창에서 장착한 스킬(내려찍기)이 들어와요
+    { key: 'T', id: null, name: '없음', cd: 0 },
+  ];
+  const SKILLBAR_PC_SCALE = 2.5;  // 컴퓨터(키보드 모드)에서 스킬 칸 크기 배율. 화면 높이를 넘지 않게 자동으로 줄여요
+  const skillReadyAt = {};        // 스킬 id -> 다시 쓸 수 있는 시각(performance.now 기준)
+  let refreshSkillBar = null;   // 스킬 칸 이름 갱신 (아래 스킬 칸 만들 때 채움)
+  function applySlotR() {   // 서버가 알려준 장착 정보를 R 칸에 반영
+    const def = SKILL_SLOTS.find((x) => x.key === 'R'), info = slotRSkill && SKILL_INFO[slotRSkill];
+    def.id = info ? slotRSkill : null;
+    def.name = info ? info.name : '없음';
+    def.cd = info ? info.cd : 0;
+    if (refreshSkillBar) refreshSkillBar();
+  }
+  let slamFxMine = null, slamFxRemote = null;   // 내려찍기 연출 (노란 네모 + 땅 조각). 남의 것은 따로
+  import('./slam-fx.js')
+    .then((m) => {
+      const o = { size: SLAM.SIZE, telegraph: SLAM.DELAY, colors: { fill: 0xffc21a, inner: 0xffe36a, edge: 0xffd23a } };
+      slamFxMine = m.createSlamFx(scene, T, o);
+      slamFxRemote = m.createSlamFx(scene, T, o);
+    })
+    .catch((err) => console.error('내려찍기 이펙트 로드 실패:', err));
+  let skillFx = null;   // (이름 주의: 게임 루프 안에 fx 라는 다른 변수가 있어서 skillFx 로 씀)
+  import('./skill-fx.js')
+    .then((m) => { skillFx = m.createSkillFx(scene); })
+    .catch((err) => console.error('스킬 이펙트 로드 실패:', err));
+
+  // ---------- 대쉬 (Q) ----------
+  // 이동 입력 방향(앞·옆·뒤 아무 쪽이나)으로 5m 를 0.18초 만에 돌진. 입력이 없으면 바라보는 앞쪽. 쿨타임 1초.
+  // 이동은 일반 이동과 같은 충돌(나무·바위·건물·방 벽)을 적용해요. 서버는 쿨타임만 확인하고 다른 플레이어에게 이펙트를 알려줘요.
+  const DASH = { dist: 5, time: 0.18, cd: 1.0 };
+  const dashProfile = (u) => u * (1.4 - 0.4 * u);   // 시작이 빠르고 끝이 부드러운 이동 곡선 (skill-fx.js 의 dashProfile 과 같게)
+  let dashT = 0;                       // 남은 대쉬 시간(초). 0 이면 대쉬 중 아님
+  let dashDX = 0, dashDZ = 1;          // 대쉬 방향 (월드, 길이 1)
+  let dashPitch = 0, dashRoll = 0;     // 몸 기울기 목표 (앞으로 숙임 / 옆으로 기움)
+  let dashLean = 0;                    // 기울기 적용 정도 (0~1, 부드럽게 변함)
+  let dashInX = 0, dashInZ = 0, dashInLen = 0;   // 이번 프레임 이동 입력 (게임 루프가 매번 갱신)
+  let fovKick = 0;                     // 대쉬할 때 시야각을 살짝 넓혀 속도감을 줌
+  const baseFov = camera.fov;
+  myAvatar.rotation.order = 'YXZ';     // 몸 기울기(앞/옆)를 좌우 회전 위에 얹기 위해
+
+  function startDash() {
+    const now = performance.now();
+    if (uiOpen || dashT > 0 || now < (skillReadyAt.dash || 0)) return;
+    let dx, dz;
+    if (dashInLen > 0.01) { dx = dashInX / dashInLen; dz = dashInZ / dashInLen; }
+    else { dx = Math.sin(me.ry); dz = Math.cos(me.ry); }
+    dashDX = dx; dashDZ = dz; dashT = DASH.time;
+    skillReadyAt.dash = now + DASH.cd * 1000;
+    if (shiftLock) {   // 시점 고정: 바라보는 방향 기준으로 앞/옆 기울기 계산
+      dashPitch = 0.5 * (dx * Math.sin(me.ry) + dz * Math.cos(me.ry));
+      dashRoll = -0.5 * (dx * Math.cos(me.ry) - dz * Math.sin(me.ry));
+    } else { dashPitch = 0.5; dashRoll = 0; }   // 아니면 대쉬 방향으로 몸을 돌리니까 항상 앞으로 숙임
+    socket.emit('dash', { dx, dz });
+    if (skillFx) { try { skillFx.playDash(me.x, me.y, me.z, dx, dz); } catch (err) { console.error('대쉬 이펙트 오류:', err); } }
+  }
+
+  // 다른 플레이어의 대쉬 (이펙트)
+  socket.on('dashfx', (d) => {
+    const remote = d && remotes.get(d.id);
+    if (!remote || !skillFx) return;
+    try { skillFx.playDash(remote.g.position.x, remote.g.position.y, remote.g.position.z, d.dx, d.dz); } catch (err) { console.error('대쉬 이펙트 오류:', err); }
+  });
+
+  function useSkill(key) {
+    const def = SKILL_SLOTS.find((s) => s.key === key);
+    if (!def) return;
+    if (uiOpen) return;
+    if (key === 'Q') { startDash(); return; }   // 대쉬는 검이 없어도 됨
+    if (!def.id) { toast('비어 있는 스킬 칸이에요'); return; }
+    if (!isWeaponEquipped(myRig)) return;   // 검을 안 들고 있으면 아무 일도 안 함 (안내 메시지 없음)
+    const left = (skillReadyAt[def.id] || 0) - performance.now();
+    if (left > 0) return;   // 쿨타임 중에는 아무 일도 안 함 (칸에 남은 시간이 표시됨)
+    if (def.id === 'sweep') {
+      if (!startWeaponSweep(myRig)) return;          // 장착/해제 모션 중이면 못 씀 (쿨타임도 안 씀)
+      skillReadyAt.sweep = performance.now() + def.cd * 1000;
+      socket.emit('skill', { id: 'sweep' });
+      if (skillFx) { try { skillFx.play('sweep', myAvatar.position.x, myAvatar.position.y, myAvatar.position.z, me.ry); } catch (err) { console.error('스킬 이펙트 오류:', err); } }
+    }
+    if (def.id === 'slam') {   // 내려찍기: 노란 네모가 뜨고 SLAM.DELAY 초 뒤 땅을 찍음 (피해는 서버가 확정)
+      if (!startWeaponSweep(myRig)) return;
+      skillReadyAt.slam = performance.now() + def.cd * 1000;
+      socket.emit('skill', { id: 'slam' });
+      if (slamFxMine) { try { slamFxMine.start(me.x, me.z, me.ry); } catch (err) { console.error('내려찍기 이펙트 오류:', err); } }
+    }
+  }
+
+  // 다른 플레이어가 쓴 스킬 (모션 + 이펙트)
+  socket.on('skillfx', (d) => {
+    const remote = d && remotes.get(d.id);
+    if (remote && d.skill === 'slam') {   // 다른 플레이어의 내려찍기
+      startWeaponSweep(remote.g.userData.rig, true);
+      if (slamFxRemote && Number.isFinite(d.x) && Number.isFinite(d.z) && Number.isFinite(d.ry)) { try { slamFxRemote.start(d.x, d.z, d.ry); } catch (err) { console.error('내려찍기 이펙트 오류:', err); } }
+      return;
+    }
+    if (!remote || d.skill !== 'sweep') return;
+    startWeaponSweep(remote.g.userData.rig, true);
+    if (skillFx) { try { skillFx.play('sweep', remote.g.position.x, remote.g.position.y, remote.g.position.z, remote.g.rotation.y); } catch (err) { console.error('스킬 이펙트 오류:', err); } }
+  });
+
+  // 화면의 스킬 칸 (참고 이미지 스타일, 오른쪽 끝 화면 가운데 위쪽)
+  {
+    const bar = document.createElement('div');
+    bar.className = 'skillbar';
+    if (!touchMode) {
+      const fit = () => bar.style.setProperty('--sk', String(Math.max(1, Math.min(SKILLBAR_PC_SCALE, (window.innerHeight * 0.85) / (56 * 3 + 12)))));
+      fit();
+      window.addEventListener('resize', fit);
+    }
+    const slotEls = SKILL_SLOTS.map((def) => {
+      const el = document.createElement('div');
+      const isDash = !!def.img;   // 대쉬는 스킬 칸이 아니라 따로 둔 둥근 버튼 (모바일: 오른쪽 아래 버튼 묶음의 빈 자리 / 컴퓨터: 같은 위치에 1.5배)
+      el.className = isDash ? 'tbtn dash' + (touchMode ? '' : ' pc') : 'skill-slot';
+      el.innerHTML = (isDash && touchMode ? '' : '<i class="k">' + def.key + '</i>') + '<b class="n' + (def.name.length > 2 ? ' s' : '') + '">' + def.name + '</b><div class="cdc"><div class="cdv"></div></div><em class="cdn"></em>';
+      el.addEventListener('pointerdown', (e) => { e.preventDefault(); el.classList.add('press'); useSkill(def.key); });
+      const up = () => el.classList.remove('press');
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+      el.addEventListener('pointerleave', up);
+      (isDash ? (touchMode ? document.querySelector('.tgroup') || document.body : document.body) : bar).appendChild(el);
+      return { def, el, cdv: el.querySelector('.cdv'), cdn: el.querySelector('.cdn') };
+    });
+    document.body.appendChild(bar);
+    refreshSkillBar = () => {   // R 칸에 스킬을 장착/해제하면 칸에 보이는 이름도 바꿈
+      for (const sl of slotEls) {
+        const n = sl.el.querySelector('.n');
+        if (n && n.textContent !== sl.def.name) { n.textContent = sl.def.name; n.className = 'n' + (sl.def.name.length > 2 ? ' s' : ''); }
+      }
+    };
+    refreshSkillBar();
+    setInterval(() => {   // 쿨타임 표시 (아래에서 위로 줄어드는 어두운 막 + 남은 초)
+      const now = performance.now();
+      for (const s of slotEls) {
+        const left = s.def.id ? (skillReadyAt[s.def.id] || 0) - now : 0;
+        if (left > 0) {
+          s.el.classList.add('cool');
+          s.cdv.style.height = Math.min(100, (left / (s.def.cd * 1000)) * 100) + '%';
+          s.cdn.textContent = Math.ceil(left / 1000);
+        } else if (s.el.classList.contains('cool')) {
+          s.el.classList.remove('cool');
+          s.cdv.style.height = '0';
+          s.cdn.textContent = '';
+        }
+      }
+    }, 100);
+  }
+
+  // ---------- 게임 루프 ----------
+  // ---------- 고블린 (서버가 위치·전투를 정하고, 여기서는 받아서 그림) ----------
+  // goblin.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
+  let goblins = null;
+  let lastGob = [];
+  import('./goblin.mjs')
+    .then((m) => {
+      goblins = m.createGoblinWorld({ scene, camera, T, WATER_LEVEL });
+      goblins.onSnapshot(lastGob);
+    })
+    .catch((err) => console.error('고블린 로드 실패:', err));
+  socket.on('gob', (list) => {
+    lastGob = Array.isArray(list) ? list : [];
+    if (goblins) goblins.onSnapshot(lastGob);
+  });
+
+  // ---------- 토끼 (평원 초반부, 먼저 건드리기 전엔 공격하지 않음) ----------
+  // rabbit.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
+  let rabbits = null;
+  let lastRab = [];
+  import('./rabbit.mjs')
+    .then((m) => {
+      rabbits = m.createRabbitWorld({ scene, camera, T, WATER_LEVEL });
+      rabbits.onSnapshot(lastRab);
+    })
+    .catch((err) => console.error('토끼 로드 실패:', err));
+  socket.on('rab', (list) => {
+    lastRab = Array.isArray(list) ? list : [];
+    if (rabbits) rabbits.onSnapshot(lastRab);
+  });
+
+  // ---------- 슬라임 (슬라임 고원, 먼저 다가가면 쫓아옴) ----------
+  // slime.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
+  let slimes = null;
+  let lastSli = [];
+  import('./slime.mjs')
+    .then((m) => {
+      slimes = m.createSlimeWorld({ scene, camera, T, WATER_LEVEL });
+      slimes.onSnapshot(lastSli);
+    })
+    .catch((err) => console.error('슬라임 로드 실패:', err));
+  socket.on('sli', (list) => {
+    lastSli = Array.isArray(list) ? list : [];
+    if (slimes) slimes.onSnapshot(lastSli);
+  });
+
+  // ---------- 보스 오크 대전사 + 보스 터(어두운 흙, 뼈) + 화면 위 체력바 ----------
+  // boss.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
+  let boss = null;
+  let lastBoss = [];
+  let lastBossDmg = [];
+  import('./boss.mjs')
+    .then((m) => {
+      boss = m.createBossWorld({ scene, camera, T, WATER_LEVEL });
+      boss.onSnapshot(lastBoss);
+      boss.setDmg(lastBossDmg, nick);
+    })
+    .catch((err) => console.error('보스 로드 실패:', err));
+  socket.on('boss', (list) => {
+    lastBoss = Array.isArray(list) ? list : [];
+    if (boss) boss.onSnapshot(lastBoss);
+  });
+  // 보스 체력바 오른쪽 아래: [[닉네임, 보스 체력을 깎은 %], ...]
+  socket.on('bossdmg', (rows) => {
+    lastBossDmg = Array.isArray(rows) ? rows : [];
+    if (boss) boss.setDmg(lastBossDmg, nick);
+  });
+
+  // ---------- 지도 (왼쪽 위): 지형 전체 + 내 위치 · 다른 플레이어 · 마을 · 동굴 · 보스. 누르거나 M 키로 큰 지도 ----------
+  import('./minimap.mjs')
+    .then((m) => m.createMinimap({
+      T,
+      getMe: () => ({ x: me.x, z: me.z, ry: me.ry, under: curCave || curRoom >= 0 }),
+      getOthers: () => {
+        const out = [];
+        for (const r of remotes.values()) if (r && r.t && r.t.y > -100) out.push([r.t.x, r.t.z]);   // 지하(동굴·집 안)에 있는 사람은 지도에 안 찍음
+        return out;
+      },
+      getBoss: () => (boss && boss.state ? boss.state() : null),
+      getCave: () => (cave && cave.entrance ? cave.entrance : null),
+    }))
+    .catch((err) => console.error('지도 로드 실패:', err));
+
+  // ---------- 개발자 도구 (닉네임이 서버에 등록된 개발자 이름일 때만 화면 위에 패널이 떠요) ----------
+  import('./dev-panel.mjs')
+    .then((m) => m.createDevPanel({ socket }))
+    .catch((err) => console.error('개발자 도구 로드 실패:', err));
+
+  // ---------- 지하 동굴 + 골렘 ----------
+  // 서버가 동굴 입구 위치를 알려주면 입구(땅 위)와 동굴(땅 밑)을 만들어요. 못 불러와도 게임 자체는 그대로 돌아가요.
+  let golems = null;
+  let lastGol = [];
+  let caveLoading = false;
+  socket.on('cave', (ent) => {
+    if (cave || caveLoading || !ent || !Number.isFinite(ent.x) || !Number.isFinite(ent.z)) return;
+    caveLoading = true;
+    Promise.all([import('./cave.js'), import('./golem.mjs')])
+      .then(([cm, gm]) => {
+        cave = cm.createCave({ scene, T, ent, seed, WATER_LEVEL });
+        golems = gm.createGolemWorld({ scene, camera, layout: cave.layout });
+        golems.onSnapshot(lastGol);
+      })
+      .catch((err) => { console.error('동굴 로드 실패:', err); caveLoading = false; });
+  });
+  socket.on('gol', (list) => {
+    lastGol = Array.isArray(list) ? list : [];
+    if (golems && curCave) golems.onSnapshot(lastGol);
+  });
+  // 동굴 안에서 쓰러지면 서버가 땅 위 시작 마을로 보내줘요
+  socket.on('surface', (p) => {
+    curCave = false;
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.z)) { me.x = p.x; me.z = p.z; me.y = Number.isFinite(p.y) ? p.y : me.y; vy = 0; grounded = false; }
+  });
+
+  // 내 체력 (서버가 정함)
+  const hurtEl = document.createElement('div');
+  hurtEl.style.cssText = 'position:fixed;inset:0;z-index:8;pointer-events:none;opacity:0;background:radial-gradient(ellipse at center,rgba(200,0,0,0) 45%,rgba(200,10,10,.55) 100%)';
+  document.body.appendChild(hurtEl);
+  function flashHurt() {
+    hurtEl.style.transition = 'none';
+    hurtEl.style.opacity = '1';
+    requestAnimationFrame(() => requestAnimationFrame(() => { hurtEl.style.transition = 'opacity .35s'; hurtEl.style.opacity = '0'; }));
+  }
+  // 경험치 바 갱신: 서버가 'exp' 이벤트 { level, exp, expMax, gold } 를 보내면 게이지가 차올라요.
+  // 경험치가 다 차면 게이지가 가득 → 레벨 숫자가 엘리베이터처럼 위로 넘어가며 다음 레벨이 나오고 → 게이지가 비어요.
+  const xpEl = { fill: bui.querySelector('.xp-gauge i'), gauge: bui.querySelector('.xp-gauge'), num: bui.querySelector('.xp-num'), badge: bui.querySelector('.xp-lvtxt'), big: bui.querySelector('.lvnum') };
+  const shown = { level: PLAYER.level, exp: PLAYER.exp, expMax: PLAYER.expMax };   // 지금 화면에 보이는 값 (애니메이션 중에는 PLAYER 와 다를 수 있어요)
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const flash = (el, cls, ms) => { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); setTimeout(() => el.classList.remove(cls), ms); };
+  function rollTo(box, text) {   // 숫자가 위로 밀려 올라가고 아래에서 다음 숫자가 올라와요
+    const cur = box && box.lastElementChild;
+    if (!cur || cur.textContent === text) return;
+    if (!cur.animate) { cur.textContent = text; return; }
+    const nxt = document.createElement('span');
+    nxt.textContent = text;
+    box.appendChild(nxt);
+    const opt = { duration: 650, easing: 'cubic-bezier(.25,.9,.3,1)', fill: 'both' };
+    cur.animate([{ transform: 'translateY(0)' }, { transform: 'translateY(-120%)' }], opt);
+    nxt.animate([{ transform: 'translateY(120%)' }, { transform: 'translateY(0)' }], opt).onfinish = () => { cur.remove(); nxt.getAnimations().forEach((a) => a.cancel()); };
+  }
+  function setFill(p, instant) {
+    const f = xpEl.fill;
+    if (!f) return;
+    if (instant) { f.style.transition = 'none'; f.style.width = p + '%'; void f.offsetWidth; f.style.transition = ''; }
+    else f.style.width = p + '%';
+  }
+  const drawNum = () => { if (xpEl.num) xpEl.num.textContent = fmt(shown.exp) + ' / ' + fmt(shown.expMax); };
+  function rollLevel(n) {
+    rollTo(xpEl.big, 'Lv.' + n); rollTo(xpEl.badge, 'Lv. ' + n);
+    flash(xpEl.big, 'lvup', 900); flash(xpEl.badge, 'lvup', 900);
+  }
+  async function stepXp(t) {
+    while (shown.level < t.level) {   // 레벨업: 게이지 가득 → 숫자 넘어감 → 게이지 비우고 다음 레벨
+      shown.exp = shown.expMax; drawNum(); setFill(100);
+      await wait(750);
+      shown.level++; shown.exp = 0;
+      shown.expMax = shown.level === t.level ? t.expMax : expNeed(shown.level);
+      rollLevel(shown.level);
+      setFill(0, true); drawNum();
+      await wait(shown.level < t.level ? 500 : 300);
+    }
+    if (shown.level > t.level) { shown.level = t.level; rollLevel(shown.level); }   // (개발자 도구로 레벨을 내린 경우)
+    const gained = t.exp > shown.exp;
+    shown.exp = t.exp; shown.expMax = t.expMax;
+    setFill(pct(shown.exp, shown.expMax)); drawNum();
+    if (gained) flash(xpEl.gauge, 'pop', 500);
+  }
+  let xpChain = Promise.resolve();
+  function setExp(d) {
+    if (!d) return;
+    if (Number.isFinite(d.level) && d.level >= 1) PLAYER.level = Math.floor(d.level);
+    if (Number.isFinite(d.exp) && d.exp >= 0) PLAYER.exp = Math.floor(d.exp);
+    if (Number.isFinite(d.gold) && d.gold >= 0) PLAYER.gold = Math.floor(d.gold);
+    PLAYER.expMax = Number.isFinite(d.expMax) && d.expMax > 0 ? Math.floor(d.expMax) : expNeed(PLAYER.level);
+    const t = { level: PLAYER.level, exp: PLAYER.exp, expMax: PLAYER.expMax };
+    xpChain = xpChain.then(() => stepXp(t)).catch(() => {});   // 여러 번 연속으로 와도 차례대로 보여줘요
+  }
+  socket.on('exp', setExp);
+  socket.on('hp', (d) => {
+    if (!d || !Number.isFinite(d.hp) || !Number.isFinite(d.max)) return;
+    const before = PLAYER.hp;
+    PLAYER.hp = d.hp;
+    PLAYER.hpMax = d.max;
+    const bar = bui.querySelector('.hp .hpmp-in i'), txt = bui.querySelector('.hp .hpmp-in span');
+    if (bar) bar.style.width = pct(d.hp, d.max) + '%';
+    if (txt) txt.textContent = fmt(Math.ceil(d.hp)) + ' / ' + fmt(d.max);
+    if (d.hp < before) flashHurt();
+  });
+  socket.on('kill', (d) => toast(d && typeof d.msg === 'string' ? d.msg : '고블린을 처치했습니다!'));
+  socket.on('toast', (d) => { if (d && typeof d.msg === 'string') toast(d.msg); });   // 서버 안내 (스킬북 획득 · 배움 등)
+  socket.on('gear', (d) => {   // 입고 있는 장비 (서버가 정함)
+    const g = d && d.gear ? d.gear : {};
+    gearEq = {};
+    for (const k of Object.keys(GEAR_SLOT_NAME)) gearEq[k] = g[k] && ITEMS[g[k]] ? g[k] : null;
+    setOutfit(myAvatar, { armor: !!gearEq.armor, pants: !!gearEq.pants });   // 입은 옷이 내 캐릭터에 보임
+    if (winOpenNow()) renderWin();
+  });
+  // 몬스터를 잡으면 화면 아래 UI 바로 위에 '토끼 가죽x2를 획득했습니다.' 처럼 뜸 (여러 개면 줄줄이, 3초 뒤 사라짐)
+  const lootBox = document.createElement('div');
+  lootBox.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);z-index:7;display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none';
+  document.body.appendChild(lootBox);
+  socket.on('loot', (d) => {
+    const list = d && Array.isArray(d.items) ? d.items : [];
+    const bw = document.querySelector('.bottom-wrap');
+    lootBox.style.bottom = ((bw ? bw.getBoundingClientRect().height : 90) + 18) + 'px';
+    for (const it of list) {
+      const text = it && Number.isFinite(it.n) ? lootText(it.id, it.n) : '';
+      if (!text) continue;
+      const line = document.createElement('div');
+      line.textContent = text;
+      line.style.cssText = 'padding:5px 14px;border-radius:14px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font:600 14px sans-serif;opacity:0;transition:opacity .25s;white-space:nowrap';
+      lootBox.appendChild(line);
+      requestAnimationFrame(() => { line.style.opacity = '1'; });
+      setTimeout(() => { line.style.opacity = '0'; }, 2800);
+      setTimeout(() => line.remove(), 3150);
+      while (lootBox.childElementCount > 6) lootBox.firstElementChild.remove();
+    }
+  });
+  const winOpenNow = () => winEl.style.display === 'flex';
+  socket.on('inv', (d) => {   // 인벤토리 (서버가 정함)
+    invItems = d && Array.isArray(d.items) ? d.items.filter((i) => i && ITEMS[i.id] && Number.isFinite(i.n)) : [];
+    if (winSel.inv >= invItems.length) winSel.inv = -1;
+    if (winOpenNow()) renderWin();
+  });
+  socket.on('skills', (d) => {   // 배운 스킬 + R 칸 장착 상태 (서버가 정함)
+    learnedSk = d && Array.isArray(d.learned) ? d.learned.filter((id) => SKILL_INFO[id]) : [];
+    slotRSkill = d && d.slotR && SKILL_INFO[d.slotR] && learnedSk.includes(d.slotR) ? d.slotR : null;
+    applySlotR();
+    if (winOpenNow()) renderWin();
+  });
+  socket.emit('sync');   // 위 핸들러가 준비됐으니 인벤토리·스킬 정보를 한 번 더 받음
+  socket.on('notice', (t) => { if (typeof t === 'string') toast(t); });
+
+  let sendTimer = 0;
+  let compassTimer = 0;
+  const clock = new THREE.Clock();
+
+  function loop() {
+    requestAnimationFrame(loop);
+
+    const dt = Math.min(clock.getDelta(), 0.1);
+
+    // 방향키로 화면 회전 (좌우 무제한, 위아래는 거의 수직까지)
+    if (keys.ArrowLeft) me.yaw += 1.8 * dt;
+    if (keys.ArrowRight) me.yaw -= 1.8 * dt;
+    if (keys.ArrowUp) me.pitch -= 1.5 * dt;
+    if (keys.ArrowDown) me.pitch += 1.5 * dt;
+    me.pitch = wrapPitch(me.pitch);
+
+    // 이동 입력 (앞뒤 inF, 좌우 inR)
+    let inF = 0;
+    let inR = 0;
+
+    if (touchMode) {
+      if (Math.hypot(joy.x, joy.y) > 0.12) {
+        inF = joy.y;
+        inR = joy.x;
+      }
+    } else {
+      inF = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+      inR = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+    }
+
+    if (uiOpen) { inF = 0; inR = 0; }
+    const mag = Math.min(1, Math.hypot(inF, inR));
+
+    // 물속: 허리~가슴 깊이까지는 걸어 들어가고, 머리까지 잠기면 수영 시작
+    {
+      const inWorld = curRoom < 0 && !(curCave && cave) && innFloor(me.x, me.z, me.y) === null;
+      waterDepth = inWorld ? Math.max(0, WATER_LEVEL - T.height(me.x, me.z)) : 0;
+      if (!swimming) {
+        if (waterDepth > 2.0 && me.y < WATER_LEVEL - 0.9) { swimming = true; swimVy = vy * 0.35; grounded = false; }
+      } else if (!inWorld || waterDepth < 1.6) { swimming = false; vy = 0; }
+    }
+
+    const fx = -Math.sin(me.yaw);
+    const fz = -Math.cos(me.yaw);
+    const rx = Math.cos(me.yaw);
+    const rz = -Math.sin(me.yaw);
+
+    const mx = fx * inF + rx * inR;
+    const mz = fz * inF + rz * inR;
+    const len = Math.hypot(mx, mz);
+    dashInX = mx; dashInZ = mz; dashInLen = len;   // 대쉬 방향 결정용
+
+    let moved = 0;
+    let dashFrame = false;
+
+    if (dashT > 0) {
+      // 대쉬 중: 입력 대신 대쉬 방향으로 이동 (작은 걸음으로 쪼개서 충돌 검사 → 벽을 뚫지 않음)
+      const u0 = 1 - dashT / DASH.time;
+      const u1 = Math.min(1, u0 + dt / DASH.time);
+      const total = DASH.dist * (dashProfile(u1) - dashProfile(u0));
+      const nSub = Math.max(1, Math.ceil(total / 0.35)), sd = total / nSub;
+      const CRd = 0.4 * CHAR_SCALE;
+      let px = me.x, pz = me.z;
+      for (let i = 0; i < nSub; i++) {
+        let nx = px + dashDX * sd, nz = pz + dashDZ * sd;
+        const pr = Math.hypot(nx, nz);
+        if (pr > PLAY_RADIUS) { nx *= PLAY_RADIUS / pr; nz *= PLAY_RADIUS / pr; }
+        if (curRoom >= 0) {
+          const rc = collideRoom(curRoom, nx, nz, CRd);
+          nx = rc.x; nz = rc.z;
+        } else if (curCave && cave) {
+          const cc2 = cave.layout.collide(nx, nz, CRd);   // 동굴: 벽·기둥
+          nx = cc2.x; nz = cc2.z;
+        } else if (!fast) {
+          const cc = nature.collide(nx, nz, CRd);
+          const bc = collideBuildings(cc.x, cc.z, CRd, me.y);
+          nx = bc.x; nz = bc.z;
+        }
+        px = nx; pz = nz;
+      }
+      moved = Math.hypot(px - me.x, pz - me.z);
+      me.x = px;
+      me.z = pz;
+      dashT = Math.max(0, dashT - dt);
+      dashFrame = true;
+      if (!shiftLock) me.ry = Math.atan2(dashDX, dashDZ);
+      idleTime = 0;
+    } else if (len > 0.01) {
+      const running = RUN_TOGGLE ? runOn : (keys.ControlLeft || keys.ControlRight);
+      let speed =
+        7 * SPEED_SCALE * (running ? RUN_MULT : 1) * (fast ? fastMult : 1) * mag;
+      if (swimming) speed = 7 * SPEED_SCALE * (running ? 0.8 : 0.58) * (fast ? fastMult : 1) * mag;   // 헤엄은 걷기보다 느림
+      else if (waterDepth > 0.3) speed *= 1 - 0.35 * Math.min(1, waterDepth / 2);                        // 물에 잠길수록 느려짐
+
+      const dirX = mx / len;
+      const dirZ = mz / len;
+
+      let px = me.x + dirX * speed * dt;
+      let pz = me.z + dirZ * speed * dt;
+
+      // 원형 활동 범위 제한
+      const pr = Math.hypot(px, pz);
+      if (pr > PLAY_RADIUS) {
+        px *= PLAY_RADIUS / pr;
+        pz *= PLAY_RADIUS / pr;
+      }
+
+      // 충돌: 방 안은 벽/가구, 땅 위는 나무/큰 바위/건물 (속도 배율 켠 개발용 이동 중 땅 위에서는 무시)
+      const CR = 0.4 * CHAR_SCALE;
+      if (curRoom >= 0) {
+        const rc = collideRoom(curRoom, px, pz, CR);
+        px = rc.x; pz = rc.z;
+      } else if (curCave && cave) {
+        const cc2 = cave.layout.collide(px, pz, CR);   // 동굴: 벽·기둥
+        px = cc2.x; pz = cc2.z;
+      } else if (!fast) {
+        const cc = nature.collide(px, pz, CR);
+        const bc = collideBuildings(cc.x, cc.z, CR, me.y);
+        px = bc.x; pz = bc.z;
+      }
+
+      moved = Math.hypot(px - me.x, pz - me.z);
+      me.x = px;
+      me.z = pz;
+
+      // 시프트락이 꺼져 있으면 가는 방향으로 몸을 돌림
+      if (!shiftLock) me.ry = Math.atan2(dirX, dirZ);
+      idleTime = 0;
+    } else {
+      idleTime += dt;
+      if (RUN_TOGGLE && runOn && idleTime > 0.4) setRun(false); // 멈추면 달리기 해제
+    }
+
+    // 시프트락: 항상 카메라가 보는 방향을 바라봄 (이동은 수평 이동)
+    if (shiftLock) me.ry = Math.atan2(fx, fz);
+
+    // 점프 / 중력
+    if (keys.Space || jumpHeld) jumpBuffer = Math.max(jumpBuffer, 0.1);
+    jumpBuffer = Math.max(0, jumpBuffer - dt);
+
+    // 서 있는 바닥: 방 안 = 방 바닥, 여관 안 = 1층/계단/2층, 그 밖 = 땅
+    let ground;
+    if (curRoom >= 0) ground = roomFloorY(curRoom);
+    else if (curCave && cave) ground = cave.layout.floorAt(me.x, me.z);
+    else {
+      const fl = innFloor(me.x, me.z, me.y);
+      ground = fl !== null ? fl : T.height(me.x, me.z);   // 바다는 해저까지 내려감
+    }
+    const stepTol = 0.6 + moved * 2.0;
+
+    if (swimming) {
+      // 수영: 스페이스 = 위로, C = 아래로, 화면을 많이 내려다보고 앞으로 가면 잠수, 올려다보면 상승
+      grounded = false;
+      let up = (keys.Space || jumpHeld ? 1 : 0) - (keys.KeyC ? 1 : 0);
+      const dz = me.pitch - 0.45;
+      if (inF > 0.1 && Math.abs(dz) > 0.3) up -= Math.sign(dz) * Math.min(1, (Math.abs(dz) - 0.3) / 0.5) * Math.min(1, inF);
+      up = Math.max(-1, Math.min(1, up));
+      swimVy += ((up !== 0 ? up * 3.6 : 0.6) - swimVy) * (1 - Math.exp(-5 * dt));   // 아무것도 안 하면 천천히 떠오름
+      me.y += swimVy * dt;
+      const top = WATER_LEVEL - 1.5;                                                  // 수면에 엎드려 뜨는 높이
+      if (me.y > top) { me.y = top; if (swimVy > 0) swimVy = 0; }
+      const hx = Math.sin(me.ry), hz = Math.cos(me.ry);                               // 해저에 몸이 파묻히지 않게
+      const floorY = Math.max(T.height(me.x, me.z), T.height(me.x + hx, me.z + hz), T.height(me.x - hx, me.z - hz)) - 0.9;
+      if (me.y < floorY) { me.y = floorY; if (swimVy < 0) swimVy = 0; }
+      vy = swimVy;
+    }
+
+    if (!swimming && grounded) {
+      if (me.y - ground > stepTol) grounded = false; // 절벽 끝에서 떨어짐
+      else me.y = ground;
+    }
+
+    if (!swimming && grounded && jumpBuffer > 0) {
+      vy = JUMP_V;
+      grounded = false;
+      jumpBuffer = 0;
+    }
+
+    if (!swimming && !grounded) {
+      vy -= GRAVITY * dt;
+      me.y += vy * dt;
+
+      if (me.y <= ground) {
+        me.y = ground;
+        if (vy < 0) {
+          vy = 0;
+          grounded = true;
+        }
+      }
+    }
+
+    const inHouse = updateHouses(dt, me.x, me.y, me.z, curRoom);   // 문 열림 애니메이션 + 방 보이기 + 실내 조명
+    zoneBanner.update(me.x, me.z, curCave && !!cave, curRoom >= 0);   // 지형 이름 알림
+    myAvatar.position.set(me.x, me.y, me.z);
+    myAvatar.rotation.y = me.ry;
+    // 대쉬 모션: 달리기 동작을 빠르게 + 몸을 이동 방향으로 기울임 (끝나면 부드럽게 원래대로)
+    dashLean += ((dashT > 0 ? 1 : 0) - dashLean) * (1 - Math.exp(-(dashT > 0 ? 22 : 12) * dt));
+    myAvatar.rotation.x = dashPitch * dashLean;
+    myAvatar.rotation.z = dashRoll * dashLean;
+    animateHumanoid(myAvatar, dt, dashFrame ? 13 : moved / Math.max(dt, 1e-4), swimming ? true : grounded, swimming ? 0 : vy,
+      swimming ? { sp: moved / Math.max(dt, 1e-4), vy: swimVy } : null);
+    fovKick += ((dashT > 0 ? 9 : 0) - fovKick) * (1 - Math.exp(-14 * dt));
+    if (Math.abs(fovKick) > 0.02 || camera.fov !== baseFov) {
+      camera.fov = baseFov + (Math.abs(fovKick) > 0.02 ? fovKick : 0);
+      camera.updateProjectionMatrix();
+    }
+
+    // 3인칭 카메라 (360도 궤도 회전, 시프트락이면 어깨 너머 시점)
+    slk += ((shiftLock ? 1 : 0) - slk) * (1 - Math.exp(-10 * dt));
+    const side = 1.3 * slk * CAM_SCALE;
+    const dist = (9 - 1.5 * slk) * CAM_SCALE * Math.max(zoomRaw, ZOOM_FP);
+    const fp = zoomRaw <= ZOOM_FP;   // 끝까지 확대 = 1인칭
+
+    const tx = me.x + rx * side;
+    const tz = me.z + rz * side;
+
+    const cx = tx + Math.sin(me.yaw) * Math.cos(me.pitch) * dist;
+    const cz = tz + Math.cos(me.yaw) * Math.cos(me.pitch) * dist;
+
+    const eyeH = swimming ? 0.95 * CHAR_SCALE : 1.5 * CHAR_SCALE;   // 수영 중엔 엎드린 몸(엉덩이 높이)을 바라봄
+    let cy = Math.max(
+      me.y + Math.sin(me.pitch) * dist + eyeH,
+      T.height(cx, cz) + (swimming ? 0.8 : 1.5 * CHAR_SCALE)
+    );
+    if (swimming) {   // 몸이 물속으로 들어가면 카메라도 같이 물속으로 (수면에 가려 안 보이지 않게)
+      const sub = Math.min(1, Math.max(0, (WATER_LEVEL - 1.5 - me.y) / 1.2));
+      cy += (Math.min(cy, WATER_LEVEL - 0.4) - cy) * sub;
+    }
+
+    const ty = me.y + eyeH;
+    if (curRoom >= 0 || inHouse >= 0 || (curCave && cave)) {
+      // 방 안/여관 안: 시선 방향(위/아래)은 입력 그대로 두고, 벽/천장/바닥에 닿으면
+      // 같은 방향 선상에서 캐릭터 쪽으로만 거리를 줄임 (방향이 바뀌지 않아 위아래가 뒤집히지 않음)
+      const fit = (x, y, z) => (curCave && cave) ? cave.layout.clampCamera(x, y, z) : curRoom >= 0 ? clampCameraRoom(curRoom, x, y, z) : clampCameraInRoom(inHouse, x, y, z, me.y);
+      const ry0 = ty + Math.sin(me.pitch) * dist;   // 지형 보정 없는 원래 카메라 높이
+      const ok = (m) => {
+        const x = tx + (cx - tx) * m, y = ty + (ry0 - ty) * m, z = tz + (cz - tz) * m;
+        const c = fit(x, y, z);
+        return Math.abs(c.x - x) + Math.abs(c.y - y) + Math.abs(c.z - z) < 1e-4;
+      };
+      let lo = 0, hi = 1;
+      if (ok(1)) lo = 1;
+      else {
+        for (let i = 0; i < 12; i++) {
+          const m = (lo + hi) / 2;
+          if (ok(m)) lo = m; else hi = m;
+        }
+      }
+      lo = Math.max(lo, 0.25);   // 머리 속으로 파고들지 않게 최소 거리 유지
+      const c = fit(tx + (cx - tx) * lo, ty + (ry0 - ty) * lo, tz + (cz - tz) * lo);
+      camera.position.set(c.x, c.y, c.z);
+    } else camera.position.set(cx, cy, cz);
+    camera.up.set(0, 1, 0);
+    myAvatar.visible = !fp;
+    if (fp) {   // 1인칭: 캐릭터 눈 위치에서 바라보는 방향으로 봄
+      const hy = swimming ? me.y + 1.5 : me.y + 1.6 * CHAR_SCALE, cp = Math.cos(me.pitch);
+      const ex = swimming ? me.x + Math.sin(me.ry) * 0.9 : me.x, ez = swimming ? me.z + Math.cos(me.ry) * 0.9 : me.z;
+      camera.position.set(ex, hy, ez);
+      camera.lookAt(ex - Math.sin(me.yaw) * cp, hy - Math.sin(me.pitch), ez - Math.cos(me.yaw) * cp);
+    } else camera.lookAt(tx, ty, tz);
+    updateDoorHint();   // 문 옆에 뜨는 반투명 안내 (카메라 위치가 정해진 뒤에 화면 좌표로 바꿈)
+
+    // 물속 효과: 카메라가 수면 아래로 내려가면 시야가 푸르러지고 멀리는 뿌옇게 보임
+    {
+      const inWorld = curRoom < 0 && inHouse < 0 && !(curCave && cave);
+      const cyc = camera.position.y;
+      if (!uwOn && cyc < WATER_LEVEL - 0.05) uwOn = true; else if (uwOn && cyc > WATER_LEVEL + 0.25) uwOn = false;
+      const want = inWorld && uwOn ? 1 : 0;
+      uwK += (want - uwK) * (1 - Math.exp(-9 * dt));
+      if (!want && uwK < 0.004) uwK = 0;
+      window.__uw = uwK;   // sky.js 가 안개·배경색을 물빛으로 바꿈
+      uwEl.style.opacity = uwK.toFixed(3);
+      scene.fog.near = fog0.near + (1.5 - fog0.near) * uwK;
+      scene.fog.far = fog0.far + (70 - fog0.far) * uwK;
+      ceil.visible = uwK > 0.01;
+      if (ceil.visible) {
+        ceilMat.opacity = 0.9 * uwK;
+        ceilMat.color.setRGB(0.17, 0.6, 0.78).multiplyScalar(0.2 + 0.8 * (window.__uwLit ?? 1));
+        ceil.position.set(me.x, WATER_LEVEL + 0.04, me.z);
+      }
+    }
+
+    // 물: 격자에 맞춰 움직여서 파도가 떨리지 않게 하고, 시간을 흘려보냄 (용암도 같은 시간 사용)
+    water.position.x = Math.round(me.x / WATER_STEP) * WATER_STEP;
+    water.position.z = Math.round(me.z / WATER_STEP) * WATER_STEP;
+    waterUniforms.uTime.value += dt;
+
+    updateChunks(me.x, me.z);
+    seaLife.update(me.x, me.z, dt, curRoom < 0 && !(curCave && cave));   // 해초·산호
+
+    // 나침반 (0.1초마다)
+    compassTimer += dt;
+    if (compassTimer > 0.1) {
+      compassTimer = 0;
+      updateCompass();
+    }
+
+    // 다른 플레이어 위치 보간
+    for (const remote of remotes.values()) {
+      // 땅 밑 방에 있는 사람은 땅 위에서 보이면 안 됨 (높이 차이로 판단). 방 출입(순간이동)은 미끄러지지 않고 바로 이동
+      remote.g.visible = Math.abs(remote.t.y - me.y) < 60;
+      if (Math.hypot(remote.t.x - remote.g.position.x, remote.t.z - remote.g.position.z) + Math.abs(remote.t.y - remote.g.position.y) > 25) {
+        remote.g.position.set(remote.t.x, remote.t.y, remote.t.z);
+      }
+      const k = 1 - Math.exp(-12 * dt);
+      const ox = remote.g.position.x;
+      const oy = remote.g.position.y;
+      const oz = remote.g.position.z;
+
+      remote.g.position.x += (remote.t.x - remote.g.position.x) * k;
+      remote.g.position.y += (remote.t.y - remote.g.position.y) * k;
+      remote.g.position.z += (remote.t.z - remote.g.position.z) * k;
+      remote.g.rotation.y = remote.t.ry;
+
+      // 위치 변화로 속도를 구해서 걷기/점프 애니메이션 재생
+      const idt = Math.max(dt, 1e-4);
+      const kk = 1 - Math.exp(-10 * dt);
+      remote.sp = (remote.sp ?? 0) + (Math.hypot(remote.g.position.x - ox, remote.g.position.z - oz) / idt - (remote.sp ?? 0)) * kk;
+      remote.vy = (remote.vy ?? 0) + ((remote.g.position.y - oy) / idt - (remote.vy ?? 0)) * kk;
+
+      const rGround = T.height(remote.g.position.x, remote.g.position.z);
+      const rSwim = WATER_LEVEL - rGround > 1.8 && remote.g.position.y < WATER_LEVEL - 0.6 && remote.g.position.y > rGround - 1.2;   // 헤엄치는 다른 플레이어
+      const rAir = remote.g.position.y - rGround > 0.5;
+      animateHumanoid(remote.g, dt, remote.sp, rSwim ? true : !rAir, rSwim ? 0 : remote.vy, rSwim ? { sp: remote.sp, vy: remote.vy } : null);
+    }
+
+    if (skillFx) { try { skillFx.update(dt); } catch (err) { console.error('스킬 이펙트 오류 (이펙트만 끕니다):', err); skillFx = null; } }
+    if (goblins) {
+      try { goblins.update(dt); } catch (err) { console.error('고블린 오류 (고블린만 끕니다):', err); goblins = null; }
+    }
+    if (rabbits) {
+      try { rabbits.update(dt); } catch (err) { console.error('토끼 오류 (토끼만 끕니다):', err); rabbits = null; }
+    }
+    if (slimes) {
+      try { slimes.update(dt); } catch (err) { console.error('슬라임 오류 (슬라임만 끕니다):', err); slimes = null; }
+    }
+    if (boss) {
+      try { boss.update(dt, me); } catch (err) { console.error('보스 오류 (보스만 끕니다):', err); boss = null; }
+    }
+    if (slamFxMine) { try { slamFxMine.update(dt); } catch (err) { console.error('내려찍기 이펙트 오류:', err); slamFxMine = null; } }
+    if (slamFxRemote) { try { slamFxRemote.update(dt); } catch (err) { console.error('내려찍기 이펙트 오류:', err); slamFxRemote = null; } }
+    if (cave && !curCave && !diving && curRoom < 0) {   // 땅 위에서 동굴 구멍(검은 원) 안으로 들어서면 떨어져 동굴로
+      const en = cave.entrance;
+      if (Math.abs(me.y - en.y) < 8 && Math.hypot(me.x - en.x, me.z - en.z) < en.dive) {
+        diving = true;
+        fadeEl.style.opacity = '1';
+        setTimeout(() => { diving = false; if (!curCave) enterCave(); }, 240);
+      }
+    }
+    if (cave) { try { cave.update(dt, curCave); } catch (err) { console.error('동굴 오류 (동굴만 끕니다):', err); cave = null; curCave = false; } }
+    if (golems) { try { golems.update(dt, curCave); } catch (err) { console.error('골렘 오류 (골렘만 끕니다):', err); golems = null; } }
+
+    // 서버로 이동 정보 전송
+    sendTimer += dt;
+
+    if (sendTimer > 0.05) {
+      sendTimer = 0;
+
+      socket.emit('move', {
+        x: me.x,
+        y: me.y,
+        z: me.z,
+        ry: me.ry
+      });
+    }
+
+    // 자연 오브젝트: 배치 계산은 프레임 예산 안에서, 빠른 이동(×30 이상)에는 새 배치를 미룸
+    if (curRoom >= 0) updatePortalCamera();        // 방 안에서는 유령 위치 기준으로 자연 오브젝트를 불러옴
+    if (!curCave) nature.update(curRoom >= 0 ? vcam : camera, { fast: fast && fastMult >= 30 });   // 동굴 안에선 땅 위 자연물이 필요 없음
+    const ns = nature.stats();
+    const ri = renderer.info.render;   // 직전 프레임 값 (render 전에 읽음)
+
+    $('hud').textContent =
+      `X ${me.x.toFixed(0)}  Z ${me.z.toFixed(0)}\n` +
+      `청크 ${chunks.size}  접속 ${remotes.size + 1}명\n` +
+      `자연 ${ns.instances}개  대기 ${ns.queued}\n` +
+      `드로우콜 ${ri.calls}  삼각형 ${ri.triangles}`;
+
+
+    if (curRoom >= 0) {
+      renderPortal();                              // 창문에 보일 바깥 풍경을 먼저 그림
+      // 방 안 화면에는 방/조명/캐릭터만 그리면 되므로 땅·자연·마을은 잠깐 숨겨서 그리기 부담을 줄임
+      const keep = new Set([myAvatar]);
+      for (const r of remotes.values()) keep.add(r.g);
+      const hidden = [];
+      for (const o of scene.children) {
+        if (o.isLight || o.userData.keepInRoom || keep.has(o) || !o.visible) continue;
+        o.visible = false; hidden.push(o);
+      }
+      renderer.render(scene, camera);
+      for (const o of hidden) o.visible = true;
+    } else if (curCave && cave) {
+      // 동굴 안: 땅·하늘·자연·마을은 잠깐 숨기고(깊은 땅 밑이라 어차피 안 보임) 동굴만 어둡게 그림
+      const keep = new Set([myAvatar]);
+      for (const r of remotes.values()) keep.add(r.g);
+      const hidden = [];
+      for (const o of scene.children) {
+        if (o.isLight || o.userData.keepInRoom || o.userData.keepInCave || keep.has(o) || !o.visible) continue;
+        o.visible = false; hidden.push(o);
+      }
+      const bg0 = scene.background, fog0 = scene.fog;
+      scene.background = caveBg; scene.fog = caveFog;
+      const hemi = scene.children.find((o) => o.isHemisphereLight);
+      const h0 = hemi ? { c: hemi.color.getHex(), g: hemi.groundColor.getHex(), i: hemi.intensity } : null, s0 = sun.intensity;
+      if (hemi) {   // 캐릭터·골렘에 입히는 주변광: 가까운 수정 색으로 은은하게 물듦
+        cave.ambientAt(me.x, me.y, me.z, caveAmb);
+        hemi.color.setRGB(caveAmb[0], caveAmb[1], caveAmb[2]); hemi.groundColor.setRGB(caveAmb[0] * 0.4, caveAmb[1] * 0.4, caveAmb[2] * 0.5);
+        hemi.intensity = 1.0;
+      }
+      sun.intensity = 0.02;
+      renderer.render(scene, camera);
+      scene.background = bg0; scene.fog = fog0;
+      if (hemi) { hemi.color.setHex(h0.c); hemi.groundColor.setHex(h0.g); hemi.intensity = h0.i; }
+      sun.intensity = s0;
+      for (const o of hidden) o.visible = true;
+    } else renderer.render(scene, camera);
+  }
+
+  // 초기 청크를 빠르게 생성
+  updateChunks(me.x, me.z);
+  updateChunks(me.x, me.z);
+  updateChunks(me.x, me.z);
+  updateCompass();
+
+  loop();
+      }
