@@ -96,6 +96,14 @@ let ITEMS_MOD = null;
 // 경험치·골드: 숫자가 아니면 0, 음수는 0, 상한 초과는 상한으로 잘라서(정수) 저장·복구해요
 const EXP_MAX = 1e12, GOLD_MAX = 1e12;
 const cleanNum = (v, max) => (Number.isFinite(v) ? Math.min(max, Math.max(0, Math.floor(v))) : 0);
+const MAX_LEVEL = 999;
+const expNeed = (lv) => 1000 * Math.max(1, lv);   // 레벨 N 에서 다음 레벨까지 필요한 경험치 (화면 main.js 의 expNeed 와 같은 공식이어야 해요)
+// 경험치가 다 차면 레벨이 올라가요 (남은 경험치는 다음 레벨로 이월, 한 번에 여러 레벨도 가능)
+const settleExp = (p) => {
+  p.level = Math.min(MAX_LEVEL, Math.max(1, Math.floor(Number.isFinite(p.level) ? p.level : 1)));
+  while (p.level < MAX_LEVEL && p.exp >= expNeed(p.level)) { p.exp -= expNeed(p.level); p.level++; }
+  if (p.level >= MAX_LEVEL) p.exp = Math.min(p.exp, expNeed(p.level) - 1);
+};
 const saveProfile = (p) => {
   if (!p || !p.acct || !p.inv) return;
   const old = acc.getProfile(p.acct);
@@ -112,7 +120,9 @@ function kickPlayer(o) {   // 같은 계정으로 다른 곳에서 로그인하�
 }
 const sendInv = (p) => io.to(p.id).emit('inv', { items: p.inv });
 const sendSkills = (p) => io.to(p.id).emit('skills', { learned: p.learned, slotR: p.slotR });
-const sendExp = (p) => io.to(p.id).emit('exp', { level: p.level, exp: p.exp, gold: p.gold });   // 경험치를 얻었을 때 이걸 부르면 화면 경험치 바가 차올라요
+const sendExp = (p) => io.to(p.id).emit('exp', { level: p.level, exp: p.exp, expMax: expNeed(p.level), gold: p.gold });   // 경험치를 얻었을 때 이걸 부르면 화면 경험치 바가 차올라요
+// 경험치 주기: addExp(p, 숫자) → 다 차면 자동으로 레벨업하고 화면에 알려줘요 (몬스터 처치 등에서 이걸 부르면 돼요)
+const addExp = (p, n) => { if (!p || !Number.isFinite(n) || n <= 0) return; p.exp = cleanNum(p.exp + n, EXP_MAX); settleExp(p); sendExp(p); saveProfile(p); };
 const sendToast = (p, msg) => io.to(p.id).emit('toast', { msg });
 function addItem(p, id, n = 1) {   // 성공하면 true, 칸이 없으면 false (장비는 한 개당 한 칸, 재료·책은 겹쳐 쌓임)
   const def = ITEMS_MOD && ITEMS_MOD.ITEMS[id];
@@ -280,9 +290,10 @@ io.on('connection', (socket) => {
     if (sv && Number.isFinite(sv.level)) me.level = sv.level;
     me.exp = cleanNum(sv && sv.exp, EXP_MAX);     // 예전 계정은 값이 없어서 0부터 시작
     me.gold = cleanNum(sv && sv.gold, GOLD_MAX);
+    settleExp(me);   // 저장된 경험치가 이미 가득이면 레벨로 넘겨요
     me.hpMax = calcHpMax(me); me.hp = me.hpMax;   // 장비로 늘어난 최대 체력 포함
     const spawn = sv && sv.pos && Number.isFinite(sv.pos.x) && Number.isFinite(sv.pos.z) ? { x: sv.pos.x, z: sv.pos.z } : undefined;   // 마지막으로 있던 땅 위 위치
-    socket.emit('init', { id: socket.id, seed: SEED, spawn, level: me.level, exp: me.exp, gold: me.gold });
+    socket.emit('init', { id: socket.id, seed: SEED, spawn, level: me.level, exp: me.exp, expMax: expNeed(me.level), gold: me.gold });
     socket.emit('hp', { hp: me.hp, max: me.hpMax });
     sendInv(me); sendSkills(me); sendGear(me);
     if (caveEnt) socket.emit('cave', caveEnt);   // 동굴 입구 위치 (아직 계산 전이면 계산이 끝났을 때 전체에게 보냄)
@@ -366,7 +377,7 @@ io.on('connection', (socket) => {
     if (Number.isFinite(d.level)) p.level = Math.min(999, Math.max(1, Math.floor(d.level)));
     if (Number.isFinite(d.exp)) p.exp = cleanNum(d.exp, EXP_MAX);
     if (Number.isFinite(d.add)) p.exp = cleanNum(p.exp + d.add, EXP_MAX);
-    sendExp(p); saveProfile(p);
+    settleExp(p); sendExp(p); saveProfile(p);   // 가득 차면 레벨업
   });
   socket.on('dev:book', () => {
     const p = players.get(socket.id);
