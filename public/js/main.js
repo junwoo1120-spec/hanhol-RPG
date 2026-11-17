@@ -7,7 +7,7 @@ import {
   roomFloorY, roomGhost, clampCameraRoom, clampCameraInRoom, innFloor, stairsInfo,
 } from './village-layout.js';
 import { makeHumanoid, animateHumanoid, humanReady, setOutfit } from './character.js';
-import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSweep, setWeaponHandlers, isWeaponEquipped } from './weapon.js';
+import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSweep, startWeaponSlam, setWeaponKind, setWeaponHandlers, isWeaponEquipped } from './weapon.js';
 import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
 import { createZoneBanner } from './zone-banner.js';
@@ -189,7 +189,8 @@ body.touch .rt-stack{transform:scale(var(--ui,1));transform-origin:right top}
 .rollbox{position:relative;overflow:hidden}
 .rollbox>span{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;white-space:nowrap}
 .lvnum{width:170px;height:34px;margin-bottom:2px;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-weight:700;font-size:26px;color:#fff;text-shadow:-2px 0 #000,2px 0 #000,0 -2px #000,0 2px #000,-2px -2px #000,2px 2px #000,-2px 2px #000,2px -2px #000}
-.xpbar{position:relative;width:118%;aspect-ratio:1400/88;margin-bottom:6px;container-type:inline-size}
+.xpbar{position:relative;width:118%;aspect-ratio:1400/88;margin-top:4px;margin-bottom:-2px;container-type:inline-size}
+.hintbar,.chips{display:none !important}   /* 경험치 바 위의 '달리기 · 시점고정 · 조작 안내' 글씨는 안 보여요 */
 .xp-frame{display:block;width:100%;height:100%;pointer-events:none;user-select:none;-webkit-user-drag:none}
 .xp-lvtxt{position:absolute;left:4.737%;top:22.131%;width:9.32%;height:59.016%;font-family:Georgia,'Times New Roman','Malgun Gothic',serif;font-weight:700;font-size:15px;font-size:2.6cqw;color:#efe4cf;text-shadow:0 1px 2px #000}
 .xp-gauge{position:absolute;left:20.906%;top:41.803%;width:73.481%;height:20.492%;overflow:hidden}
@@ -219,7 +220,7 @@ body.touch .hpmp-ic{width:24px;height:24px;border-width:2px}
 body.touch .hpmp-ic img{width:14px;height:14px}
 body.touch .hpmp-bar{height:18px;padding:2px 2px 2px 14px;margin-left:-10px}
 body.touch .hpmp-in span{font-size:10px;line-height:14px}
-body.touch .xpbar{width:100%;margin-bottom:3px}
+body.touch .xpbar{width:100%;margin-top:3px;margin-bottom:0}
 body.touch .lvnum{width:120px;height:22px;font-size:17px;margin-bottom:1px}
 body.touch .bui-menu{width:100%;gap:3px;margin-top:6px}
 body.touch .mbtn{padding:3px 1px 2px;border-width:2px}
@@ -682,6 +683,28 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
   const texSnow = loadTex('/textures/snow.jpg');             // 설원: 눈
   const texSnowRock = loadTex('/textures/snow_rock.jpg');    // 설원: 눈 덮힌 바위
   const texIce = loadTex('/textures/ice.jpg');               // 설원: 얼음
+
+  // 내려찍기로 튀어오르는 땅 조각이 '그 자리 땅 텍스처'와 같은 무늬·색이 되도록 땅 종류를 알려줘요 (slam-fx.js 가 사용)
+  const GROUND = {
+    grass: { map: texGrass, k: 1.0, dust: 0x6f6149, crack: 0x1a140c }, gold: { map: texGold, k: 1.0, dust: 0x8c7b4a, crack: 0x1a140c },
+    jungle: { map: texJungle, k: 1.15, dust: 0x4f5a3a, crack: 0x10140a }, dirt: { map: texDirt, k: 1.1, dust: 0x6b5843, crack: 0x140d08 },
+    village: { map: texVillage, k: 1.0, dust: 0x7a6a52, crack: 0x140d08 }, sand: { map: texSand, k: 0.95, dust: 0xcdb98a, crack: 0x5a4628 },
+    rock: { map: texRock, k: 2.0, dust: 0x8a857d, crack: 0x0c0a09 }, lavaRock: { map: texLavaRock, k: 1.4, dust: 0x6a5a52, crack: 0x0c0a09 },
+    snow: { map: texSnow, k: 0.95, dust: 0xe8eef5, crack: 0x2c3947 }, snowRock: { map: texSnowRock, k: 1.7, dust: 0xc9d1d8, crack: 0x1d2630 },
+    ice: { map: texIce, k: 1.15, dust: 0xdaf0fb, crack: 0x23506a }
+  };
+  const groundAt = (x, z) => {
+    const w = T.detail(x, z, T.height(x, z));   // [잔디, 흙, 잔디변화(1 넘으면 보스 터), 마을, 정글, 사막, 화산, 용암돌, 용암못, 눈, 바위덩이, 얼음]
+    const opts = [[w[0], w[2] > 0.5 && w[2] <= 1 ? 'gold' : 'grass'], [w[1], 'dirt'], [w[3], 'village'], [w[4], 'jungle'], [w[5], 'sand'],
+      [w[6], w[7] > 0.5 ? 'lavaRock' : 'rock'], [w[9], w[11] > 0.5 ? 'ice' : w[10] > 0.5 ? 'snowRock' : 'snow']];
+    let best = 'dirt', bv = -1;
+    for (const [v, k] of opts) if (v > bv) { bv = v; best = k; }
+    const g = GROUND[best];
+    const tint = new THREE.Color(g.k, g.k, g.k);
+    const arena = Math.min(1, Math.max(0, w[2] - 1));   // 보스 터는 어둡고 칙칙한 흙
+    if (arena > 0) tint.multiply(new THREE.Color(1 - arena * 0.64, 1 - arena * 0.69, 1 - arena * 0.71));
+    return { map: g.map, tint, dust: g.dust, crack: g.crack };
+  };
 
   // 자연 오브젝트(나무·바위·풀·꽃 등): 땅 텍스처와 시간 uniform을 공유해서 GPU 중복 없이 쓴다.
   // 지형별 배치는 nature-placement.js, 청크별 인스턴싱/거리별 LOD는 nature-world.js
@@ -1799,7 +1822,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .uw-slot .ic{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:54px;line-height:1;pointer-events:none}
 .uw-slot .ic small{font-size:16px;margin-top:4px;font-weight:700;color:#f1dfb6;text-shadow:0 1px 0 #000,0 0 3px #000}
 .uw-slot .cnt{position:absolute;right:8px;bottom:4px;font-size:22px;font-weight:700;color:#fff;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000;pointer-events:none}
-.uwb-dt{font-size:34px;font-weight:700;color:#2a1a0c;line-height:1.3}
+.uwb-dt{font-size:44px;font-weight:800;color:#2a1a0c;line-height:1.3}
 .uwb-dsc{font-size:22px;line-height:1.5;color:#4a3720}
 .uwb-dsc b{color:#8a2a14}
 .uwb-btn{display:inline-block;margin-top:6px;padding:8px 38px;font-size:30px;font-weight:700;color:#f1dfb6;background:#5a3b1c;border:3px solid #2a1a0c;border-radius:6px;cursor:pointer;box-shadow:0 3px 0 #2a1a0c}
@@ -1819,33 +1842,37 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   let invItems = [];            // [{ id, n }]
   let learnedSk = [];           // 배운 스킬 id
   let slotRSkill = null;        // R 칸(E 칸 아래)에 장착한 스킬
-  let gearEq = { armor: null, pants: null };   // 입고 있는 장비 (서버가 정함)
+  let gearEq = { armor: null, pants: null, weapon: null };   // 입고 있는 장비 (서버가 정함)
   const winSel = { inv: -1, sk: null };   // 창에서 선택한 칸 (다시 그려도 유지)
   const SK_ICON = { sweep: '🌀', slam: '💥' };
   // 아이템 그림: 그림 파일(img)이 있으면 그림, 없으면 이모지
   const iconHtml = (def, px) => def.img
     ? '<img src="' + def.img + '" alt="" draggable="false" style="width:' + px + 'px;height:' + px + 'px;object-fit:contain;pointer-events:none">'
     : '<span style="font-size:' + Math.round(px * 0.85) + 'px;line-height:1">' + def.icon + '</span>';
-  const itemSlot = (i) => {
-    const it = invItems[i], def = it && ITEMS[it.id];
-    return '<div class="uw-slot' + (winSel.inv === i ? ' sel' : '') + '" data-inv="' + i + '">' +
+  const isGear = (it) => { const d = it && ITEMS[it.id]; return !!d && d.kind === 'gear'; };
+  // 장비 아이템은 인벤토리에 섞이지 않고 '장비' 탭의 보관 목록으로 바로 들어와요 (인벤토리 탭에는 장비를 뺀 아이템만)
+  const tabList = () => invItems.map((it, i) => ({ it, i })).filter((e) => isGear(e.it) === (winIdx === 1));
+  const itemSlot = (e) => {
+    const it = e && e.it, def = it && ITEMS[it.id];
+    return '<div class="uw-slot' + (e && winSel.inv === e.i ? ' sel' : '') + '"' + (e ? ' data-inv="' + e.i + '"' : '') + '>' +
       (def ? '<div class="ic">' + iconHtml(def, 66) + '<small>' + (def.label || '아이템') + '</small></div>' + (it.n > 1 ? '<span class="cnt">' + it.n + '</span>' : '') : '') + '</div>';
   };
-  const wInv = () => wHead(138, 158, '인벤토리') +
-    '<div class="uwb-grid" style="' + at(147, 249, 581, 551) + ';grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(5,1fr)">' + Array.from({ length: 30 }, (_, i) => itemSlot(i)).join('') + '</div>' +
+  const wInv = () => { const list = tabList(); return wHead(138, 158, winIdx === 1 ? '보관 장비' : '인벤토리') +
+    '<div class="uwb-grid" style="' + at(147, 249, 581, 551) + ';grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(5,1fr)">' + Array.from({ length: 30 }, (_, k) => itemSlot(list[k])).join('') + '</div>' +
     '<img src="/ui/icon_bag.png" alt="" style="position:absolute;left:153px;top:831px;width:40px;height:40px;object-fit:contain;filter:sepia(.7) brightness(.45)">' +
-    '<div style="position:absolute;left:205px;top:832px;font-size:30px;font-weight:700">' + invItems.length + ' / ' + INV_CAP + '</div>';
+    '<div style="position:absolute;left:205px;top:832px;font-size:30px;font-weight:700">' + invItems.length + ' / ' + INV_CAP + '</div>'; };
   const invDetail = () => {
     if (winSel.inv < 0) return '아이템을 선택하면<br>상세 정보가 표시됩니다.';
     const it = invItems[winSel.inv], def = it && ITEMS[it.id];
     if (!def) return '비어 있는 칸이에요';
+    if (isGear(it) !== (winIdx === 1)) return '아이템을 선택하면<br>상세 정보가 표시됩니다.';
     let btn = '';
     if (def.kind === 'skillbook') btn = learnedSk.includes(def.skill)
       ? '<div class="uwb-btn off">이미 배운 스킬</div>'
       : '<div class="uwb-btn" data-act="learn" data-id="' + it.id + '">배우기</div>';
     if (def.kind === 'gear') {
       const worn = gearEq[def.slot] ? ITEMS[gearEq[def.slot]] : null;
-      btn = '<div class="uwb-dsc" style="color:#2a6a2a">최대 체력 +' + def.hp + '</div>' +
+      btn = '<div class="uwb-dsc" style="color:#2a6a2a">' + (def.hp ? '최대 체력 +' + def.hp : (def.note || '')) + '</div>' +
         (worn ? '<div class="uwb-dsc" style="color:#7a5a30;font-size:18px">(지금 입은 ' + worn.name + '과(와) 서로 바뀌어요)</div>' : '') +
         '<div class="uwb-btn" data-act="wear" data-id="' + it.id + '">장착</div>';
     }
@@ -1876,14 +1903,14 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const sl = (img, x, y, w, h, lx, ly, name, key) => {
       const worn = key && gearEq[key] ? ITEMS[gearEq[key]] : null;
       return '<div class="uw-slot uwb-eq" ' + (worn ? 'data-eq="' + key + '" title="누르면 벗어요" ' : '') + 'style="' + at(x, y, w, h) + ';background-image:url(/ui/' + img + '.png)">' +
-        (worn ? '<div class="ic">' + iconHtml(worn, 84) + '<small>+' + worn.hp + ' 체력</small></div>' : '') + '</div>' +
+        (worn ? '<div class="ic">' + iconHtml(worn, 84) + '<small>' + (worn.hp ? '+' + worn.hp + ' 체력' : worn.name) + '</small></div>' : '') + '</div>' +
       '<div class="uwb-lb" style="left:' + lx + 'px;top:' + ly + 'px">' + name + '</div>';
     };
     return wHead(820, 152, '장비') +
       '<img src="/ui/silhouette.png" alt="" style="position:absolute;left:991px;top:378px;width:211px;height:270px;pointer-events:none">' +
       sl('slot_head', 1043, 252, 112, 107, 1099, 363, '투구') +
       sl('slot_armor', 858, 426, 118, 118, 917, 548, '갑옷', 'armor') +
-      sl('slot_weapon', 1225, 426, 119, 118, 1284, 548, '무기') +
+      sl('slot_weapon', 1225, 426, 119, 118, 1284, 548, '무기', 'weapon') +
       sl('slot_pants', 1038, 626, 121, 121, 1099, 752, '바지', 'pants') +
       '<div style="position:absolute;left:820px;top:840px;width:560px;text-align:center;font-size:22px;color:#6a4a28">장비 아이템을 누르면 입고, 입은 장비를 누르면 벗어요</div>';
   };
@@ -2474,7 +2501,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
         setRemoteWeapon(remote.g.userData.rig, p.eq);          // 장착/해제 모션 재생
       }
 
-      if (remote.gm !== p.gm) { remote.gm = p.gm; setOutfit(remote.g, { armor: !!(p.gm & 1), pants: !!(p.gm & 2) }); }   // 다른 플레이어가 입은 옷
+      if (remote.gm !== p.gm) { remote.gm = p.gm; setOutfit(remote.g, { armor: !!(p.gm & 1), pants: !!(p.gm & 2) }); setWeaponKind(remote.g.userData.rig, (p.gm & 4) ? 'orc_axe' : 'wooden_sword'); }   // 다른 플레이어가 입은 옷
       remote.eq = !!p.eq;
       remote.nick = p.nick || '플레이어';
       remote.level = p.level || 1;
@@ -2524,7 +2551,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   let slamFxMine = null, slamFxRemote = null;   // 내려찍기 연출 (노란 네모 + 땅 조각). 남의 것은 따로
   import('./slam-fx.js')
     .then((m) => {
-      const o = { size: SLAM.SIZE, telegraph: SLAM.DELAY, colors: { fill: 0xffc21a, inner: 0xffe36a, edge: 0xffd23a } };
+      const o = { size: SLAM.SIZE, telegraph: SLAM.DELAY, colors: { fill: 0xffc21a, inner: 0xffe36a, edge: 0xffd23a }, ground: groundAt };
       slamFxMine = m.createSlamFx(scene, T, o);
       slamFxRemote = m.createSlamFx(scene, T, o);
     })
@@ -2587,7 +2614,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       if (skillFx) { try { skillFx.play('sweep', myAvatar.position.x, myAvatar.position.y, myAvatar.position.z, me.ry); } catch (err) { console.error('스킬 이펙트 오류:', err); } }
     }
     if (def.id === 'slam') {   // 내려찍기: 노란 네모가 뜨고 SLAM.DELAY 초 뒤 땅을 찍음 (피해는 서버가 확정)
-      if (!startWeaponSweep(myRig)) return;
+      if (!startWeaponSlam(myRig)) return;
       skillReadyAt.slam = performance.now() + def.cd * 1000;
       socket.emit('skill', { id: 'slam' });
       if (slamFxMine) { try { slamFxMine.start(me.x, me.z, me.ry); } catch (err) { console.error('내려찍기 이펙트 오류:', err); } }
@@ -2598,7 +2625,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   socket.on('skillfx', (d) => {
     const remote = d && remotes.get(d.id);
     if (remote && d.skill === 'slam') {   // 다른 플레이어의 내려찍기
-      startWeaponSweep(remote.g.userData.rig, true);
+      startWeaponSlam(remote.g.userData.rig, true);
       if (slamFxRemote && Number.isFinite(d.x) && Number.isFinite(d.z) && Number.isFinite(d.ry)) { try { slamFxRemote.start(d.x, d.z, d.ry); } catch (err) { console.error('내려찍기 이펙트 오류:', err); } }
       return;
     }
@@ -2707,7 +2734,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   let lastBossDmg = [];
   import('./boss.mjs')
     .then((m) => {
-      boss = m.createBossWorld({ scene, camera, T, WATER_LEVEL });
+      boss = m.createBossWorld({ scene, camera, T, WATER_LEVEL, groundAt });
       boss.onSnapshot(lastBoss);
       boss.setDmg(lastBossDmg, nick);
     })
@@ -2849,6 +2876,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     gearEq = {};
     for (const k of Object.keys(GEAR_SLOT_NAME)) gearEq[k] = g[k] && ITEMS[g[k]] ? g[k] : null;
     setOutfit(myAvatar, { armor: !!gearEq.armor, pants: !!gearEq.pants });   // 입은 옷이 내 캐릭터에 보임
+    setWeaponKind(myRig, (gearEq.weapon && ITEMS[gearEq.weapon] && ITEMS[gearEq.weapon].weapon) || 'wooden_sword');   // 장착한 무기(오크 도끼)가 손에 보임
     if (winOpenNow()) renderWin();
   });
   // 몬스터를 잡으면 화면 아래 UI 바로 위에 '토끼 가죽x2를 획득했습니다.' 처럼 뜸 (여러 개면 줄줄이, 3초 뒤 사라짐)
@@ -2863,8 +2891,15 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       const text = it && Number.isFinite(it.n) ? lootText(it.id, it.n) : '';
       if (!text) continue;
       const line = document.createElement('div');
-      line.textContent = text;
-      line.style.cssText = 'padding:5px 14px;border-radius:14px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font:600 14px sans-serif;opacity:0;transition:opacity .25s;white-space:nowrap';
+      const idef = ITEMS[it.id];
+      const nameEl = document.createElement('span');   // 아이템 이름은 크게, 나머지("x2를 획득했습니다.")는 작게
+      nameEl.textContent = idef.name;
+      nameEl.style.cssText = 'font-size:' + (touchMode ? 20 : 26) + 'px;font-weight:800;color:#ffe9a0;text-shadow:0 1px 3px #000';
+      const restEl = document.createElement('span');
+      restEl.textContent = text.slice(idef.name.length);
+      restEl.style.cssText = 'font-size:' + (touchMode ? 13 : 16) + 'px;font-weight:600';
+      line.append(nameEl, restEl);
+      line.style.cssText = 'padding:6px 18px;border-radius:16px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font-family:sans-serif;opacity:0;transition:opacity .25s;white-space:nowrap';
       lootBox.appendChild(line);
       requestAnimationFrame(() => { line.style.opacity = '1'; });
       setTimeout(() => { line.style.opacity = '0'; }, 2800);
