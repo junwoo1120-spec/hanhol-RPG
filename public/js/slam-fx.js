@@ -10,6 +10,7 @@ const TAU = Math.PI * 2;
 // ② 찍는 순간: 땅이 갈라지고 주변 땅 조각이 위로 솟았다가 가라앉음(보기용이라 부딪히지 않음) + 흙먼지
 export function createSlamFx(scene, T, opt) {
   const SIZE = opt.size, TELE = opt.telegraph, HALF = SIZE / 2, N = 16;
+  const groundFn = opt.ground || null;   // (x, z) → { map: 땅 텍스처, tint: Color, dust: 색, crack: 색 }. 있으면 튀어오르는 땅 조각을 그 땅과 같은 텍스처로 입혀요
   const COL = opt.colors || { fill: 0xff1a0a, inner: 0xff5030, edge: 0xff2a1a };   // 보스는 빨강, 플레이어는 노랑
   const mkGrid = (n) => {
     const g = new THREE.BufferGeometry(), idx = [];
@@ -58,6 +59,7 @@ export function createSlamFx(scene, T, opt) {
   // 땅 조각 (인스턴스 64개: 흙덩이·바위)
   const CH = 64;
   const chunkGeo = new THREE.IcosahedronGeometry(0.5, 0);
+  { const uv = chunkGeo.attributes.uv; if (uv) { for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 0.4, uv.getY(i) * 0.4); uv.needsUpdate = true; } }   // 조각 하나에 텍스처 일부만 (땅 무늬 크기와 비슷하게)
   const chunkMat = new THREE.MeshLambertMaterial({ flatShading: true });
   const chunks = new THREE.InstancedMesh(chunkGeo, chunkMat, CH);
   chunks.frustumCulled = false; chunks.count = 0; chunks.visible = false;
@@ -88,6 +90,12 @@ export function createSlamFx(scene, T, opt) {
 
   function impact() {
     impacted = true; tele.visible = false;
+    // 이 자리의 땅 종류(잔디·흙·모래·돌·눈…)를 찾아서 조각·먼지·갈라짐을 같은 색으로
+    let gd = null;
+    if (groundFn) { try { gd = groundFn(c.x, c.z); } catch (err) { gd = null; } }
+    if (gd && gd.map) { if (chunkMat.map !== gd.map) { chunkMat.map = gd.map; chunkMat.needsUpdate = true; } }
+    else if (chunkMat.map) { chunkMat.map = null; chunkMat.needsUpdate = true; }
+    crackMat.color.setHex(gd && gd.crack != null ? gd.crack : 0x0b0705);
     // 땅 조각: 가운데에서 바깥으로 물결치듯 차례로 솟아오름
     items.length = 0;
     for (let i = 0; i < CH; i++) {
@@ -95,7 +103,7 @@ export function createSlamFx(scene, T, opt) {
       const near = 1 - Math.min(1, d / (HALF * 1.2));
       items.push({
         x, z, y0: T.height(x, z), delay: d / 22 + rnd(0, 0.08), dur: rnd(1.1, 1.6), peak: 0.7 + near * 2.4 + rnd(0, 0.9),
-        w: rnd(0.6, 1.5) * (1 + near * 0.6), h: rnd(0.3, 0.7), spin: [rnd(-3, 3), rnd(-2, 2), rnd(-3, 3)], r0: [rnd(0, 6), rnd(0, 6), rnd(0, 6)], col: SOIL[Math.floor(rnd(0, SOIL.length)) % SOIL.length],
+        w: rnd(0.6, 1.5) * (1 + near * 0.6), h: rnd(0.3, 0.7), spin: [rnd(-3, 3), rnd(-2, 2), rnd(-3, 3)], r0: [rnd(0, 6), rnd(0, 6), rnd(0, 6)], col: gd && gd.tint ? gd.tint.clone().multiplyScalar(rnd(0.8, 1.12)) : SOIL[Math.floor(rnd(0, SOIL.length)) % SOIL.length],
       });
       chunks.setColorAt(i, items[i].col);
     }
@@ -121,6 +129,7 @@ export function createSlamFx(scene, T, opt) {
     // 흙먼지
     for (const p of puffs) {
       const a = rnd(0, TAU), r = rnd(1, HALF * 0.9), [x, z] = toWorld(c, Math.cos(a) * r, Math.sin(a) * r);
+      p.m.material.color.setHex(gd && gd.dust != null ? gd.dust : 0x80705c);
       p.t = 0; p.r = rnd(0.8, 1.6); p.vx = Math.cos(a) * rnd(0.5, 2); p.vz = Math.sin(a) * rnd(0.5, 2);
       p.m.position.set(x, T.height(x, z) + 0.4, z); p.m.visible = true; p.m.userData.y0 = p.m.position.y;
     }
