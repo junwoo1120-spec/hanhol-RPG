@@ -149,6 +149,95 @@ function sharedSword() {
   return shared;
 }
 
+// ============================================================
+// 1-2) 오크 도끼 메시 (참고 그림: 회색 강철 날 + 짙은 쇠 머리통 + 나무 자루 + 쇠 띠 + 가죽 감김)
+//   좌표계는 검과 같아요. 원점 = 손잡이 가운데(쥐는 곳), 자루/머리 방향 = +Y, 날이 뻗는 쪽(베는 쪽) = +X, 납작한 면 = ±Z
+//   (휘두르는 방향 = +X 이므로, 아래 모션 표의 자세는 '날이 앞서 나가도록' 손목 각도를 맞춰 둔 것)
+// ============================================================
+const AXE_COL = {
+  wood: '#8c5b2d', woodTop: '#b27a40', woodDark: '#6e4421', flare: '#7a4a22',
+  wrap: '#6f5b47', wrapDark: '#54412f',
+  iron: '#4b4f57', ironTop: '#6d727b', rivet: '#a4a9b0',
+  steelIn: '#59606a', steelMid: '#8d949e', steelEdge: '#cdd3da', steelDark: '#454b54'
+};
+
+function buildAxeGeometry() {
+  const pos = [];
+  const col = [];
+  const c = new THREE.Color();
+  const rgb = (hex, mul = 1) => { c.set(hex); return [c.r * mul, c.g * mul, c.b * mul]; };
+  const tri = (a, b, d, ca, cb, cd) => { pos.push(a[0], a[1], a[2], b[0], b[1], b[2], d[0], d[1], d[2]); col.push(...ca, ...cb, ...cd); };
+  const quad = (a, b, d, e, ca, cb, cd, ce) => { tri(a, b, d, ca, cb, cd); tri(a, d, e, ca, cd, ce); };
+  const box = (cx, cy, cz, sx, sy, sz, hex, topHex) => {
+    const x0 = cx - sx / 2, x1 = cx + sx / 2, y0 = cy - sy / 2, y1 = cy + sy / 2, z0 = cz - sz / 2, z1 = cz + sz / 2;
+    const base = rgb(hex), side = rgb(hex, 0.84), top = rgb(topHex || hex, 1);
+    quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], base, base, base, base);
+    quad([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], side, side, side, side);
+    quad([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], side, side, side, side);
+    quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], side, side, side, side);
+    quad([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0], top, top, top, top);
+    quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], side, side, side, side);
+  };
+
+  // --- 나무 자루 (아래 끝이 살짝 굵고, 위 끝이 머리통 위로 조금 튀어나옴) ---
+  box(0, 0.19, 0, 0.034, 0.80, 0.034, AXE_COL.wood, AXE_COL.woodTop);      // y -0.21 ~ 0.59
+  box(0, -0.205, 0, 0.052, 0.07, 0.052, AXE_COL.flare, AXE_COL.woodTop);   // 아래 끝 손잡이 마디
+  // --- 가죽 감김 (쥐는 곳): 짙고 옅은 띠를 번갈아 ---
+  for (let i = 0; i < 7; i++) {
+    const y = -0.12 + i * 0.03;
+    box(0, y, 0, 0.045, 0.026, 0.045, i % 2 ? AXE_COL.wrapDark : AXE_COL.wrap);
+  }
+  // --- 쇠 띠 두 개 ---
+  box(0, 0.115, 0, 0.050, 0.030, 0.050, AXE_COL.iron, AXE_COL.ironTop);
+  box(0, 0.255, 0, 0.052, 0.030, 0.052, AXE_COL.iron, AXE_COL.ironTop);
+
+  // --- 머리통(쇠 덩어리) + 뒤쪽 뭉툭한 면 + 리벳 ---
+  box(0.005, 0.40, 0, 0.115, 0.25, 0.058, AXE_COL.iron, AXE_COL.ironTop);     // y 0.275 ~ 0.525, x -0.052 ~ 0.062
+  box(-0.062, 0.40, 0, 0.026, 0.19, 0.050, AXE_COL.steelDark, AXE_COL.iron);  // 뒤쪽(-X) 뭉툭한 면
+  box(0.002, 0.40, 0.031, 0.016, 0.016, 0.010, AXE_COL.rivet);                // 앞면 리벳
+  box(0.002, 0.40, -0.031, 0.016, 0.016, 0.010, AXE_COL.rivet);               // 뒷면 리벳
+
+  // --- 강철 날: 반달 모양. 안쪽 선(머리통에 붙는 쪽)과 바깥 날 선을 같은 간격으로 나눠 가로줄(rung)로 이음 ---
+  const inner = [[0.20, 0.60], [0.115, 0.55], [0.062, 0.50], [0.062, 0.45], [0.062, 0.40], [0.062, 0.35], [0.062, 0.30], [0.09, 0.24], [0.15, 0.17]];
+  const edge  = [[0.20, 0.60], [0.245, 0.565], [0.27, 0.52], [0.285, 0.46], [0.29, 0.40], [0.285, 0.34], [0.27, 0.28], [0.235, 0.22], [0.15, 0.17]];
+  const rung = (i, side) => {
+    const a = inner[i], b = edge[i];
+    const tIn = i === 0 || i === inner.length - 1 ? 0.002 : 0.017;   // 안쪽 두께 (뿔 끝은 뾰족)
+    const tEd = 0.0035;                                                // 날 끝은 얇게
+    return [
+      [a[0], a[1], side * tIn, rgb(i % 2 ? AXE_COL.steelIn : AXE_COL.steelDark, 1)],
+      [(a[0] * 0.45 + b[0] * 0.55), (a[1] * 0.45 + b[1] * 0.55), side * (tIn * 0.55 + tEd * 0.45), rgb(AXE_COL.steelMid, 1)],
+      [b[0], b[1], side * tEd, rgb(AXE_COL.steelEdge, 1)]
+    ];
+  };
+  for (let i = 0; i < inner.length - 1; i++) {
+    for (const side of [1, -1]) {
+      const A = rung(i, side), B = rung(i + 1, side);
+      for (let k = 0; k < 2; k++) {
+        quad([A[k][0], A[k][1], A[k][2]], [A[k + 1][0], A[k + 1][1], A[k + 1][2]],
+             [B[k + 1][0], B[k + 1][1], B[k + 1][2]], [B[k][0], B[k][1], B[k][2]],
+             A[k][3], A[k + 1][3], B[k + 1][3], B[k][3]);
+      }
+    }
+    // 날 끝(가장자리) 얇은 면
+    const e0 = edge[i], e1 = edge[i + 1], ce = rgb(AXE_COL.steelEdge, 1.05);
+    quad([e0[0], e0[1], 0.0035], [e0[0], e0[1], -0.0035], [e1[0], e1[1], -0.0035], [e1[0], e1[1], 0.0035], ce, ce, ce, ce);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+let sharedAxeRes = null;
+function sharedAxe() {
+  if (!sharedAxeRes) sharedAxeRes = { geo: buildAxeGeometry(), mat: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }) };
+  return sharedAxeRes;
+}
+
 // 검 좌표계(X=날 폭, Y=날 방향, Z=앞면) → 손 뼈 좌표계 회전
 //   손 뼈에서 +Z = 몸이 바라보는 쪽(손가락이 펼쳐지는 방향) 이므로, 손잡이 축(검 Y)을 손 Z 에 맞추면 주먹이 손잡이를 감싸는 모양이 됨.
 //   팔꿈치를 앞으로 굽히면 손 Z 가 위로 향해서 검날이 위를 보게 됨.
@@ -160,7 +249,8 @@ const BASIS = new THREE.Matrix4().makeBasis(
 
 // 무기 종류 표 (나중에 무기를 더할 때 여기에 추가)
 const WEAPONS = {
-  wooden_sword: { build: sharedSword, grip: GRIP }
+  wooden_sword: { build: sharedSword, grip: GRIP },
+  orc_axe: { build: sharedAxe, grip: GRIP }   // 오크 도끼 (보스 드랍 장비). 모션은 아래 MOTION 표
 };
 const DEFAULT_WEAPON = 'wooden_sword';
 
@@ -197,6 +287,47 @@ const SWEEP = {
   end:    [-1.40,  0.25, 0.95,  -0.25, 0, 0.10,   1.00,  0.40, 0,   0.10, -0.95, 0],
   follow: [-1.40,  0.25, 0.95,  -0.25, 0, 0.10,   1.00,  0.40, 0,   0.10, -0.90, 0]
 };
+// ---------- 오크 도끼 모션 ----------
+// 도끼는 '날이 앞서 나가도록' 손목 각도를 맞춰서(FK 계산으로 확인) 머리가 앞으로 호를 그리며 지나가요.
+//  · 평타 0: 머리 위에서 앞으로 내려치는 세로 베기      · 평타 1: 오른쪽 위 → 왼쪽 아래로 비스듬히 내려치기
+//  · 휩쓸기: 몸을 크게 비틀며 도끼를 수평으로 한 바퀴    · 내려찍기: 도끼를 머리 위로 번쩍 들었다가 앞 땅을 힘껏 내려찍음
+const AXE = {
+  slash: [
+    { windup: [-1.94, 0.18, 0.95, -0.19, -0.06, 0.09, 0.47, -0.47, -0.40, -0.50, -0.51, 0.00],
+      mid:    [-1.29, 0.15, 0.72,  0.00, -0.15, 0.13, 1.05, -0.63, -0.15, -0.18, -0.14, -0.20],
+      end:    [-1.03, 0.00, 0.53, -0.17,  0.14, 0.00, 1.12, -0.79, -0.18,  0.55,  0.30, -0.02],
+      follow: [-1.03, 0.00, 0.53, -0.17,  0.14, 0.00, 1.12, -0.79, -0.18,  0.58,  0.30, -0.02] },
+    { windup: [-2.03, 0.35, 0.88, -0.19,  0.07, 0.31, 0.29, -0.02, -0.02, -0.36, -0.78, 0.04],
+      mid:    [-1.12, 0.31, 0.78, -0.07,  0.05, 0.00, 1.06, -0.65, -0.37, -0.21, -0.07, -0.40],
+      end:    [-0.74, -0.15, 0.70, -0.23,  0.30, 0.00, 1.20, -1.20, -0.44,  0.39,  0.36, -0.40],
+      follow: [-0.74, -0.15, 0.70, -0.23,  0.30, 0.00, 1.20, -1.20, -0.44,  0.42,  0.36, -0.40] }
+  ],
+  sweep: {
+    windup: [-1.29, 0.27, 0.81, -0.04, 0.40, 0.00, 1.19, -0.62, -0.67, -0.25,  0.84, -0.40],
+    mid:    [-1.51, 0.41, 0.77,  0.00, 0.30, 0.00, 1.49, -0.85, -0.59,  0.06, -0.15, -0.40],
+    end:    [-1.47, 0.46, 0.67,  0.00, -0.05, 0.00, 1.57, -1.09, -0.42,  0.33, -1.00, -0.40],
+    follow: [-1.47, 0.46, 0.67,  0.00, -0.05, 0.00, 1.57, -1.09, -0.42,  0.33, -0.95, -0.40]
+  },
+  slam: {
+    windup: [-2.27, 0.10, 0.74, -0.21, -0.13, 0.00, 0.36, -0.44, -0.37, -0.39, -0.43, -0.12],
+    mid:    [-1.30, 0.12, 0.71,  0.00, -0.14, 0.18, 1.11, -0.66, -0.16, -0.20, -0.17, -0.19],
+    end:    [-1.08, -0.03, 0.42, -0.20, 0.13, 0.00, 1.19, -0.81, -0.16,  0.70,  0.42,  0.00],
+    follow: [-1.08, -0.03, 0.42, -0.20, 0.13, 0.00, 1.19, -0.81, -0.16,  0.72,  0.42,  0.00]
+  }
+};
+// 무기별 모션 묶음 (타이밍 + 자세). 내려찍기(slam)는 서버의 SLAM.DELAY(0.6초)에 맞춰 windup+swing = 0.6초
+const MOTION = {
+  wooden_sword: { atk: WEAPON_CFG.attack, slash: SLASH, sweepT: SWEEP_T, sweep: SWEEP, slamT: null, slam: null },
+  orc_axe: {
+    atk: { cooldown: 0.7, windup: 0.20, swing: 0.16, follow: 0.12, recover: 0.22, buffer: 0.15 },   // 칼보다 묵직하게 (준비·휘두름이 느리고 대신 회복은 빠름)
+    slash: AXE.slash,
+    sweepT: { windup: 0.12, swing: 0.20, follow: 0.14, recover: 0.22 },
+    sweep: AXE.sweep,
+    slamT: { windup: 0.46, swing: 0.14, follow: 0.30, recover: 0.36 },
+    slam: AXE.slam
+  }
+};
+const motionOf = (wp) => MOTION[wp.kind] || MOTION[DEFAULT_WEAPON];
 const PROC_UPPER_Z = 0.61;   // 코드 캐릭터(fallback)는 팔이 곧게 내려가 있어서 GLB(A자 팔)보다 이만큼 덜 모음
 
 export const WS = { NONE: 0, EQUIPPING: 1, READY: 2, ATTACKING: 3, UNEQUIPPING: 4 };
@@ -211,7 +342,7 @@ function getWp(rig) {
   if (!rig.wp) {
     rig.wp = {
       kind: DEFAULT_WEAPON,
-      mode: WS.NONE, t: 0, cd: 0, queued: false, want: false, hitDone: false, side: 0, nextSide: 0, sweep: false,
+      mode: WS.NONE, t: 0, cd: 0, queued: false, want: false, hitDone: false, side: 0, nextSide: 0, sweep: false, slam: false,
       armW: 0, runAmt: 0, moveAmt: 0, phase: 0, time: 0, scale: 1,
       mount: null,
       base: new Float32Array(12), pose: new Float32Array(12),
@@ -299,12 +430,40 @@ export function startWeaponAttack(rig, remote = false, side = -1) {
 export function startWeaponSweep(rig, remote = false) {
   const wp = rig && rig.wp;
   if (!wp || !wp.want) return false;
-  if (wp.mode === WS.ATTACKING && wp.sweep) return false;   // 이미 휩쓸기 중
+  if (wp.mode === WS.ATTACKING && (wp.sweep || wp.slam)) return false;   // 이미 스킬 모션 중
   if (wp.mode === WS.READY ? (remote || wp.cd <= 0) : wp.mode === WS.ATTACKING) {
     beginAttack(wp, 0, true);
     return true;
   }
   return false;
+}
+
+// 스킬 "내려찍기" 모션 시작. 도끼는 전용 모션(머리 위로 번쩍 → 땅을 내려찍음), 칼은 휩쓸기 모션 그대로
+export function startWeaponSlam(rig, remote = false) {
+  const wp = rig && rig.wp;
+  if (!wp || !wp.want) return false;
+  if (!motionOf(wp).slam) return startWeaponSweep(rig, remote);
+  if (wp.mode === WS.ATTACKING && (wp.sweep || wp.slam)) return false;
+  if (wp.mode === WS.READY ? (remote || wp.cd <= 0) : wp.mode === WS.ATTACKING) {
+    beginAttack(wp, 0, false, true);
+    return true;
+  }
+  return false;
+}
+
+// 들고 있는 무기 종류 바꾸기 ('wooden_sword' | 'orc_axe'). 이미 손에 붙어 있으면 모양만 바꿔 끼움 (모션 상태는 그대로)
+export function setWeaponKind(rig, kind) {
+  if (!rig) return;
+  if (!WEAPONS[kind]) kind = DEFAULT_WEAPON;
+  const wp = getWp(rig);
+  if (wp.kind === kind) return;
+  wp.kind = kind;
+  if (wp.mount) {
+    const vis = wp.mount.visible;
+    if (wp.mount.parent) wp.mount.parent.remove(wp.mount);
+    wp.mount = null;
+    if (ensureMount(rig, wp)) { wp.mount.visible = vis; wp.mount.scale.setScalar(wp.scale); }
+  }
 }
 
 // 공격 시작/타격 프레임 콜백 등록 (null 로 해제). 타격 프레임은 "시각상 휘두른 순간" 알림일 뿐, 피해 확정은 서버 몫
@@ -329,20 +488,21 @@ export function getWeaponStateName(rig) {
 export function resetWeapon(rig) {
   const wp = rig && rig.wp;
   if (!wp) return;
-  wp.mode = WS.NONE; wp.t = 0; wp.cd = 0; wp.queued = false; wp.want = false; wp.hitDone = false; wp.armW = 0; wp.sweep = false;
+  wp.mode = WS.NONE; wp.t = 0; wp.cd = 0; wp.queued = false; wp.want = false; wp.hitDone = false; wp.armW = 0; wp.sweep = false; wp.slam = false;
   if (wp.mount) wp.mount.visible = false;
 }
 
-function beginAttack(wp, side, sweep = false) {
+function beginAttack(wp, side, sweep = false, slam = false) {
   wp.sweep = sweep;
+  wp.slam = slam;
   wp.side = side;
-  if (!sweep) wp.nextSide = 1 - side;   // 다음 평타는 반대 방향
+  if (!sweep && !slam) wp.nextSide = 1 - side;   // 다음 평타는 반대 방향
   wp.mode = WS.ATTACKING;
   wp.t = 0;
-  wp.cd = sweep ? 0.55 : WEAPON_CFG.attack.cooldown;
+  wp.cd = slam ? 0.6 : sweep ? 0.55 : motionOf(wp).atk.cooldown;
   wp.queued = false;
   wp.hitDone = false;
-  if (wp.onStart && !sweep) wp.onStart(side);   // 휩쓸기는 'atk' 대신 스킬 이벤트로 따로 알림
+  if (wp.onStart && !sweep && !slam) wp.onStart(side);   // 스킬은 'atk' 대신 스킬 이벤트로 따로 알림
 }
 
 // ============================================================
@@ -354,7 +514,8 @@ export function updateWeapon(rig, dt, loco) {
   if (!wp || !wp.mount) return;
   dt = clamp(dt, 0, 0.1);
 
-  const A = WEAPON_CFG.attack;
+  const MO = motionOf(wp);
+  const A = MO.atk;
   wp.time += dt;
   wp.cd = Math.max(0, wp.cd - dt);
   wp.runAmt = damp(wp.runAmt, loco.run, 8, dt);
@@ -378,13 +539,13 @@ export function updateWeapon(rig, dt, loco) {
       else if (wp.queued && wp.cd <= 0) beginAttack(wp, wp.nextSide);
       break;
     case WS.ATTACKING: {
-      const AT = wp.sweep ? SWEEP_T : A;
+      const AT = wp.slam ? MO.slamT : wp.sweep ? MO.sweepT : A;
       wp.t += dt;
       if (!wp.hitDone && wp.t >= AT.windup + AT.swing * 0.5) {
         wp.hitDone = true;
-        if (wp.onHit && !wp.sweep) wp.onHit();
+        if (wp.onHit && !wp.sweep && !wp.slam) wp.onHit();
       }
-      if (wp.t >= AT.windup + AT.swing + AT.follow + AT.recover) { wp.mode = WS.READY; wp.t = 0; wp.sweep = false; }
+      if (wp.t >= AT.windup + AT.swing + AT.follow + AT.recover) { wp.mode = WS.READY; wp.t = 0; wp.sweep = false; wp.slam = false; }
       break;
     }
     case WS.UNEQUIPPING:
@@ -435,9 +596,9 @@ export function updateWeapon(rig, dt, loco) {
     }
     case WS.ATTACKING: {
       const t = wp.t;
-      const AT = wp.sweep ? SWEEP_T : A;
+      const AT = wp.slam ? MO.slamT : wp.sweep ? MO.sweepT : A;
       const t1 = AT.windup, t2 = t1 + AT.swing * 0.5, t3 = t1 + AT.swing, t4 = t3 + AT.follow, t5 = t4 + AT.recover;
-      const S = wp.sweep ? SWEEP : SLASH[wp.side];
+      const S = wp.slam ? MO.slam : wp.sweep ? MO.sweep : MO.slash[wp.side];
       let a, b, k;
       if (t < t1)      { a = base;     b = S.windup; k = smooth(0, 1, t / t1); }
       else if (t < t2) { a = S.windup; b = S.mid;    k = (t - t1) / (t2 - t1); }
