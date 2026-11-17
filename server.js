@@ -137,6 +137,7 @@ const playerTier = (plv) => { let k = 0; for (let i = 0; i < MOB_TIERS.length; i
 const expReward = (plv, type) => {
   const mlv = MOB_LV[type];
   if (!mlv) return 0;
+  if (type === 'boss') return mobBaseExp(type);   // 보스는 단계·레벨 차이와 상관없이, 보상 조건(체력 7% 이상 깎기)을 채운 사람 모두 같은 경험치
   if (MOB_TIERS.indexOf(type) - playerTier(plv) >= 2) return 0;
   const d = mlv - plv;
   if (d <= -6) return 0;
@@ -306,7 +307,7 @@ io.on('connection', (socket) => {
     me.inv = sv ? sv.inv.map((i) => ({ ...i })) : [];
     me.learned = sv ? [...sv.learned] : [];
     me.slotR = sv ? sv.slotR : null;
-    me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, pants: sv.gear.pants || null } : { armor: null, pants: null };
+    me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, pants: sv.gear.pants || null, weapon: sv.gear.weapon || null } : { armor: null, pants: null, weapon: null };
     if (sv && Number.isFinite(sv.level)) me.level = sv.level;
     me.exp = cleanNum(sv && sv.exp, EXP_MAX);     // 예전 계정은 값이 없어서 0부터 시작
     me.gold = cleanNum(sv && sv.gold, GOLD_MAX);
@@ -625,7 +626,7 @@ setInterval(() => {
   const list = [];
   for (const p of players.values()) {
     // 마지막 값 = 입은 옷 (1 = 갑옷, 2 = 바지, 3 = 둘 다) → 다른 플레이어 화면에도 입은 모습이 보임
-    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level, (p.gear && p.gear.armor ? 1 : 0) | (p.gear && p.gear.pants ? 2 : 0)]);
+    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level, (p.gear && p.gear.armor ? 1 : 0) | (p.gear && p.gear.pants ? 2 : 0) | (p.gear && p.gear.weapon ? 4 : 0)]);
   }
   io.emit('state', list);
 }, 1000 / 15);
