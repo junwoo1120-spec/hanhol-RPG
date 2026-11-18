@@ -7,7 +7,7 @@ import {
   roomFloorY, roomGhost, clampCameraRoom, clampCameraInRoom, innFloor, stairsInfo,
 } from './village-layout.js';
 import { makeHumanoid, animateHumanoid, humanReady, setOutfit } from './character.js';
-import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSweep, startWeaponSlam, setWeaponKind, setWeaponHandlers, isWeaponEquipped } from './weapon.js';
+import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSweep, startWeaponSlam, setWeaponKind, setWeaponSpeed, setWeaponHandlers, isWeaponEquipped } from './weapon.js';
 import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
 import { createZoneBanner } from './zone-banner.js';
@@ -1705,6 +1705,9 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
   const expNeed = (lv) => { lv = Math.max(1, lv); return (10 + 5 * lv) * (10 + lv); };   // 레벨별 필요 경험치 (임시 공식: 레벨 1 = 1000. 나중에 원하는 공식으로 바꾸세요)
   const PLAYER = { level: Number.isFinite(initLevel) && initLevel >= 1 ? Math.floor(initLevel) : 1, hp: 100, hpMax: 100, mp: 50, mpMax: 50, exp: Number.isFinite(initExp) && initExp >= 0 ? Math.floor(initExp) : 0, expMax: 1000, gold: Number.isFinite(initGold) && initGold >= 0 ? Math.floor(initGold) : 0 };
   PLAYER.expMax = Number.isFinite(initExpMax) && initExpMax > 0 ? Math.floor(initExpMax) : expNeed(PLAYER.level);
+  PLAYER.stats = { str: 0, dex: 0, con: 0, int: 0, luk: 0, agi: 0 };   // 찍은 스탯 (서버가 'stats' 로 알려줘요)
+  PLAYER.statPts = 0;                                                  // 남은 스탯 포인트
+  PLAYER.st = { dmg: 0, crit: 0, critDmg: 1.5, drop: 0, aspd: 0, move: 0 };   // 스탯으로 정해진 능력치
 
   const fmt = (n) => {
     if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
@@ -2022,7 +2025,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .scr{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0);transition:background .4s;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;user-select:none;-webkit-user-select:none}
 .scr.show{display:flex}
 .scr.open{background:rgba(0,0,0,.6)}
-.scr-wrap{--rh:clamp(40px,8vh,64px);position:relative;display:flex;flex-direction:column;align-items:center;width:min(98vw,1040px);filter:drop-shadow(0 10px 24px rgba(0,0,0,.75))}
+.scr-wrap{--rh:clamp(40px,8vh,64px);--ph:min(80vh,680px);position:relative;display:flex;flex-direction:column;align-items:center;width:min(98vw,1040px);filter:drop-shadow(0 10px 24px rgba(0,0,0,.75))}
 .scr-r{position:relative;z-index:2;flex:none;display:flex;width:100%;height:var(--rh)}
 .scr-r i{display:block;height:100%;background-repeat:no-repeat;background-size:100% 100%}
 .scr-r .bd{flex:1 1 0;min-width:0}
@@ -2035,11 +2038,12 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .scr-r.bot .cr{flex:none;width:calc(var(--rh)*.917);background-image:url(/ui/scr_cap_r_b.png)}
 .scr-r.bot .bd{background-image:url(/ui/scr_bot_body.png)}
 .scr-paper{position:relative;z-index:1;flex:none;width:calc(100% - var(--rh)*1.75);margin:calc(var(--rh)*-.1) 0;height:0;overflow:hidden;transition:height .6s cubic-bezier(.22,.8,.25,1);background:url(/ui/scr_paper.png) 0 0/100% 100% no-repeat}
-.scr.open .scr-paper{height:min(70vh,520px)}
-.scr-in{position:absolute;inset:0;display:flex;gap:14px;padding:20px 24px 16px;box-sizing:border-box;color:#33200d;text-shadow:0 1px 0 rgba(255,235,190,.35);opacity:0;transition:opacity .35s .3s}
+.scr.open .scr-paper{height:var(--ph)}   /* 종이를 조금 키워서 위아래 여백을 확보 */
+.scr-in{position:absolute;inset:0;display:flex;gap:14px;padding:calc(var(--ph) * .15) 28px 24px;   /* 종이 윗부분은 찢긴 투명 가장자리+그림자라서(높이의 약 15%) 그 아래부터 내용이 시작해요 */
+  box-sizing:border-box;color:#33200d;text-shadow:0 1px 0 rgba(255,235,190,.35);opacity:0;transition:opacity .35s .3s}
 .scr.open .scr-in{opacity:1}
 .scr-col{flex:1 1 0;min-width:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;padding-right:2px}
-.scr-x{position:absolute;top:4px;right:12px;font-size:20px;line-height:1;cursor:pointer;color:#4a2f12;z-index:4;padding:3px}
+.scr-x{position:absolute;top:calc(var(--ph) * .11);right:34px;font-size:20px;line-height:1;cursor:pointer;color:#4a2f12;z-index:4;padding:3px}
 .scr-col,.scr-in{scrollbar-width:none;-ms-overflow-style:none}
 .scr-col::-webkit-scrollbar,.scr-in::-webkit-scrollbar{display:none;width:0;height:0}
 .scr-card{border:1.5px solid rgba(70,42,18,.55);border-radius:3px;background:rgba(80,50,20,.1);box-shadow:inset 0 0 0 1px rgba(255,235,190,.25);padding:10px 12px;margin-bottom:10px}
@@ -2062,7 +2066,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .scr-bar.xp i{background:linear-gradient(#f0cf7a,#b8862c)}
 .scr-bar.hp i{background:linear-gradient(#e0524a,#8c1f1a)}
 .scr-bar.mp i{background:linear-gradient(#5aa0ea,#1f4f95)}
-.scr-row{display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid rgba(70,42,18,.28);font-size:14px}
+.scr-row{display:flex;align-items:center;gap:8px;padding:4px 2px;border-bottom:1px solid rgba(70,42,18,.28);font-size:14px}
 .scr-row:last-child{border-bottom:0}
 .scr-row img{width:20px;height:20px;object-fit:contain;filter:sepia(.7) brightness(.5)}
 .scr-row b{margin-left:auto;font-size:15px}
@@ -2072,7 +2076,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .scr-pts{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700}
 .scr-pts b{font-size:19px;color:#7a2a14;margin-left:2px}
 .scr-btn{margin-left:auto;padding:6px 12px;border:2px solid #3d2810;border-radius:3px;background:linear-gradient(#8a6230,#5e3f1c);color:#ecd49a;font:700 13px 'Galmuri11','Malgun Gothic',sans-serif;opacity:.6;box-shadow:inset 0 1px 0 rgba(255,235,190,.35)}
-.scr-st{display:flex;align-items:center;gap:10px;padding:9px 10px;margin-bottom:8px;border:1.5px solid rgba(70,42,18,.5);border-radius:3px;background:rgba(80,50,20,.1);box-shadow:inset 0 0 0 1px rgba(255,235,190,.25)}
+.scr-st{display:flex;align-items:center;gap:10px;padding:7px 10px;margin-bottom:6px;border:1.5px solid rgba(70,42,18,.5);border-radius:3px;background:rgba(80,50,20,.1);box-shadow:inset 0 0 0 1px rgba(255,235,190,.25)}
 .scr-ic{flex:none;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;background:radial-gradient(circle at 35% 30%,#4a3622,#1f160c);border:2px solid #8a6a3a;box-shadow:0 1px 3px rgba(0,0,0,.5)}
 .scr-ic img{width:24px;height:24px;object-fit:contain}
 .scr-sn{flex:1;min-width:0}
@@ -2082,10 +2086,12 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .scr-vl{width:34px;text-align:center;font-size:18px;font-weight:700}
 .scr-pm{display:flex;gap:5px}
 .scr-pm button{width:30px;height:30px;border:2px solid #3d2810;border-radius:3px;background:linear-gradient(#8a6230,#5e3f1c);color:#ecd49a;font:700 18px/1 sans-serif;opacity:.6;box-shadow:inset 0 1px 0 rgba(255,235,190,.35)}
+.scr-pm button:not(:disabled),.scr-btn:not(:disabled){opacity:1;cursor:pointer}
+.scr-pm button:not(:disabled):active,.scr-btn:not(:disabled):active{filter:brightness(1.25)}
 @media (max-width:620px){
 .scr-in{flex-direction:column;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain}
 .scr-col{flex:none;overflow:visible}
-.scr.open .scr-paper{height:min(74vh,620px)}
+.scr-wrap{--ph:min(76vh,640px)}
 }
 `;
   document.head.appendChild(scrStyle);
@@ -2093,15 +2099,16 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   scrEl.className = 'scr';
   document.body.appendChild(scrEl);
   let scrHideT = 0, scrOpenT = 0;
-  // 스탯 (기능 없이 모양만): [약어, 이름, 설명]
+  // 스탯: [약어, 이름, 설명(1포인트당), 서버 키]. 실제 수치는 server.js 의 STAT 에 있어요 (바꾸면 여기 설명도 같이)
   const STATS = [
-    ['STR', '힘', '공격력 증가, 무기 공격력 상승'],
-    ['DEX', '민첩', '치명타 확률 증가, 명중률 상승'],
-    ['CON', '체력', '최대 HP 증가, 방어력 상승'],
-    ['INT', '지능', '최대 MP 증가, 마법 공격력 상승'],
-    ['LUK', '운', '아이템 획득 확률 증가, 치명타 피해 상승'],
-    ['AGI', '공속/회피', '공격 속도 증가, 회피율 상승']
+    ['STR', '힘', '공격력 +4%', 'str'],
+    ['DEX', '민첩', '이동 속도 +0.2% (만렙 총 495포인트면 +100%)', 'dex'],
+    ['CON', '체력', '최대 HP +10', 'con'],
+    ['INT', '지능', '최대 MP +6', 'int'],
+    ['LUK', '운', '치명타 피해 +2%, 아이템 획득 확률 +0.6% (최대 +100%)', 'luk'],
+    ['AGI', '공속/치명', '공격 속도 +0.8% (최대 +50%), 치명타 확률 +0.8% (최대 50%)', 'agi']
   ];
+  const pc = (x, d = 1) => (Math.round(x * 100 * Math.pow(10, d)) / Math.pow(10, d)) + '%';
   const scrSlots = (n) => '<div class="scr-slots">' + '<i></i>'.repeat(n) + '</div>';
   const scrBar = (cls, label, a, b) =>
     '<div class="scr-bw"><div class="scr-bt"><span>' + label + '</span><span>' + fmt(a) + ' / ' + fmt(b) + '</span></div><div class="scr-bar ' + cls + '"><i style="width:' + pct(a, b) + '%"></i></div></div>';
@@ -2116,19 +2123,23 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       '</div></div></div>' +
       '<div class="scr-card"><div class="scr-h"><img src="/ui/orn_diamond.png" alt="">기본 정보</div>' +
       scrRow('/ui/icon_heart.png', '체력', fmt(PLAYER.hpMax)) + scrRow('/ui/icon_drop.png', '마나', fmt(PLAYER.mpMax)) +
-      scrRow('/ui/slot_weapon.png', '공격력', '0') + scrRow('/ui/slot_armor.png', '방어력', '0') +
-      scrRow('/ui/icon_gear.png', '치명타 확률', '0%') + scrRow('/ui/icon_gear.png', '치명타 피해', '150%') + scrRow('/ui/slot_boots.png', '이동 속도', '100%') +
+      scrRow('/ui/slot_weapon.png', '공격력', '+' + pc(PLAYER.st.dmg)) + scrRow('/ui/slot_armor.png', '방어력', '0') +
+      scrRow('/ui/icon_gear.png', '치명타 확률', pc(PLAYER.st.crit)) + scrRow('/ui/icon_gear.png', '치명타 피해', pc(PLAYER.st.critDmg, 0)) +
+      scrRow('/ui/icon_gear.png', '공격 속도', '+' + pc(PLAYER.st.aspd)) + scrRow('/ui/icon_gear.png', '아이템 획득', '+' + pc(PLAYER.st.drop)) +
+      scrRow('/ui/slot_boots.png', '이동 속도', pc(1 + PLAYER.st.move, 0)) +
       '</div>' +
       '<div class="scr-card"><div class="scr-h"><img class="ic" src="/ui/skill_btn.png" alt="">보유 스킬</div>' + scrSlots(5) + '<div class="scr-note">아직 배운 스킬이 없어요</div></div>' +
       '<div class="scr-card"><div class="scr-h"><img class="ic sp" src="/ui/icon_trait.png" alt="">특성</div>' + scrSlots(5) + '<div class="scr-note">아직 얻은 특성이 없어요</div></div>';
     const right =
       '<div class="scr-card"><div class="scr-h"><img src="/ui/orn_diamond.png" alt="">스탯 포인트</div>' +
-      '<div class="scr-pts"><span>사용 가능한 포인트</span><b>0</b><button class="scr-btn" disabled>초기화</button></div></div>' +
-      STATS.map(([k, n, d]) =>
+      '<div class="scr-pts"><span>사용 가능한 포인트</span><b>' + PLAYER.statPts + '</b><button class="scr-btn" data-streset="1"' + (Object.values(PLAYER.stats).some((v) => v > 0) ? '' : ' disabled') + '>초기화</button></div></div>' +
+      STATS.map(([ab, n, d, key]) =>
         '<div class="scr-st">' +
-        '<div class="scr-sn"><b>' + k + '</b><small>(' + n + ')</small><div>' + d + '</div></div>' +
-        '<span class="scr-vl">0</span><span class="scr-pm"><button disabled>−</button><button disabled>+</button></span></div>').join('') +
-      '<div class="scr-note">스탯 찍기는 아직 준비 중이에요</div>';
+        '<div class="scr-sn"><b>' + ab + '</b><small>(' + n + ')</small><div>' + d + '</div></div>' +
+        '<span class="scr-vl">' + PLAYER.stats[key] + '</span><span class="scr-pm">' +
+        '<button data-st="' + key + '" data-d="-1"' + (PLAYER.stats[key] > 0 ? '' : ' disabled') + '>−</button>' +
+        '<button data-st="' + key + '" data-d="1"' + (PLAYER.statPts > 0 ? '' : ' disabled') + '>+</button></span></div>').join('') +
+      '<div class="scr-note">레벨이 오를 때마다 5포인트 · Shift+클릭은 5포인트씩</div>';
     scrEl.innerHTML =
       '<div class="scr-wrap"><div class="scr-r top"><i class="cl"></i><i class="bd bl"></i><i class="st"></i><i class="bd br"></i><i class="cr"></i></div>' +
       '<div class="scr-paper"><div class="scr-x" data-sclose="1">✕</div>' +
@@ -2143,6 +2154,10 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (!(t instanceof Element)) return;
     if (performance.now() - scrOpenT < 500) return;   // 상태창을 연 그 터치의 click 이 어두운 배경에 떨어져 바로 닫히는 것 방지
     if (t === scrEl || t.closest('[data-sclose]')) { closeWin(); return; }
+    const sb = t.closest('[data-st]');   // 스탯 + / − (서버가 남은 포인트를 검사해요)
+    if (sb && !sb.disabled) { socket.emit('stat', { k: sb.dataset.st, n: Number(sb.dataset.d) * (e.shiftKey ? 5 : 1) }); return; }
+    const rb = t.closest('[data-streset]');
+    if (rb && !rb.disabled) socket.emit('stat:reset');
   });
 
   function openStatus() {
@@ -2859,6 +2874,22 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     xpChain = xpChain.then(() => stepXp(t)).catch(() => {});   // 여러 번 연속으로 와도 차례대로 보여줘요
   }
   socket.on('exp', setExp);
+  // 스탯 정보(서버가 정함): 남은 포인트·찍은 값·능력치. MP 바, 평타 속도, 스탯 창을 갱신해요
+  socket.on('stats', (d) => {
+    if (!d || typeof d !== 'object') return;
+    const ok = (v) => Number.isFinite(v);
+    if (d.stats) for (const k of ['str', 'dex', 'con', 'int', 'luk', 'agi']) if (ok(d.stats[k])) PLAYER.stats[k] = d.stats[k];
+    if (ok(d.pts)) PLAYER.statPts = d.pts;
+    if (ok(d.mpMax) && d.mpMax > 0) {
+      PLAYER.mpMax = d.mpMax; PLAYER.mp = d.mpMax;   // MP 를 쓰는 곳이 아직 없어서 늘 가득
+      const mbar = bui.querySelector('.mp .hpmp-in i'), mtxt = bui.querySelector('.mp .hpmp-in span');
+      if (mbar) mbar.style.width = '100%';
+      if (mtxt) mtxt.textContent = fmt(PLAYER.mp) + ' / ' + fmt(PLAYER.mpMax);
+    }
+    for (const k of ['dmg', 'crit', 'critDmg', 'drop', 'aspd', 'move']) if (ok(d[k])) PLAYER.st[k] = d[k];
+    setWeaponSpeed(myRig, 1 + PLAYER.st.aspd);
+    if (scrEl.classList.contains('open')) renderScr();
+  });
   socket.on('hp', (d) => {
     if (!d || !Number.isFinite(d.hp) || !Number.isFinite(d.max)) return;
     const before = PLAYER.hp;
@@ -3011,9 +3042,10 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       idleTime = 0;
     } else if (len > 0.01) {
       const running = RUN_TOGGLE ? runOn : (keys.ControlLeft || keys.ControlRight);
+      const statMove = 1 + (PLAYER.st.move || 0);   // AGI 스탯 이동 속도 (만렙 전부 찍으면 2배)
       let speed =
-        7 * SPEED_SCALE * (running ? RUN_MULT : 1) * (fast ? fastMult : 1) * mag;
-      if (swimming) speed = 7 * SPEED_SCALE * (running ? 0.8 : 0.58) * (fast ? fastMult : 1) * mag;   // 헤엄은 걷기보다 느림
+        7 * SPEED_SCALE * (running ? RUN_MULT : 1) * (fast ? fastMult : 1) * mag * statMove;
+      if (swimming) speed = 7 * SPEED_SCALE * (running ? 0.8 : 0.58) * (fast ? fastMult : 1) * mag * statMove;   // 헤엄은 걷기보다 느림
       else if (waterDepth > 0.3) speed *= 1 - 0.35 * Math.min(1, waterDepth / 2);                        // 물에 잠길수록 느려짐
 
       const dirX = mx / len;
