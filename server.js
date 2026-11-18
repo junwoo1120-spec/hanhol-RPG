@@ -96,7 +96,7 @@ let ITEMS_MOD = null;
 // 경험치·골드: 숫자가 아니면 0, 음수는 0, 상한 초과는 상한으로 잘라서(정수) 저장·복구해요
 const EXP_MAX = 1e12, GOLD_MAX = 1e12;
 const cleanNum = (v, max) => (Number.isFinite(v) ? Math.min(max, Math.max(0, Math.floor(v))) : 0);
-const MAX_LEVEL = 999;
+const MAX_LEVEL = 100;   // 만렙
 const expNeed = (lv) => { lv = Math.max(1, lv); return (10 + 5 * lv) * (10 + lv); };   // 레벨 N 에서 다음 레벨까지 필요한 경험치 (화면 main.js 의 expNeed 와 같은 공식이어야 해요)
 // 경험치가 다 차면 레벨이 올라가요 (남은 경험치는 다음 레벨로 이월, 한 번에 여러 레벨도 가능)
 const settleExp = (p) => {
@@ -110,7 +110,7 @@ const saveProfile = (p) => {
   // 땅 위에 있을 때만 위치를 새로 저장 (동굴·집 안이면 마지막 땅 위 위치를 그대로 둠)
   const above = p.spawned && [p.x, p.z].every(Number.isFinite) && p.y >= UNDER_Y && Math.abs(p.x) < 5000 && Math.abs(p.z) < 5000;
   const pos = above ? { x: Math.round(p.x * 10) / 10, z: Math.round(p.z * 10) / 10 } : (old && old.pos) || null;
-  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, level: p.level, exp: cleanNum(p.exp, EXP_MAX), gold: cleanNum(p.gold, GOLD_MAX), pos });
+  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, level: p.level, exp: cleanNum(p.exp, EXP_MAX), gold: cleanNum(p.gold, GOLD_MAX), stats: { ...p.stats }, pos });
 };
 function kickPlayer(o) {   // 같은 계정으로 다른 곳에서 로그인하면 먼저 있던 접속을 끊어요
   saveProfile(o);
@@ -120,7 +120,7 @@ function kickPlayer(o) {   // 같은 계정으로 다른 곳에서 로그인하�
 }
 const sendInv = (p) => io.to(p.id).emit('inv', { items: p.inv });
 const sendSkills = (p) => io.to(p.id).emit('skills', { learned: p.learned, slotR: p.slotR });
-const sendExp = (p) => io.to(p.id).emit('exp', { level: p.level, exp: p.exp, expMax: expNeed(p.level), gold: p.gold });   // 경험치를 얻었을 때 이걸 부르면 화면 경험치 바가 차올라요
+const sendExp = (p) => { io.to(p.id).emit('exp', { level: p.level, exp: p.exp, expMax: expNeed(p.level), gold: p.gold }); sendStats(p); };   // 레벨업으로 늘어난 스탯 포인트도 같이   // 경험치를 얻었을 때 이걸 부르면 화면 경험치 바가 차올라요
 // 경험치 주기: addExp(p, 숫자) → 다 차면 자동으로 레벨업하고 화면에 알려줘요 (몬스터 처치 등에서 이걸 부르면 돼요)
 const addExp = (p, n) => { if (!p || !Number.isFinite(n) || n <= 0) return; p.exp = cleanNum(p.exp + n, EXP_MAX); settleExp(p); sendExp(p); };   // 저장은 30초마다·접속 끊길 때 자동으로 돼요
 // ---- 몬스터 레벨 · 처치 경험치 ----
@@ -129,16 +129,16 @@ const MOB_LV = { rabbit: 1, goblin: 3, slime: 7, golem: 15, boss: 35 };   // bos
 const MOB_EXP_MULT = { boss: 4 };                                          // 보스는 같은 레벨 일반 몬스터의 4배
 const mobBaseExp = (type) => (10 + 5 * MOB_LV[type]) * (MOB_EXP_MULT[type] || 1);   // 같은 레벨일 때 주는 경험치
 // 내 레벨(plv)로 type 몬스터를 잡았을 때 받는 경험치
-//  - 몬스터 단계(약한 순: 토끼 → 고블린 → 슬라임 → 골렘 → 오크)로 따져서, 내 단계보다 두 단계 이상 강한 몬스터는 보상 없음
+//  - 몬스터 단계(약한 순: 토끼 → 고블린 → 슬라임 → 골렘 → 오크)로 따져서, 내 단계보다 두 단계 이상 강한 몬스터는 경험치·전리품 모두 없음
 //    (내 단계 = 내 레벨 이하인 몬스터 중 가장 강한 몬스터. 예: 1레벨은 토끼 단계라서 고블린까지만 보상, 슬라임은 0)
 //  - 위 몬스터: 레벨 차이 1당 +5%(최대 +25%) / 아래 몬스터: 레벨 차이 1당 -15%, 6 이상 낮으면 0
 const MOB_TIERS = ['rabbit', 'goblin', 'slime', 'golem', 'boss'];
 const playerTier = (plv) => { let k = 0; for (let i = 0; i < MOB_TIERS.length; i++) if (MOB_LV[MOB_TIERS[i]] <= plv) k = i; return k; };
+// 내 단계보다 두 단계 이상 강한 몬스터는 경험치도 전리품도 없어요 (보스 포함)
+const canReward = (plv, type) => !MOB_LV[type] || MOB_TIERS.indexOf(type) - playerTier(plv) < 2;
 const expReward = (plv, type) => {
   const mlv = MOB_LV[type];
-  if (!mlv) return 0;
-  if (type === 'boss') return mobBaseExp(type);   // 보스는 단계·레벨 차이와 상관없이, 보상 조건(체력 7% 이상 깎기)을 채운 사람 모두 같은 경험치
-  if (MOB_TIERS.indexOf(type) - playerTier(plv) >= 2) return 0;
+  if (!mlv || !canReward(plv, type)) return 0;
   const d = mlv - plv;
   if (d <= -6) return 0;
   return Math.floor(mobBaseExp(type) * (d >= 0 ? 1 + 0.05 * Math.min(d, 5) : 1 + 0.15 * d));
@@ -164,10 +164,11 @@ function addItem(p, id, n = 1) {   // 성공하면 true, 칸이 없으면 false 
 function giveLoot(pid, kind) {
   const p = players.get(pid);
   if (!p || !ITEMS_MOD || !p.inv) return;
+  if (!canReward(p.level, kind)) return;   // 두 단계 이상 강한 몬스터는 전리품도 없어요
   const got = [];
   let full = false;
   let wore = false;
-  for (const e of ITEMS_MOD.rollLoot(kind)) {
+  for (const e of ITEMS_MOD.rollLoot(kind, Math.random, p.dropMul || 1)) {
     const def = ITEMS_MOD.ITEMS[e.id];
     if (def && def.kind === 'gear' && !p.gear[def.slot]) { p.gear[def.slot] = e.id; got.push(e); wore = true; continue; }   // 장비는 비어 있는 칸이면 인벤토리를 거치지 않고 바로 입음
     if (addItem(p, e.id, e.n)) got.push(e); else full = true;   // 이미 입은 칸이면 인벤토리로
@@ -178,7 +179,51 @@ function giveLoot(pid, kind) {
 }
 // ---------- 장비 (갑옷·신발): 장착하면 최대 체력이 늘어요 ----------
 const sendGear = (p) => io.to(p.id).emit('gear', { gear: p.gear });
-const calcHpMax = (p) => Math.max(1, Math.round(PLAYER_HP_MAX * (p.hpMult || 1))) + (ITEMS_MOD ? ITEMS_MOD.gearHp(p.gear) : 0);
+// ---------- 스탯 (레벨업마다 5포인트) ----------
+// 1포인트당 효과. 만렙 100(총 495포인트) 기준이고, 몬스터를 아주 세게 만들 계획이라 퍼센트를 넉넉하게 잡았어요. 여기 숫자만 바꾸면 돼요
+const STAT_KEYS = ['str', 'dex', 'con', 'int', 'luk', 'agi'];
+const STAT = {
+  PER_LEVEL: 5,
+  STR_DMG: 0.04,                    // STR: 공격력 +4%
+  DEX_MOVE: 1 / (5 * (MAX_LEVEL - 1)), MOVE_MAX: 1.0,   // DEX: 이동 속도 — 만렙(100레벨)의 총 495포인트를 전부 찍으면 정확히 +100% (포인트당 약 +0.2%)
+  CON_HP: 10,                       // CON: 최대 HP +10
+  INT_MP: 6, MP_BASE: 50,           // INT: 최대 MP +6 (기본 50)
+  LUK_CRITDMG: 0.02, CRITDMG_BASE: 1.5, LUK_DROP: 0.006, DROP_MAX: 1.0,   // LUK: 치명타 피해 +2%(기본 150%), 아이템 획득 확률 +0.6%(최대 +100%)
+  AGI_ASPD: 0.008, ASPD_MAX: 0.5,   // AGI: 공격 속도 +0.8% (최대 +50%)
+  AGI_CRIT: 0.008, CRIT_MAX: 0.5    // AGI: 치명타 확률 +0.8% (최대 50%)
+};
+const zeroStats = () => ({ str: 0, dex: 0, con: 0, int: 0, luk: 0, agi: 0 });
+const cleanStats = (raw) => { const s = zeroStats(); if (raw && typeof raw === 'object') for (const k of STAT_KEYS) { const v = raw[k]; s[k] = Number.isFinite(v) && v >= 0 && v <= 99999 ? Math.floor(v) : 0; } return s; };
+const statSum = (p) => STAT_KEYS.reduce((a, k) => a + p.stats[k], 0);
+const statPts = (p) => STAT.PER_LEVEL * (p.level - 1) - statSum(p);   // 아직 안 쓴 포인트
+// 레벨보다 많이 쓴 상태(저장 데이터가 이상하거나 개발자 도구로 레벨을 내림)면 전부 초기화
+const fitStats = (p) => { if (!p.stats) p.stats = zeroStats(); if (statPts(p) < 0) p.stats = zeroStats(); };
+// 스탯 → 실제 능력치 (몬스터 sim 은 p.dmgMult·critChance·critDmg 를 읽어요)
+function applyStats(p) {
+  fitStats(p);
+  const s = p.stats;
+  p.dmgMult = (p.devDmg || 1) * (1 + STAT.STR_DMG * s.str);   // 개발자 도구 배율 × STR
+  p.critChance = Math.min(STAT.CRIT_MAX, STAT.AGI_CRIT * s.agi);
+  p.critDmg = STAT.CRITDMG_BASE + STAT.LUK_CRITDMG * s.luk;
+  p.dropMul = 1 + Math.min(STAT.DROP_MAX, STAT.LUK_DROP * s.luk);
+  p.atkSpd = Math.min(STAT.ASPD_MAX, STAT.AGI_ASPD * s.agi);
+  p.moveSpd = Math.min(STAT.MOVE_MAX, STAT.DEX_MOVE * s.dex);
+  p.mpMax = STAT.MP_BASE + STAT.INT_MP * s.int;
+}
+const sendStats = (p) => io.to(p.id).emit('stats', {
+  pts: statPts(p), stats: { ...p.stats }, mpMax: p.mpMax,
+  dmg: STAT.STR_DMG * p.stats.str, crit: p.critChance, critDmg: p.critDmg, drop: p.dropMul - 1, aspd: p.atkSpd, move: p.moveSpd
+});
+const calcHpMax = (p) => Math.max(1, Math.round(PLAYER_HP_MAX * (p.hpMult || 1))) + (ITEMS_MOD ? ITEMS_MOD.gearHp(p.gear) : 0) + (p.stats ? STAT.CON_HP * p.stats.con : 0);
+// 스탯이 바뀐 뒤: 능력치·최대 체력을 다시 계산하고 화면에 알려줘요 (최대 체력이 늘면 현재 체력도 같이 늘어요)
+function refreshStats(p) {
+  applyStats(p);
+  const max = calcHpMax(p), diff = max - p.hpMax;
+  p.hpMax = max;
+  p.hp = diff > 0 ? Math.min(max, p.hp + diff) : Math.min(p.hp, max);
+  io.to(p.id).emit('hp', { hp: p.hp, max: p.hpMax });
+  sendStats(p); saveProfile(p);
+}
 function applyGear(p) {   // 최대 체력을 다시 계산: 늘어난 만큼 현재 체력도 같이 늘고, 줄면 최대치에 맞춰 깎임
   const max = calcHpMax(p), diff = max - p.hpMax;
   p.hpMax = max;
@@ -309,38 +354,59 @@ io.on('connection', (socket) => {
     me.slotR = sv ? sv.slotR : null;
     me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, pants: sv.gear.pants || null, weapon: sv.gear.weapon || null } : { armor: null, pants: null, weapon: null };
     if (sv && Number.isFinite(sv.level)) me.level = sv.level;
+    me.stats = cleanStats(sv && sv.stats);        // 예전 계정은 스탯이 없어서 0부터 시작
     me.exp = cleanNum(sv && sv.exp, EXP_MAX);     // 예전 계정은 값이 없어서 0부터 시작
     me.gold = cleanNum(sv && sv.gold, GOLD_MAX);
     settleExp(me);   // 저장된 경험치가 이미 가득이면 레벨로 넘겨요
-    me.hpMax = calcHpMax(me); me.hp = me.hpMax;   // 장비로 늘어난 최대 체력 포함
+    applyStats(me);
+    me.hpMax = calcHpMax(me); me.hp = me.hpMax;   // 장비·체력 스탯으로 늘어난 최대 체력 포함
     const spawn = sv && sv.pos && Number.isFinite(sv.pos.x) && Number.isFinite(sv.pos.z) ? { x: sv.pos.x, z: sv.pos.z } : undefined;   // 마지막으로 있던 땅 위 위치
     socket.emit('init', { id: socket.id, seed: SEED, spawn, level: me.level, exp: me.exp, expMax: expNeed(me.level), gold: me.gold });
     socket.emit('hp', { hp: me.hp, max: me.hpMax });
-    sendInv(me); sendSkills(me); sendGear(me);
+    sendInv(me); sendSkills(me); sendGear(me); sendStats(me);
     if (caveEnt) socket.emit('cave', caveEnt);   // 동굴 입구 위치 (아직 계산 전이면 계산이 끝났을 때 전체에게 보냄)
   });
 
   // 개발자 도구 (닉네임이 DEV_NICK 인 사람만). 화면 패널이 켜질 때 인사를 보내면 현재 배율을 알려줘요
   socket.on('dev:hello', () => {
     const p = players.get(socket.id);
-    if (p && p.nick === DEV_NICK) socket.emit('dev:on', { dmg: p.dmgMult || 1, hp: p.hpMult || 1 });
+    if (p && p.nick === DEV_NICK) socket.emit('dev:on', { dmg: p.devDmg || 1, hp: p.hpMult || 1 });
   });
   socket.on('dev:set', (d) => {
     const p = players.get(socket.id);
     if (!p || p.nick !== DEV_NICK || !d || typeof d !== 'object') return;
     const num = (v) => { v = Number(v); return Number.isFinite(v) ? Math.min(DEV_MULT_MAX, Math.max(DEV_MULT_MIN, v)) : 1; };
-    p.dmgMult = num(d.dmg);
+    p.devDmg = num(d.dmg);   // 개발자 도구 공격력 배율 (스탯 STR 배율과 곱해져서 p.dmgMult 가 돼요)
     p.hpMult = num(d.hp);
-    const max = calcHpMax(p);   // 장비로 늘어난 최대 체력 포함
+    applyStats(p);
+    const max = calcHpMax(p);   // 장비·스탯으로 늘어난 최대 체력 포함
     if (max !== p.hpMax) { p.hpMax = max; p.hp = max; }   // 최대 체력이 바뀌면 가득 채워서 시작
     socket.emit('hp', { hp: p.hp, max: p.hpMax });
-    socket.emit('dev:on', { dmg: p.dmgMult, hp: p.hpMult });
+    socket.emit('dev:on', { dmg: p.devDmg, hp: p.hpMult });
+  });
+
+  // 스탯 포인트 찍기: { k: 'str'|'dex'|'con'|'int'|'luk'|'agi', n: +올릴 포인트 / -되돌릴 포인트 }. 남은 포인트·현재 찍은 값 안에서만 서버가 허락해요
+  socket.on('stat', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !p.stats || !d || typeof d !== 'object' || !STAT_KEYS.includes(d.k)) return;
+    let n = Math.trunc(Number(d.n));
+    if (!Number.isFinite(n) || n === 0) return;
+    n = n > 0 ? Math.min(n, statPts(p)) : -Math.min(-n, p.stats[d.k]);
+    if (n === 0) return;
+    p.stats[d.k] += n;
+    refreshStats(p);
+  });
+  socket.on('stat:reset', () => {
+    const p = players.get(socket.id);
+    if (!p || !p.stats || statSum(p) === 0) return;
+    p.stats = zeroStats();
+    refreshStats(p);
   });
 
   // 화면이 준비되면 인벤토리·스킬 정보를 한 번 더 요청 (접속 직후에 보낸 것을 놓쳤을 때 대비)
   socket.on('sync', () => {
     const p = players.get(socket.id);
-    if (p && p.inv) { sendInv(p); sendSkills(p); sendGear(p); }
+    if (p && p.inv) { sendInv(p); sendSkills(p); sendGear(p); sendStats(p); }
   });
   // 장비 장착: 인벤토리의 갑옷/신발을 해당 칸에 입음 (이미 입은 게 있으면 서로 바뀜)
   socket.on('wear', (d) => {
@@ -395,10 +461,10 @@ io.on('connection', (socket) => {
   socket.on('dev:exp', (d) => {
     const p = players.get(socket.id);
     if (!p || p.nick !== DEV_NICK || !d || typeof d !== 'object') return;
-    if (Number.isFinite(d.level)) p.level = Math.min(999, Math.max(1, Math.floor(d.level)));
+    if (Number.isFinite(d.level)) p.level = Math.min(MAX_LEVEL, Math.max(1, Math.floor(d.level)));
     if (Number.isFinite(d.exp)) p.exp = cleanNum(d.exp, EXP_MAX);
     if (Number.isFinite(d.add)) p.exp = cleanNum(p.exp + d.add, EXP_MAX);
-    settleExp(p); sendExp(p); saveProfile(p);   // 가득 차면 레벨업
+    settleExp(p); refreshStats(p); sendExp(p); saveProfile(p);   // 가득 차면 레벨업 (레벨이 내려가 포인트가 모자라면 스탯은 초기화)
   });
   socket.on('dev:book', () => {
     const p = players.get(socket.id);
@@ -423,7 +489,7 @@ io.on('connection', (socket) => {
       const dt = Math.max((now - p.t) / 1000, 0.016);
       const d = Math.hypot(m.x - p.x, m.z - p.z);
       // 서버 검증: 너무 빠르면 되돌림 (속도 배율 켜면 한도도 함께 증가)
-      if (d > MAX_SPEED * (p.fast ? FAST_MULT : 1) * dt + 1 + (now < (p.dashUntil || 0) ? 6 : 0)) {   // 대쉬 직후 잠깐은 한도를 넉넉히
+      if (d > MAX_SPEED * (1 + (p.moveSpd || 0)) * (p.fast ? FAST_MULT : 1) * dt + 1 + (now < (p.dashUntil || 0) ? 6 : 0)) {   // 대쉬 직후 잠깐은 한도를 넉넉히
         socket.emit('correct', { x: p.x, y: p.y, z: p.z });
         return;
       }
@@ -465,7 +531,7 @@ io.on('connection', (socket) => {
     const p = players.get(socket.id);
     if (!p || !p.eq) return;
     const now = Date.now();
-    if (now - p.atkT < ATTACK_MIN_MS) return;
+    if (now - p.atkT < ATTACK_MIN_MS / (1 + (p.atkSpd || 0))) return;   // AGI 공격 속도만큼 간격이 짧아져요
     p.atkT = now;
     socket.broadcast.emit('atk', { id: socket.id, s: d && d.s === 1 ? 1 : 0 });
     resolveAttack(p, now);
@@ -581,9 +647,10 @@ setInterval(() => {
             if (!hp) continue;
             io.to(hid).emit('kill', { msg: '오크 대전사를 처치했습니다!' });
             if (dmgMap && (dmgMap.get(hid) || 0) < need - 1e-9) continue;   // 7% 미만이면 보상 없음
+            if (!canReward(hp.level, 'boss')) continue;                       // 두 단계 이상 강한 보스면 전리품(스킬북 포함)·경험치 모두 없음
             giveLoot(hid, 'boss');   // 하급 마정석 10~15개 (피해를 준 사람마다)
             giveExp(hid, 'boss');    // 경험치도 피해를 준 사람마다
-            if (ITEMS_MOD && Math.random() < (Number(process.env.BOSS_BOOK_CHANCE) || ITEMS_MOD.BOSS_BOOK_CHANCE)) {   // 환경변수 BOSS_BOOK_CHANCE 로 확률을 바꿔 시험할 수 있어요 (예: 1 = 100%)
+            if (ITEMS_MOD && Math.random() < (Number(process.env.BOSS_BOOK_CHANCE) || ITEMS_MOD.BOSS_BOOK_CHANCE) * (hp.dropMul || 1)) {   // 환경변수 BOSS_BOOK_CHANCE 로 확률을 바꿔 시험할 수 있어요 (예: 1 = 100%)
               if (addItem(hp, 'book_slam')) { sendInv(hp); io.to(hid).emit('loot', { items: [{ id: 'book_slam', n: 1 }] }); }
               else sendToast(hp, '인벤토리가 가득 차서 스킬북을 얻지 못했어요');
             }
