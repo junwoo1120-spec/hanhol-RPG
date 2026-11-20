@@ -2025,7 +2025,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .scr{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0);transition:background .4s;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;user-select:none;-webkit-user-select:none}
 .scr.show{display:flex}
 .scr.open{background:rgba(0,0,0,.6)}
-.scr-wrap{--rh:clamp(40px,8vh,64px);--ph:min(80vh,680px);position:relative;display:flex;flex-direction:column;align-items:center;width:min(98vw,1040px);filter:drop-shadow(0 10px 24px rgba(0,0,0,.75))}
+.scr-wrap{--rh:clamp(34px,8vh,64px);--ph:min(80vh,680px);position:relative;display:flex;flex-direction:column;align-items:center;width:min(98vw,1040px);filter:drop-shadow(0 10px 24px rgba(0,0,0,.75))}
 .scr-r{position:relative;z-index:2;flex:none;display:flex;width:100%;height:var(--rh)}
 .scr-r i{display:block;height:100%;background-repeat:no-repeat;background-size:100% 100%}
 .scr-r .bd{flex:1 1 0;min-width:0}
@@ -2039,13 +2039,15 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .scr-r.bot .bd{background-image:url(/ui/scr_bot_body.png)}
 .scr-paper{position:relative;z-index:1;flex:none;width:calc(100% - var(--rh)*1.75);margin:calc(var(--rh)*-.1) 0;height:0;overflow:hidden;transition:height .6s cubic-bezier(.22,.8,.25,1);background:url(/ui/scr_paper.png) 0 0/100% 100% no-repeat}
 .scr.open .scr-paper{height:var(--ph)}   /* 종이를 조금 키워서 위아래 여백을 확보 */
-.scr-in{position:absolute;inset:0;display:flex;gap:14px;padding:calc(var(--ph) * .15) 28px 24px;   /* 종이 윗부분은 찢긴 투명 가장자리+그림자라서(높이의 약 15%) 그 아래부터 내용이 시작해요 */
+.scr-in{position:absolute;inset:0;display:flex;gap:14px;padding:calc(var(--ph) * .15) 46px calc(var(--rh) * .45 + 12px) 42px;   /* 종이 윗부분은 찢긴 투명 가장자리+그림자라서(높이의 약 15%) 그 아래부터 내용이 시작해요 */
   box-sizing:border-box;color:#33200d;text-shadow:0 1px 0 rgba(255,235,190,.35);opacity:0;transition:opacity .35s .3s}
 .scr.open .scr-in{opacity:1}
-.scr-col{flex:1 1 0;min-width:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;padding-right:2px}
-.scr-x{position:absolute;top:calc(var(--ph) * .11);right:34px;font-size:20px;line-height:1;cursor:pointer;color:#4a2f12;z-index:4;padding:3px}
-.scr-col,.scr-in{scrollbar-width:none;-ms-overflow-style:none}
-.scr-col::-webkit-scrollbar,.scr-in::-webkit-scrollbar{display:none;width:0;height:0}
+.scr-col{flex:1 1 0;min-width:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;padding:0 7px 22px 0;-webkit-mask-image:linear-gradient(#000 calc(100% - 26px),transparent);mask-image:linear-gradient(#000 calc(100% - 26px),transparent)}   /* 아래쪽이 흐려지고 얇은 스크롤바가 보여서, 잘린 게 아니라 스크롤하면 더 있다는 걸 알 수 있어요 */
+.scr-x{position:absolute;top:calc(var(--ph) * .1);right:40px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;border-radius:50%;border:1.5px solid #8a6a3a;background:#3d2810;font-size:13px;line-height:1;cursor:pointer;color:#ecd49a;z-index:4;padding:0;box-shadow:0 1px 3px rgba(0,0,0,.5)}
+.scr-col,.scr-in{scrollbar-width:thin;scrollbar-color:#6b4c2a rgba(70,42,18,.15)}
+.scr-col::-webkit-scrollbar,.scr-in::-webkit-scrollbar{width:6px;height:6px}
+.scr-col::-webkit-scrollbar-thumb,.scr-in::-webkit-scrollbar-thumb{background:#6b4c2a;border-radius:3px}
+.scr-col::-webkit-scrollbar-track,.scr-in::-webkit-scrollbar-track{background:rgba(70,42,18,.15);border-radius:3px}
 .scr-card{border:1.5px solid rgba(70,42,18,.55);border-radius:3px;background:rgba(80,50,20,.1);box-shadow:inset 0 0 0 1px rgba(255,235,190,.25);padding:10px 12px;margin-bottom:10px}
 .scr-h{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:16px;font-weight:700;color:#3a2410}
 .scr-h img{width:18px;height:auto}
@@ -2089,9 +2091,29 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .scr-pm button:not(:disabled),.scr-btn:not(:disabled){opacity:1;cursor:pointer}
 .scr-pm button:not(:disabled):active,.scr-btn:not(:disabled):active{filter:brightness(1.25)}
 @media (max-width:620px){
-.scr-in{flex-direction:column;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain}
-.scr-col{flex:none;overflow:visible}
+.scr-in{flex-direction:column;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;padding-left:30px;padding-right:34px;-webkit-mask-image:linear-gradient(#000 calc(100% - 26px),transparent);mask-image:linear-gradient(#000 calc(100% - 26px),transparent)}
+.scr-col{flex:none;overflow:visible;padding:0;-webkit-mask-image:none;mask-image:none}
 .scr-wrap{--ph:min(76vh,640px)}
+.scr-x{right:30px}
+}
+@media (max-height:700px){
+.scr-card{padding:7px 10px;margin-bottom:7px}
+.scr-h{font-size:14px;margin:0 0 5px}
+.scr-prof>img{width:68px}
+.scr-lvl{font-size:18px}
+.scr-nick{font-size:14px}
+.scr-kv{font-size:12px}
+.scr-row{padding:2px;font-size:12.5px}
+.scr-st{padding:4px 8px;margin-bottom:5px}
+.scr-sn b{font-size:14px}
+.scr-sn div{margin-top:1px;font-size:10.5px}
+.scr-vl{font-size:16px}
+.scr-pm button{width:26px;height:26px;font-size:16px}
+.scr-btn{padding:4px 10px}
+.scr-note{margin-top:4px}
+}
+@supports (height:1dvh){   /* 모바일 주소창 때문에 vh 가 실제 화면보다 커서 위아래가 잘리던 것 방지: 보이는 화면 높이(dvh)에 딱 맞춤 */
+.scr-wrap{--rh:clamp(34px,7dvh,64px);--ph:min(680px,calc(100dvh - var(--rh) * 1.8 - 14px))}
 }
 `;
   document.head.appendChild(scrStyle);
