@@ -154,11 +154,12 @@ function sharedSword() {
 //   좌표계는 검과 같아요. 원점 = 손잡이 가운데(쥐는 곳), 자루/머리 방향 = +Y, 날이 뻗는 쪽(베는 쪽) = +X, 납작한 면 = ±Z
 //   (휘두르는 방향 = +X 이므로, 아래 모션 표의 자세는 '날이 앞서 나가도록' 손목 각도를 맞춰 둔 것)
 // ============================================================
-const AXE_COL = {
-  wood: '#8c5b2d', woodTop: '#b27a40', woodDark: '#6e4421', flare: '#7a4a22',
-  wrap: '#6f5b47', wrapDark: '#54412f',
-  iron: '#4b4f57', ironTop: '#6d727b', rivet: '#a4a9b0',
-  steelIn: '#59606a', steelMid: '#8d949e', steelEdge: '#cdd3da', steelDark: '#454b54'
+const AXE_SCALE = 1.4;   // 오크 도끼 크기 배율 (1 = 처음 크기)
+const AXE_COL = {   // 오래 써서 낡은 색: 메마른 어두운 나무, 해진 가죽, 녹슬어 칙칙한 쇠 (밝게 반짝이던 날도 무디게)
+  wood: '#5c3d20', woodTop: '#79552f', woodDark: '#432b16', flare: '#4d3219',
+  wrap: '#4d3f30', wrapDark: '#352a1f',
+  iron: '#3b3937', ironTop: '#57524c', rivet: '#6d6252',
+  steelIn: '#48443f', steelMid: '#665f55', steelEdge: '#948a7b', steelDark: '#33302d'
 };
 
 function buildAxeGeometry() {
@@ -199,7 +200,7 @@ function buildAxeGeometry() {
 
   // --- 강철 날: 반달 모양. 안쪽 선(머리통에 붙는 쪽)과 바깥 날 선을 같은 간격으로 나눠 가로줄(rung)로 이음 ---
   const inner = [[0.20, 0.60], [0.115, 0.55], [0.062, 0.50], [0.062, 0.45], [0.062, 0.40], [0.062, 0.35], [0.062, 0.30], [0.09, 0.24], [0.15, 0.17]];
-  const edge  = [[0.20, 0.60], [0.245, 0.565], [0.27, 0.52], [0.285, 0.46], [0.29, 0.40], [0.285, 0.34], [0.27, 0.28], [0.235, 0.22], [0.15, 0.17]];
+  const edge  = [[0.20, 0.60], [0.238, 0.565], [0.262, 0.52], [0.262, 0.46], [0.292, 0.40], [0.250, 0.34], [0.258, 0.28], [0.222, 0.22], [0.15, 0.17]];   // 날이 이가 빠지고 여기저기 찌그러짐
   const rung = (i, side) => {
     const a = inner[i], b = edge[i];
     const tIn = i === 0 || i === inner.length - 1 ? 0.002 : 0.017;   // 안쪽 두께 (뿔 끝은 뾰족)
@@ -224,9 +225,23 @@ function buildAxeGeometry() {
     quad([e0[0], e0[1], 0.0035], [e0[0], e0[1], -0.0035], [e1[0], e1[1], -0.0035], [e1[0], e1[1], 0.0035], ce, ce, ce, ce);
   }
 
+  // --- 낡은 느낌: 점마다 밝기를 불규칙하게 얼룩지게 하고, 쇠 부분(색이 거의 회색인 곳)에는 녹이 번지게 ---
+  const rustC = new THREE.Color('#7a4526');
+  const hash = (x, y, z) => { const v = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453; return v - Math.floor(v); };
+  for (let i = 0; i < pos.length; i += 3) {
+    const h = hash(Math.round(pos[i] * 90), Math.round(pos[i + 1] * 90), Math.round(pos[i + 2] * 90));
+    const r = col[i], g = col[i + 1], b = col[i + 2];
+    const mx = Math.max(r, g, b), grey = mx > 0 && (mx - Math.min(r, g, b)) / mx < 0.5;
+    const m = 0.78 + h * 0.3;
+    let nr = r * m, ng = g * m, nb = b * m;
+    if (grey && h > 0.45) { const t = (h - 0.45) * 1.1; nr += (rustC.r - nr) * t; ng += (rustC.g - ng) * t; nb += (rustC.b - nb) * t; }
+    col[i] = nr; col[i + 1] = ng; col[i + 2] = nb;
+  }
+
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.scale(AXE_SCALE, AXE_SCALE, AXE_SCALE);   // 손잡이 가운데(원점) 기준으로 키움
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
   return geo;
