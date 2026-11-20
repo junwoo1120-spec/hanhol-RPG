@@ -342,7 +342,7 @@ function getWp(rig) {
   if (!rig.wp) {
     rig.wp = {
       kind: DEFAULT_WEAPON,
-      mode: WS.NONE, t: 0, cd: 0, queued: false, want: false, hitDone: false, side: 0, nextSide: 0, sweep: false, slam: false,
+      mode: WS.NONE, t: 0, cd: 0, queued: false, want: false, hitDone: false, side: 0, nextSide: 0, sweep: false, slam: false, speed: 1,
       armW: 0, runAmt: 0, moveAmt: 0, phase: 0, time: 0, scale: 1,
       mount: null,
       base: new Float32Array(12), pose: new Float32Array(12),
@@ -451,6 +451,12 @@ export function startWeaponSlam(rig, remote = false) {
   return false;
 }
 
+// 공격 속도 배율 (AGI 스탯): 평타 모션이 빨라지고 쿨다운도 같이 줄어요. 휩쓸기·내려찍기는 서버 타이밍이 정해져 있어서 그대로예요
+export function setWeaponSpeed(rig, speed) {
+  if (!rig) return;
+  getWp(rig).speed = Math.min(2, Math.max(1, Number(speed) || 1));
+}
+
 // 들고 있는 무기 종류 바꾸기 ('wooden_sword' | 'orc_axe'). 이미 손에 붙어 있으면 모양만 바꿔 끼움 (모션 상태는 그대로)
 export function setWeaponKind(rig, kind) {
   if (!rig) return;
@@ -517,7 +523,7 @@ export function updateWeapon(rig, dt, loco) {
   const MO = motionOf(wp);
   const A = MO.atk;
   wp.time += dt;
-  wp.cd = Math.max(0, wp.cd - dt);
+  wp.cd = Math.max(0, wp.cd - dt * (wp.speed || 1));   // 공격 속도(AGI)만큼 쿨다운도 빨리 줄어요
   wp.runAmt = damp(wp.runAmt, loco.run, 8, dt);
   wp.moveAmt = damp(wp.moveAmt, loco.move, 10, dt);
   if (loco.phase >= 0) wp.phase = loco.phase;
@@ -540,7 +546,7 @@ export function updateWeapon(rig, dt, loco) {
       break;
     case WS.ATTACKING: {
       const AT = wp.slam ? MO.slamT : wp.sweep ? MO.sweepT : A;
-      wp.t += dt;
+      wp.t += dt * (wp.slam || wp.sweep ? 1 : (wp.speed || 1));   // 평타 모션만 공격 속도 적용
       if (!wp.hitDone && wp.t >= AT.windup + AT.swing * 0.5) {
         wp.hitDone = true;
         if (wp.onHit && !wp.sweep && !wp.slam) wp.onHit();
