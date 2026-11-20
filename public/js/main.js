@@ -328,7 +328,8 @@ function parsePlayer(p) {
       ry: p[5],
       eq: p[6] === 1,
       level: Number(p[7]) || 1,
-      gm: Number(p[8]) || 0   // 입은 옷 (1 = 갑옷, 2 = 바지)
+      gm: Number(p[8]) || 0,   // 입은 옷 (1 = 갑옷, 2 = 바지)
+      dead: p[9] === 1         // 쓰러져 있는지
     };
   }
 
@@ -342,7 +343,8 @@ function parsePlayer(p) {
       ry: p.ry ?? 0,
       eq: !!p.eq,
       level: Number(p.level) || 1,
-      gm: Number(p.gm) || 0
+      gm: Number(p.gm) || 0,
+      dead: !!p.dead
     };
   }
 
@@ -1080,6 +1082,10 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
   let grounded = true;
   let jumpBuffer = 0;
   let jumpHeld = false;
+  // 죽음: 서버가 'dead' 를 보내면 쓰러지고(입력 막힘), 몇 초 뒤 'alive' 와 함께 시작 마을에서 일어나요 (안내 메시지 없음)
+  let dead = false, deadT = 0, deadSide = 1;
+  const DEATH_FALL = 0.7;   // 쓰러지는 데 걸리는 시간(초). 몬스터(고블린)와 같게
+  const fallCurve = (k) => k >= 1 ? 1 : k < 0.8 ? (k / 0.8) ** 2 : 1 - 0.06 * Math.sin(Math.PI * (k - 0.8) / 0.2);   // 점점 빨라지며 쓰러지고 땅에 닿을 때 살짝 튕김
 
   // 조작 상태
   let shiftLock = false;   // 시프트락 (로블록스식)
@@ -1102,13 +1108,13 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
     onHit: null                          // 시각상 타격 프레임. 피해는 나중에 서버 판정(server.js resolveAttack)으로 확정
   });
   function toggleWeapon() {   // 1번 키: 장착 ↔ 해제
-    if (uiOpen) return;
+    if (uiOpen || dead) return;
     const eq = requestToggleWeapon(myRig);   // 모션 중이면 null (중복 입력 무시)
     if (eq === null) return;
     socket.emit('weapon', { eq });
   }
   function doAttack() {
-    if (uiOpen || !isWeaponEquipped(myRig)) return;
+    if (uiOpen || dead || !isWeaponEquipped(myRig)) return;
     startWeaponAttack(myRig);
   }
 
@@ -1391,7 +1397,7 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
     const txt = (touchMode ? '' : '[E] ') + hintAct.text;
     if (doorHint.textContent !== txt) doorHint.textContent = txt;
   }
-  function doDoorAction() { const a = hintAct || currentAction(); if (a) a.run(); }
+  function doDoorAction() { if (dead) return; const a = hintAct || currentAction(); if (a) a.run(); }
   doorHint.addEventListener('click', doDoorAction);
   doorHint.addEventListener('touchstart', (e) => { e.preventDefault(); doDoorAction(); }, { passive: false });
 
@@ -2540,6 +2546,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 
       if (remote.gm !== p.gm) { remote.gm = p.gm; setOutfit(remote.g, { armor: !!(p.gm & 1), pants: !!(p.gm & 2) }); setWeaponKind(remote.g.userData.rig, (p.gm & 4) ? 'orc_axe' : 'wooden_sword'); }   // 다른 플레이어가 입은 옷
       remote.eq = !!p.eq;
+      if (p.dead && !remote.dead) remote.side = Math.random() < 0.5 ? -1 : 1;   // 쓰러지는 쪽
+      remote.dead = !!p.dead;
       remote.nick = p.nick || '플레이어';
       remote.level = p.level || 1;
       remote.t = { x, y, z, ry };
@@ -2614,7 +2622,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 
   function startDash() {
     const now = performance.now();
-    if (uiOpen || dashT > 0 || now < (skillReadyAt.dash || 0)) return;
+    if (uiOpen || dead || dashT > 0 || now < (skillReadyAt.dash || 0)) return;
     let dx, dz;
     if (dashInLen > 0.01) { dx = dashInX / dashInLen; dz = dashInZ / dashInLen; }
     else { dx = Math.sin(me.ry); dz = Math.cos(me.ry); }
@@ -2638,7 +2646,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   function useSkill(key) {
     const def = SKILL_SLOTS.find((s) => s.key === key);
     if (!def) return;
-    if (uiOpen) return;
+    if (uiOpen || dead) return;
     if (key === 'Q') { startDash(); return; }   // 대쉬는 검이 없어도 됨
     if (!def.id) { toast('비어 있는 스킬 칸이에요'); return; }
     if (!isWeaponEquipped(myRig)) return;   // 검을 안 들고 있으면 아무 일도 안 함 (안내 메시지 없음)
@@ -2826,6 +2834,14 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     lastGol = Array.isArray(list) ? list : [];
     if (golems && curCave) golems.onSnapshot(lastGol);
   });
+  // 체력이 0이 되면 서버가 'dead' → 몇 초 뒤 시작 마을로 옮기고 'alive'
+  socket.on('dead', () => {
+    dead = true; deadT = 0; deadSide = Math.random() < 0.5 ? -1 : 1;
+    dashT = 0; vy = 0; jumpHeld = false; jumpBuffer = 0;
+    for (const k in keys) keys[k] = false;
+    if (uiOpen) closeWin();
+  });
+  socket.on('alive', () => { dead = false; deadT = 0; dashT = 0; vy = 0; });
   // 동굴 안에서 쓰러지면 서버가 땅 위 시작 마을로 보내줘요
   socket.on('surface', (p) => {
     curCave = false;
@@ -3005,7 +3021,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       inR = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
     }
 
-    if (uiOpen) { inF = 0; inR = 0; }
+    if (uiOpen || dead) { inF = 0; inR = 0; }
     const mag = Math.min(1, Math.hypot(inF, inR));
 
     // 물속: 허리~가슴 깊이까지는 걸어 들어가고, 머리까지 잠기면 수영 시작
@@ -3115,6 +3131,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     // 점프 / 중력
     if (keys.Space || jumpHeld) jumpBuffer = Math.max(jumpBuffer, 0.1);
     jumpBuffer = Math.max(0, jumpBuffer - dt);
+    if (dead) jumpBuffer = 0;
 
     // 서 있는 바닥: 방 안 = 방 바닥, 여관 안 = 1층/계단/2층, 그 밖 = 땅
     let ground;
@@ -3175,7 +3192,14 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     dashLean += ((dashT > 0 ? 1 : 0) - dashLean) * (1 - Math.exp(-(dashT > 0 ? 22 : 12) * dt));
     myAvatar.rotation.x = dashPitch * dashLean;
     myAvatar.rotation.z = dashRoll * dashLean;
-    animateHumanoid(myAvatar, dt, dashFrame ? 13 : moved / Math.max(dt, 1e-4), swimming ? true : grounded, swimming ? 0 : vy,
+    if (dead) {   // 쓰러지는 모션: 뒤로 넘어지며 살짝 옆으로 기울고, 누운 몸이 땅에 묻히지 않게 조금 올림
+      deadT += dt;
+      const f = fallCurve(deadT / DEATH_FALL);
+      myAvatar.rotation.x = -(Math.PI / 2) * 0.97 * f;
+      myAvatar.rotation.z = deadSide * 0.25 * f;
+      myAvatar.position.y = me.y + 0.12 * f;
+    }
+    animateHumanoid(myAvatar, dt, dead ? 0 : dashFrame ? 13 : moved / Math.max(dt, 1e-4), swimming ? true : grounded, swimming ? 0 : vy,
       swimming ? { sp: moved / Math.max(dt, 1e-4), vy: swimVy } : null);
     fovKick += ((dashT > 0 ? 9 : 0) - fovKick) * (1 - Math.exp(-14 * dt));
     if (Math.abs(fovKick) > 0.02 || camera.fov !== baseFov) {
@@ -3286,9 +3310,17 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       const oz = remote.g.position.z;
 
       remote.g.position.x += (remote.t.x - remote.g.position.x) * k;
-      remote.g.position.y += (remote.t.y - remote.g.position.y) * k;
+      remote.g.position.y += (remote.t.y + (remote.lift || 0) - remote.g.position.y) * k;
       remote.g.position.z += (remote.t.z - remote.g.position.z) * k;
       remote.g.rotation.y = remote.t.ry;
+      remote.g.rotation.order = 'YXZ';
+      if (remote.dead) {   // 다른 플레이어가 쓰러진 모습
+        remote.dd = (remote.dd || 0) + dt;
+        const f = fallCurve(remote.dd / DEATH_FALL);
+        remote.g.rotation.x = -(Math.PI / 2) * 0.97 * f;
+        remote.g.rotation.z = (remote.side || 1) * 0.25 * f;
+        remote.lift = 0.12 * f;
+      } else if (remote.dd) { remote.dd = 0; remote.lift = 0; remote.g.rotation.x = 0; remote.g.rotation.z = 0; }
 
       // 위치 변화로 속도를 구해서 걷기/점프 애니메이션 재생
       const idt = Math.max(dt, 1e-4);
@@ -3299,7 +3331,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       const rGround = T.height(remote.g.position.x, remote.g.position.z);
       const rSwim = WATER_LEVEL - rGround > 1.8 && remote.g.position.y < WATER_LEVEL - 0.6 && remote.g.position.y > rGround - 1.2;   // 헤엄치는 다른 플레이어
       const rAir = remote.g.position.y - rGround > 0.5;
-      animateHumanoid(remote.g, dt, remote.sp, rSwim ? true : !rAir, rSwim ? 0 : remote.vy, rSwim ? { sp: remote.sp, vy: remote.vy } : null);
+      if (remote.dead) animateHumanoid(remote.g, dt, 0, true, 0, null);
+      else animateHumanoid(remote.g, dt, remote.sp, rSwim ? true : !rAir, rSwim ? 0 : remote.vy, rSwim ? { sp: remote.sp, vy: remote.vy } : null);
     }
 
     if (skillFx) { try { skillFx.update(dt); } catch (err) { console.error('스킬 이펙트 오류 (이펙트만 끕니다):', err); skillFx = null; } }
