@@ -221,6 +221,7 @@ function refreshStats(p) {
   const max = calcHpMax(p), diff = max - p.hpMax;
   p.hpMax = max;
   p.hp = diff > 0 ? Math.min(max, p.hp + diff) : Math.min(p.hp, max);
+  if (p.dead) p.hp = 0;   // 쓰러져 있는 동안은 체력이 늘어도 0 유지
   io.to(p.id).emit('hp', { hp: p.hp, max: p.hpMax });
   sendStats(p); saveProfile(p);
 }
@@ -228,6 +229,7 @@ function applyGear(p) {   // 최대 체력을 다시 계산: 늘어난 만큼 �
   const max = calcHpMax(p), diff = max - p.hpMax;
   p.hpMax = max;
   p.hp = diff > 0 ? Math.min(max, p.hp + diff) : Math.min(p.hp, max);
+  if (p.dead) p.hp = 0;   // 쓰러져 있는 동안은 체력이 늘어도 0 유지
   io.to(p.id).emit('hp', { hp: p.hp, max: p.hpMax });
   saveProfile(p); sendGear(p); sendInv(p);
 }
@@ -287,7 +289,7 @@ const HP_REGEN_AMOUNT = 1;   // 이만큼 회복
 // 플레이어 체력 자연 회복
 function regenPlayers(dt) {
   for (const p of players.values()) {
-    if (!p.spawned || p.hp >= p.hpMax) { p.regenT = 0; continue; }
+    if (!p.spawned || p.dead || p.hp >= p.hpMax) { p.regenT = 0; continue; }
     p.regenT = (p.regenT || 0) + dt;
     if (p.regenT < HP_REGEN_SEC) continue;
     p.regenT -= HP_REGEN_SEC;
@@ -296,26 +298,34 @@ function regenPlayers(dt) {
   }
 }
 
-// 플레이어가 고블린에게 맞음. 체력이 0이 되면 임시로 시작 마을에서 체력을 가득 채워 다시 시작시켜요 (사망 시스템이 생기면 교체)
+// 플레이어가 몬스터에게 맞음. 체력이 0이 되면 그 자리에서 쓰러지고(화면이 쓰러지는 모션을 보여줘요), 몇 초 뒤 시작 마을에서 체력을 가득 채워 다시 시작시켜요. 안내 메시지는 없어요
+const PLAYER_DEATH_MS = 3000;   // 쓰러진 뒤 시작 마을로 돌아가기까지(ms). 쓰러지는 모션 0.7초 + 누워 있는 시간 (몬스터와 비슷하게)
 function hurtPlayer(pid, dmg) {
   const p = players.get(pid);
-  if (!p || p.hp <= 0) return;
+  if (!p || p.dead || p.hp <= 0) return;
   p.hp = Math.max(0, p.hp - dmg);
-  if (p.hp <= 0) {
-    p.hp = p.hpMax;
-    const underground = p.y < UNDER_Y;   // 동굴 안에서 쓰러지면 땅 위 시작 마을로 올려 보냄
-    Object.assign(p, { x: 0, z: 0, t: Date.now() });
-    if (underground) p.y = 10;
-    if (sim) sim.dropTarget(pid);
-    if (rabSim) rabSim.dropTarget(pid);
-    if (sliSim) sliSim.dropTarget(pid);
-    if (bossSim) bossSim.dropTarget(pid);
-    if (golSim) golSim.dropTarget(pid);
-    if (underground) io.to(pid).emit('surface', { x: 0, y: 10, z: 0 });
-    else io.to(pid).emit('correct', { x: 0, y: p.y, z: 0 });
-    io.to(pid).emit('notice', '쓰러져서 시작 마을에서 다시 시작해요');
-  }
   io.to(pid).emit('hp', { hp: p.hp, max: p.hpMax });
+  if (p.hp > 0) return;
+  p.dead = true;   // 누워 있는 동안 체력 0 → 몬스터가 노리지 않고, 이동·공격·스킬도 못 해요
+  if (sim) sim.dropTarget(pid);
+  if (rabSim) rabSim.dropTarget(pid);
+  if (sliSim) sliSim.dropTarget(pid);
+  if (bossSim) bossSim.dropTarget(pid);
+  if (golSim) golSim.dropTarget(pid);
+  io.to(pid).emit('dead');
+  setTimeout(() => respawnPlayer(p), PLAYER_DEATH_MS);
+}
+function respawnPlayer(p) {
+  if (players.get(p.id) !== p || !p.dead) return;   // 그 사이 접속이 끊겼으면 아무것도 안 함
+  p.dead = false;
+  p.hp = p.hpMax;
+  const underground = p.y < UNDER_Y;   // 동굴 안에서 쓰러졌으면 땅 위 시작 마을로 올려 보냄
+  Object.assign(p, { x: 0, z: 0, t: Date.now() });
+  if (underground) p.y = 10;
+  if (underground) io.to(p.id).emit('surface', { x: 0, y: 10, z: 0 });
+  else io.to(p.id).emit('correct', { x: 0, y: p.y, z: 0 });
+  io.to(p.id).emit('hp', { hp: p.hp, max: p.hpMax });
+  io.to(p.id).emit('alive');
 }
 
 // 평타 판정: 장착·쿨다운 검사를 통과한 공격만 여기로 와요. 실제 피해는 sim 이 위치·방향·사거리를 서버 기준으로 검사해서 확정
@@ -380,7 +390,7 @@ io.on('connection', (socket) => {
     p.hpMult = num(d.hp);
     applyStats(p);
     const max = calcHpMax(p);   // 장비·스탯으로 늘어난 최대 체력 포함
-    if (max !== p.hpMax) { p.hpMax = max; p.hp = max; }   // 최대 체력이 바뀌면 가득 채워서 시작
+    if (max !== p.hpMax) { p.hpMax = max; p.hp = p.dead ? 0 : max; }   // 최대 체력이 바뀌면 가득 채워서 시작
     socket.emit('hp', { hp: p.hp, max: p.hpMax });
     socket.emit('dev:on', { dmg: p.devDmg, hp: p.hpMult });
   });
@@ -483,7 +493,7 @@ io.on('connection', (socket) => {
 
   socket.on('move', (m) => {
     const p = players.get(socket.id);
-    if (!p || !m || ![m.x, m.y, m.z, m.ry].every(Number.isFinite)) return;
+    if (!p || p.dead || !m || ![m.x, m.y, m.z, m.ry].every(Number.isFinite)) return;   // 쓰러져 있으면 이동 무시
     const now = Date.now();
     if (p.spawned) {
       const dt = Math.max((now - p.t) / 1000, 0.016);
@@ -500,7 +510,7 @@ io.on('connection', (socket) => {
   // 집 안 공간(땅 밑 방)으로 들어가거나 나올 때 위치를 한 번에 옮김. 속도 검증에 걸려 되돌려지지 않게 서버 위치도 같이 갱신
   socket.on('tp', (d) => {
     const p = players.get(socket.id);
-    if (!p || !d || ![d.x, d.y, d.z].every(Number.isFinite)) return;
+    if (!p || p.dead || !d || ![d.x, d.y, d.z].every(Number.isFinite)) return;
     if (Math.abs(d.x) > 5000 || Math.abs(d.z) > 5000 || d.y < -5000 || d.y > 800) return;
     Object.assign(p, { x: d.x, y: d.y, z: d.z, t: Date.now() });
   });
@@ -518,7 +528,7 @@ io.on('connection', (socket) => {
   // 나무검 장착/해제 (상태는 서버가 기억해서 나중에 들어온 사람도 같은 모습을 보게 함)
   socket.on('weapon', (d) => {
     const p = players.get(socket.id);
-    if (!p || !d) return;
+    if (!p || p.dead || !d) return;
     const now = Date.now();
     if (now - p.eqT < EQUIP_MIN_MS) return;
     p.eqT = now;
@@ -529,7 +539,7 @@ io.on('connection', (socket) => {
   // 평타 시작 알림: 장착 중이고 쿨다운이 지났을 때만 다른 사람에게 전달 (피해는 resolveAttack 에서 서버가 결정)
   socket.on('atk', (d) => {
     const p = players.get(socket.id);
-    if (!p || !p.eq) return;
+    if (!p || !p.eq || p.dead) return;
     const now = Date.now();
     if (now - p.atkT < ATTACK_MIN_MS / (1 + (p.atkSpd || 0))) return;   // AGI 공격 속도만큼 간격이 짧아져요
     p.atkT = now;
@@ -540,7 +550,7 @@ io.on('connection', (socket) => {
   // 스킬 사용. E = 휩쓸기(기본), R = 장착한 스킬(내려찍기). 검을 든 상태에서만, 쿨타임은 서버가 다시 검사. 피해는 서버가 범위 안의 몬스터 전부에게 확정
   socket.on('skill', (d) => {
     const p = players.get(socket.id);
-    if (!p || !p.eq || !SKILLS || !d || (d.id !== 'sweep' && d.id !== 'slam')) return;
+    if (!p || p.dead || !p.eq || !SKILLS || !d || (d.id !== 'sweep' && d.id !== 'slam')) return;
     if (!sim && !rabSim && !sliSim && !bossSim && !golSim) return;
     const now = Date.now();
     p.skillCd = p.skillCd || {};
@@ -572,7 +582,7 @@ io.on('connection', (socket) => {
   // 대쉬 (Q): 이동 자체는 클라이언트가 하고(5m), 서버는 쿨타임(1초)만 확인해서 다른 플레이어에게 이펙트를 알려줌
   socket.on('dash', (d) => {
     const p = players.get(socket.id);
-    if (!p || !d || !Number.isFinite(d.dx) || !Number.isFinite(d.dz)) return;
+    if (!p || p.dead || !d || !Number.isFinite(d.dx) || !Number.isFinite(d.dz)) return;
     const now = Date.now();
     if (now - (p.dashT || 0) < 800) return;   // 쿨타임 1초 (네트워크 지연 오차 허용)
     p.dashT = now;
@@ -693,7 +703,7 @@ setInterval(() => {
   const list = [];
   for (const p of players.values()) {
     // 마지막 값 = 입은 옷 (1 = 갑옷, 2 = 바지, 3 = 둘 다) → 다른 플레이어 화면에도 입은 모습이 보임
-    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level, (p.gear && p.gear.armor ? 1 : 0) | (p.gear && p.gear.pants ? 2 : 0) | (p.gear && p.gear.weapon ? 4 : 0)]);
+    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level, (p.gear && p.gear.armor ? 1 : 0) | (p.gear && p.gear.pants ? 2 : 0) | (p.gear && p.gear.weapon ? 4 : 0), p.dead ? 1 : 0]);   // 마지막 값 = 쓰러져 있는지 (다른 플레이어 화면에도 쓰러진 모습이 보임)
   }
   io.emit('state', list);
 }, 1000 / 15);
