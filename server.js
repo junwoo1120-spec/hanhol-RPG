@@ -300,13 +300,14 @@ function regenPlayers(dt) {
 
 // 플레이어가 몬스터에게 맞음. 체력이 0이 되면 그 자리에서 쓰러지고(화면이 쓰러지는 모션을 보여줘요), 몇 초 뒤 시작 마을에서 체력을 가득 채워 다시 시작시켜요. 안내 메시지는 없어요
 const PLAYER_DEATH_MS = 3000;   // 쓰러진 뒤 시작 마을로 돌아가기까지(ms). 쓰러지는 모션 0.7초 + 누워 있는 시간 (몬스터와 비슷하게)
-function hurtPlayer(pid, dmg) {
+function hurtPlayer(pid, dmg, quiet) {   // quiet = true 면 화면이 붉게 번쩍이지 않음 (모기·출혈처럼 자잘한 피해)
   const p = players.get(pid);
   if (!p || p.dead || p.hp <= 0) return;
   p.hp = Math.max(0, p.hp - dmg);
-  io.to(pid).emit('hp', { hp: p.hp, max: p.hpMax });
+  io.to(pid).emit('hp', { hp: p.hp, max: p.hpMax, q: quiet ? 1 : 0 });
   if (p.hp > 0) return;
-  p.dead = true;   // 누워 있는 동안 체력 0 → 몬스터가 노리지 않고, 이동·공격·스킬도 못 해요
+  p.dead = true;
+  clearStatus(p);   // 죽으면 출혈·모기 물기도 끝   // 누워 있는 동안 체력 0 → 몬스터가 노리지 않고, 이동·공격·스킬도 못 해요
   if (sim) sim.dropTarget(pid);
   if (rabSim) rabSim.dropTarget(pid);
   if (sliSim) sliSim.dropTarget(pid);
@@ -326,6 +327,65 @@ function respawnPlayer(p) {
   else io.to(p.id).emit('correct', { x: 0, y: p.y, z: 0 });
   io.to(p.id).emit('hp', { hp: p.hp, max: p.hpMax });
   io.to(p.id).emit('alive');
+}
+
+// ---------- 정글 모기 ----------
+// 정글(지형 'forest') 안에 있으면 MOSQ.BITE_EVERY 초마다 모기가 팔에 앉아 피를 빨아요 → 내려앉는 순간 체력 -1, 5% 확률로 출혈(5초, 1초마다 -1).
+// 모기떼 모습은 브라우저(mosquito-fx.js)가 그려요. 숫자는 public/js/mosquito.mjs 에서 바꿔요. 로드에 실패해도 게임은 그대로 돌아가요.
+let jungleT = null, MOSQ = null;
+(async () => {
+  try {
+    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
+    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
+    const m = await import(pathToFileURL(path.join(__dirname, 'public/js/mosquito.mjs')).href);
+    jungleT = terr.makeTerrain(SEED);
+    MOSQ = m.MOSQ;
+    console.log('정글 모기 준비 완료');
+  } catch (e) {
+    console.error('정글 모기 로드 실패 (모기 없이 계속 진행):', e);
+  }
+})();
+function clearStatus(p) {   // 상태이상 전부 끝 (죽었을 때)
+  if (p.bleedTicksLeft) { p.bleedTicksLeft = 0; io.to(p.id).emit('status', { id: 'bleed', ms: 0 }); }
+  p.biteAt = 0; p.mosqT = 0;
+}
+function applyBleed(p) {   // 출혈: 이미 걸려 있으면 시간만 새로 시작
+  if (!MOSQ || p.dead) return;
+  p.bleedTicksLeft = Math.max(1, Math.round(MOSQ.BLEED_TIME / MOSQ.BLEED_TICK));
+  p.bleedAcc = 0;
+  io.to(p.id).emit('status', { id: 'bleed', ms: MOSQ.BLEED_TIME * 1000 });
+}
+function startBite(p, now) {   // 모기 한 마리가 팔에 내려앉기 시작. 체력은 내려앉는 순간(LAND_TIME 뒤)에 깎여요
+  p.biteAt = now + MOSQ.LAND_TIME * 1000;
+  io.to(p.id).emit('mosq', { land: MOSQ.LAND_TIME, perch: MOSQ.PERCH_TIME });
+}
+function mosquitoTick(dt, now) {
+  if (!MOSQ || !jungleT) return;
+  for (const p of players.values()) {
+    if (!p.spawned || p.dead) continue;
+    // 출혈 (정글 밖에서도 계속)
+    if (p.bleedTicksLeft > 0) {
+      p.bleedAcc = (p.bleedAcc || 0) + dt;
+      while (p.bleedAcc >= MOSQ.BLEED_TICK && p.bleedTicksLeft > 0 && !p.dead) {
+        p.bleedAcc -= MOSQ.BLEED_TICK;
+        p.bleedTicksLeft--;
+        hurtPlayer(p.id, MOSQ.BLEED_DAMAGE, true);
+      }
+      if (p.dead) continue;
+    }
+    // 정글 안인지 (0.5초에 한 번만 계산). 땅 밑(동굴·집 안)은 제외
+    if (now - (p.jgAt || 0) > 500) { p.jgAt = now; p.inJg = p.y >= UNDER_Y && jungleT.biome(p.x, p.z) === 'forest'; }
+    if (p.inJg) {
+      p.mosqT = (p.mosqT || 0) + dt;
+      if (p.mosqT >= MOSQ.BITE_EVERY) { p.mosqT = 0; startBite(p, now); }
+    } else p.mosqT = 0;
+    // 내려앉은 순간: 피 -1, 5% 출혈
+    if (p.biteAt && now >= p.biteAt) {
+      p.biteAt = 0;
+      hurtPlayer(p.id, MOSQ.BITE_DAMAGE, true);
+      if (!p.dead && Math.random() < MOSQ.BLEED_CHANCE) applyBleed(p);
+    }
+  }
 }
 
 // 평타 판정: 장착·쿨다운 검사를 통과한 공격만 여기로 와요. 실제 피해는 sim 이 위치·방향·사거리를 서버 기준으로 검사해서 확정
@@ -491,6 +551,18 @@ io.on('connection', (socket) => {
     else sendToast(p, '인벤토리가 가득 찼어요');
   });
 
+  // 개발자 도구: 모기 물림 / 출혈을 바로 시험 (5초·5% 를 기다리지 않고)
+  socket.on('dev:mosq', () => {
+    const p = players.get(socket.id);
+    if (!p || p.nick !== DEV_NICK || !MOSQ || p.dead) return;
+    startBite(p, Date.now());
+  });
+  socket.on('dev:bleed', () => {
+    const p = players.get(socket.id);
+    if (!p || p.nick !== DEV_NICK) return;
+    applyBleed(p);
+  });
+
   socket.on('move', (m) => {
     const p = players.get(socket.id);
     if (!p || p.dead || !m || ![m.x, m.y, m.z, m.ry].every(Number.isFinite)) return;   // 쓰러져 있으면 이동 무시
@@ -606,6 +678,7 @@ setInterval(() => {
   const dt = (now - lastTick) / 1000;
   lastTick = now;
   regenPlayers(dt);
+  mosquitoTick(dt, now);
   if (sim) {
     try {
       sim.update(dt, now, players, {
