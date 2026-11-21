@@ -8,7 +8,7 @@ import { plainZoneAt } from './plain-zones.mjs';
 const ZONES = {
   village: { title: '프론트 마을', sub: '모든것이 시작되는 마을입니다.',
              grad: ['#fff3c4', '#ffc65a', '#ff9a3c'], glow: '255,170,70', edge: '#4a2208' },
-  forest:  { title: '울창한 숲', sub: '빽빽한 나무와 짙은 수풀이 시야를 가립니다.',
+  forest:  { title: '정글', sub: '빽빽한 나무와 짙은 수풀이 시야를 가립니다.',
              grad: ['#e4ffb8', '#7fe06a', '#2fa84a'], glow: '90,220,110', edge: '#0b3a1a' },
   desert:  { title: '광활한 사막', sub: '뜨거운 태양과 거센 모래바람이 몰아칩니다.',
              grad: ['#fff0b0', '#ffc94a', '#e8892a'], glow: '255,190,70', edge: '#5a2e0a' },
