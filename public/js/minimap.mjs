@@ -2,6 +2,7 @@
 //  - 지형 전체(바다·해안·평원·사막·정글·화산·설원·얼음호수·마을)를 한 장으로 그려서 보여줘요. 처음에 조금씩 나눠서 그려서 게임이 끊기지 않아요.
 //  - 평원은 구역별로 색을 살짝 입혔어요: 토끼 평원(분홍) · 고블린 서식지(진한 초록) · 슬라임 고원(연두). 점선은 구역 경계.
 //  - 표시: 내 위치(흰 화살표, 보는 방향) · 다른 플레이어(주황 점) · 시작마을 · 동굴 입구 · 보스 터와 오크 대전사(💀, 싸우는 중이면 깜빡임)
+//  - 지도 왼쪽 아래 – 버튼으로 작은 지도를 접었다 펼 수 있어요 (접으면 🗺 버튼만 남음, M 키 큰 지도는 그대로)
 //  - 위쪽이 북쪽(-z), 오른쪽이 동쪽(+x). 지도를 누르거나 M 키로 큰 지도를 열고 닫아요 (PC 는 ESC 로 마우스 고정을 푼 뒤 눌러야 해요)
 import { WATER_LEVEL, PLAY_RADIUS, VILLAGE } from './terrain.js';
 import { PLAIN_ZONE, plainZoneAt } from './plain-zones.mjs';
@@ -108,6 +109,30 @@ export function createMinimap({ T, getMe, getOthers, getBoss, getCave }) {
   const sc = mkCanvas(SMALL); small.appendChild(sc);
   document.body.appendChild(small);
   document.documentElement.style.setProperty('--minimap-h', (SMALL + 4) + 'px');   // 개발자 패널이 지도 아래로 내려가게
+
+  // 접기/펴기 버튼: 지도 왼쪽 아래 모서리의 빈 자리. 접으면 지도가 사라지고 작은 🗺 버튼만 남아요 (상태 아이콘·개발자 패널도 같이 왼쪽/위로 당겨짐). 접었는지는 기억해 둬요.
+  const FOLD_KEY = 'minimapFolded';
+  let folded = false;
+  try { folded = localStorage.getItem(FOLD_KEY) === '1'; } catch (e) { /* 저장 불가면 무시 */ }
+  const fold = document.createElement('div');
+  fold.style.cssText = 'position:fixed;left:8px;z-index:9;width:26px;height:26px;box-sizing:border-box;border-radius:50%;background:rgba(13,26,43,.92);border:2px solid #d9b25c;color:#f6e3a1;font:700 14px/22px sans-serif;text-align:center;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;box-shadow:0 1px 5px rgba(0,0,0,.6)';
+  document.body.appendChild(fold);
+  function applyFold() {
+    small.style.display = folded ? 'none' : 'block';
+    fold.textContent = folded ? '🗺' : '–';
+    fold.title = folded ? '지도 펴기' : '지도 접기';
+    fold.style.top = folded ? '8px' : (SMALL - 14) + 'px';
+    document.documentElement.style.setProperty('--minimap-h', (folded ? 30 : SMALL + 4) + 'px');
+  }
+  fold.addEventListener('click', (e) => {
+    e.stopPropagation();
+    folded = !folded;
+    try { localStorage.setItem(FOLD_KEY, folded ? '1' : '0'); } catch (err) { /* 무시 */ }
+    applyFold();
+  });
+  fold.addEventListener('mousedown', (e) => e.stopPropagation());
+  fold.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+  applyFold();
 
   const bigWrap = document.createElement('div');
   bigWrap.style.cssText = 'position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.58);display:none;align-items:center;justify-content:center;cursor:pointer';
@@ -244,7 +269,7 @@ export function createMinimap({ T, getMe, getOthers, getBoss, getCave }) {
   // 0.1초마다 새로 그림 (지형은 그대로, 표시만 갱신)
   setInterval(() => {
     if (document.hidden) return;
-    draw(sc, SMALL, false);
+    if (!folded) draw(sc, SMALL, false);
     if (open && bc) draw(bc, bigSize(), true);
   }, 100);
 
