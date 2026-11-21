@@ -11,6 +11,8 @@ import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSwe
 import { createNatureKit } from './nature.js';
 import { createNatureWorld } from './nature-world.js';
 import { createZoneBanner } from './zone-banner.js';
+import { createMosquitoFx } from './mosquito-fx.js';
+import { createStatusUI } from './status-ui.js';
 import { createAuth, clearToken } from './auth.js';
 import { createSeaLife } from './sea-life.js';
 import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, lootText } from './items.mjs';
@@ -1103,6 +1105,10 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
 
   // ---------- 나무검 (테스트): Q 장착/해제, 마우스 왼쪽 또는 J 공격 ----------
   const myRig = myAvatar.userData.rig;
+  // 정글 모기떼 + 상태이상(출혈) 아이콘. 피해·출혈 판정은 서버, 여기는 모양과 아이콘만
+  const statusUI = createStatusUI({ toast });
+  let mosqFx = null;
+  try { mosqFx = createMosquitoFx({ scene, T, avatar: myAvatar }); } catch (err) { console.error('모기 로드 오류 (모기만 끕니다):', err); }
   setWeaponHandlers(myRig, {
     onStart: (side) => socket.emit('atk', { s: side }),   // 공격 모션이 시작될 때 한 번만 알림 (s = 베는 방향 0/1, 서버가 쿨다운을 다시 검사)
     onHit: null                          // 시각상 타격 프레임. 피해는 나중에 서버 판정(server.js resolveAttack)으로 확정
@@ -2842,6 +2848,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (uiOpen) closeWin();
   });
   socket.on('alive', () => { dead = false; deadT = 0; dashT = 0; vy = 0; });
+  socket.on('mosq', (d) => { if (mosqFx) mosqFx.bite(d); });   // 모기 한 마리가 팔에 앉아 피를 빪
+  socket.on('status', (d) => { if (d && typeof d.id === 'string') statusUI.set(d.id, Number(d.ms) || 0); });   // 상태이상 아이콘 (ms 동안 표시, 0 이면 치움)
   // 동굴 안에서 쓰러지면 서버가 땅 위 시작 마을로 보내줘요
   socket.on('surface', (p) => {
     curCave = false;
@@ -2936,7 +2944,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const bar = bui.querySelector('.hp .hpmp-in i'), txt = bui.querySelector('.hp .hpmp-in span');
     if (bar) bar.style.width = pct(d.hp, d.max) + '%';
     if (txt) txt.textContent = fmt(Math.ceil(d.hp)) + ' / ' + fmt(d.max);
-    if (d.hp < before) flashHurt();
+    if (d.hp < before && !d.q) flashHurt();
   });
   socket.on('kill', (d) => toast(d && typeof d.msg === 'string' ? d.msg : '고블린을 처치했습니다!'));
   socket.on('toast', (d) => { if (d && typeof d.msg === 'string') toast(d.msg); });   // 서버 안내 (스킬북 획득 · 배움 등)
@@ -3201,6 +3209,10 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     }
     animateHumanoid(myAvatar, dt, dead ? 0 : dashFrame ? 13 : moved / Math.max(dt, 1e-4), swimming ? true : grounded, swimming ? 0 : vy,
       swimming ? { sp: moved / Math.max(dt, 1e-4), vy: swimVy } : null);
+    if (mosqFx) {   // 정글 모기떼 (땅 위 정글 안에서만 보임)
+      try { mosqFx.update(dt, me, curRoom < 0 && !curCave && T.biome(me.x, me.z) === 'forest'); }
+      catch (err) { console.error('모기 오류 (모기만 끕니다):', err); mosqFx = null; }
+    }
     fovKick += ((dashT > 0 ? 9 : 0) - fovKick) * (1 - Math.exp(-14 * dt));
     if (Math.abs(fovKick) > 0.02 || camera.fov !== baseFov) {
       camera.fov = baseFov + (Math.abs(fovKick) > 0.02 ? fovKick : 0);
