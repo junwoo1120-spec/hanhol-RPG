@@ -4,7 +4,7 @@
 // 대신 느려서(플레이어 걷기 속도보다 느림) 달리면 따돌릴 수 있어요.
 // 거리·속도의 단위는 게임 좌표 단위(플레이어 걷기 속도 = 7 × 1.05 = 7.35 /초)예요.
 
-import { h32, PLAYER_ATK, SKILLS, inSquare, dmgMul } from './goblin-ai.mjs';
+import { h32, PLAYER_ATK, SKILLS, inSquare, dmgMul, rollHit } from './goblin-ai.mjs';
 import { plainZoneAt } from './plain-zones.mjs';
 
 export const SLIME = {
@@ -153,7 +153,9 @@ export function createSlimeSim({ T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS }) {
           if (d > s.reach) continue;
           if (d > 0.8 && (dx * fx + dz * fz) / d < cosArc) continue;
         }
-        g.hp -= s.dmg;
+        const h = rollHit(pl, s.dmg);   // 치명타 판정 (몬스터마다 따로)
+        g.hp -= h.dmg;
+        if (cb.hit) cb.hit(s.pid, g, h.dmg, h.crit);
         if (g.hp <= 0) {
           g.dead = true; g.mode = 0; g.target = null; g.deadAt = nowMs;
           g.respawnAt = SLIME.RESPAWN_SEC > 0 ? nowMs + SLIME.RESPAWN_SEC * 1000 : Infinity;
