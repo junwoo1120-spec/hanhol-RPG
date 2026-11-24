@@ -1137,6 +1137,44 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
     toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
   }
 
+  // ---------- 치명타 글씨: 치명타로 때리면 그 몬스터 머리 위에서 "치명타! 숫자"가 튀어오르며 사라져요 ----------
+  const critCss = document.createElement('style');
+  critCss.textContent = `
+.crit-pop{position:fixed;left:0;top:0;z-index:9;pointer-events:none;user-select:none;-webkit-user-select:none;white-space:nowrap;text-align:center;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;font-weight:900;line-height:1.05;will-change:transform,opacity}
+.crit-pop b{display:block;font-size:14px;letter-spacing:1px;color:#fff1b8;text-shadow:-1px 0 #4a1000,1px 0 #4a1000,0 -1px #4a1000,0 1px #4a1000}
+.crit-pop span{display:block;font-size:32px;color:#ff5a1f;text-shadow:-2px 0 #4a1000,2px 0 #4a1000,0 -2px #4a1000,0 2px #4a1000,-2px -2px #4a1000,2px 2px #4a1000,-2px 2px #4a1000,2px -2px #4a1000,0 0 14px rgba(255,140,40,.9)}`;
+  document.head.appendChild(critCss);
+  const CRIT_HEAD = { rabbit: 1.1, goblin: 2.3, slime: 1.0, golem: 3.6, boss: 4.6 };   // 몬스터 머리 높이 (발 기준, m)
+  const CRIT_LIFE = 0.95;                                                              // 글씨가 떠 있는 시간(초)
+  const critPops = [];
+  const _cv = new THREE.Vector3();
+  function addCritPop(d) {
+    const el = document.createElement('div');
+    el.className = 'crit-pop';
+    const t = document.createElement('b'); t.textContent = '치명타!';
+    const n = document.createElement('span'); n.textContent = String(Math.round(d.d * 10) / 10);
+    el.appendChild(t); el.appendChild(n);
+    document.body.appendChild(el);
+    critPops.push({ el, x: d.x + (Math.random() - 0.5) * 0.7, z: d.z + (Math.random() - 0.5) * 0.7, y: me.y + (CRIT_HEAD[d.k] || 2), t: 0 });
+    while (critPops.length > 12) critPops.shift().el.remove();   // 한꺼번에 너무 많이 쌓이지 않게
+  }
+  function updateCritPops(dt) {
+    if (!critPops.length) return;
+    camera.updateMatrixWorld();
+    for (let i = critPops.length - 1; i >= 0; i--) {
+      const p = critPops[i];
+      p.t += dt;
+      if (p.t >= CRIT_LIFE) { p.el.remove(); critPops.splice(i, 1); continue; }
+      const k = p.t / CRIT_LIFE;
+      _cv.set(p.x, p.y + 1.2 * (1 - (1 - k) * (1 - k)), p.z).project(camera);   // 위로 살짝 떠오름 (처음엔 빠르게, 점점 느리게)
+      if (_cv.z > 1) { p.el.style.opacity = '0'; continue; }                   // 카메라 뒤쪽이면 숨김
+      const pop = p.t < 0.14 ? 1.7 - 0.7 * (p.t / 0.14) : 1;                    // 처음에 크게 튀었다가 제 크기로
+      const a = k < 0.65 ? 1 : 1 - (k - 0.65) / 0.35;                           // 끝에서 부드럽게 사라짐
+      p.el.style.opacity = String(a);
+      p.el.style.transform = `translate3d(${(_cv.x * 0.5 + 0.5) * window.innerWidth}px,${(-_cv.y * 0.5 + 0.5) * window.innerHeight}px,0) translate(-50%,-100%) scale(${pop})`;
+    }
+  }
+
   const cross = document.createElement('div');
   cross.className = 'cross';
   document.body.appendChild(cross);
@@ -2946,6 +2984,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (txt) txt.textContent = fmt(Math.ceil(d.hp)) + ' / ' + fmt(d.max);
     if (d.hp < before && !d.q) flashHurt();
   });
+  socket.on('crit', (d) => { if (d && Number.isFinite(d.x) && Number.isFinite(d.z) && Number.isFinite(d.d)) addCritPop(d); });   // 치명타로 때림 (서버가 몬스터 위치·피해를 알려줌)
   socket.on('kill', (d) => toast(d && typeof d.msg === 'string' ? d.msg : '고블린을 처치했습니다!'));
   socket.on('toast', (d) => { if (d && typeof d.msg === 'string') toast(d.msg); });   // 서버 안내 (스킬북 획득 · 배움 등)
   socket.on('gear', (d) => {   // 입고 있는 장비 (서버가 정함)
@@ -3272,6 +3311,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       camera.position.set(ex, hy, ez);
       camera.lookAt(ex - Math.sin(me.yaw) * cp, hy - Math.sin(me.pitch), ez - Math.cos(me.yaw) * cp);
     } else camera.lookAt(tx, ty, tz);
+    updateCritPops(dt);   // 치명타 글씨 위치·사라짐
     updateDoorHint();   // 문 옆에 뜨는 반투명 안내 (카메라 위치가 정해진 뒤에 화면 좌표로 바꿈)
 
     // 물속 효과: 카메라가 수면 아래로 내려가면 시야가 푸르러지고 멀리는 뿌옇게 보임
