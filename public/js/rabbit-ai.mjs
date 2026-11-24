@@ -3,7 +3,7 @@
 // 고블린(goblin-ai.mjs)과 달리 "선공 없음": 플레이어가 가까이 와도 안 쫓아오고, 먼저 맞았을 때만 때린 사람을 쫓아가 공격해요.
 // 거리·속도의 단위는 게임 좌표 단위(플레이어 걷기 속도 = 7 × 1.05 = 7.35 /초)예요.
 
-import { h32, PLAYER_ATK, SKILLS, inSquare, dmgMul } from './goblin-ai.mjs';
+import { h32, PLAYER_ATK, SKILLS, inSquare, dmgMul, rollHit } from './goblin-ai.mjs';
 import { plainZoneAt } from './plain-zones.mjs';
 
 export const RABBIT = {
@@ -154,7 +154,9 @@ export function createRabbitSim({ T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS }) 
           if (d > s.reach) continue;
           if (d > 0.8 && (dx * fx + dz * fz) / d < cosArc) continue;
         }
-        g.hp -= s.dmg;
+        const h = rollHit(pl, s.dmg);   // 치명타 판정 (몬스터마다 따로)
+        g.hp -= h.dmg;
+        if (cb.hit) cb.hit(s.pid, g, h.dmg, h.crit);
         if (g.hp <= 0) {
           g.dead = true; g.mode = 0; g.target = null; g.deadAt = nowMs;
           g.respawnAt = RABBIT.RESPAWN_SEC > 0 ? nowMs + RABBIT.RESPAWN_SEC * 1000 : Infinity;
