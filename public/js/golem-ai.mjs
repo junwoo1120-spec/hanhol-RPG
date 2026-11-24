@@ -3,7 +3,7 @@
 // 골렘은 동굴(cave-layout.mjs) 안에서만 살아요. 땅 위 플레이어는 상대하지 않고, 동굴 안(지하)에 있는 플레이어만 상대해요.
 // 거리·속도의 단위는 게임 좌표 단위(플레이어 걷기 속도 = 7 × 1.05 = 7.35 /초)예요.
 
-import { h32, PLAYER_ATK, SKILLS, inSquare, dmgMul } from './goblin-ai.mjs';
+import { h32, PLAYER_ATK, SKILLS, inSquare, dmgMul, rollHit } from './goblin-ai.mjs';
 import { CAVE } from './cave-layout.mjs';
 
 export const GOLEM = {
@@ -107,7 +107,9 @@ export function createGolemSim({ layout, seed }) {
           if (d - GOLEM.HIT_RADIUS > s.reach) continue;   // 몸집이 커서 중심이 좀 더 멀어도 맞음
           if (d > 1.6 && (dx * fx + dz * fz) / d < cosArc) continue;
         }
-        g.hp -= s.dmg;
+        const h = rollHit(pl, s.dmg);   // 치명타 판정 (몬스터마다 따로)
+        g.hp -= h.dmg;
+        if (cb.hit) cb.hit(s.pid, g, h.dmg, h.crit);
         if (g.hp <= 0) {
           g.dead = true; g.mode = 0; g.target = null; g.hitAt = 0; g.deadAt = nowMs;
           g.respawnAt = GOLEM.RESPAWN_SEC > 0 ? nowMs + GOLEM.RESPAWN_SEC * 1000 : Infinity;
