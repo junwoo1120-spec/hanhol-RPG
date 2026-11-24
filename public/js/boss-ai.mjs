@@ -6,7 +6,7 @@
 // 전투가 시작되는 순간 = 보스가 플레이어를 처음 때리려고 도끼를 드는 때, 또는 플레이어가 보스를 처음 때린 때.
 // (그때부터 화면 위에 보스 체력바가 떠요 — 스냅샷의 마지막 값 engaged)
 
-import { PLAYER_ATK, SKILLS, inSquare, dmgMul } from './goblin-ai.mjs';
+import { PLAYER_ATK, SKILLS, inSquare, dmgMul, rollHit } from './goblin-ai.mjs';
 
 export const BOSS = {
   NAME: '오크 대전사',
@@ -78,8 +78,10 @@ export function createBossSim({ T }) {
         if (d - BOSS.HIT_RADIUS > s.reach) continue;          // 몸집이 커서 중심이 좀 더 멀어도 맞음
         if (d > 2.0 && (dx * fx + dz * fz) / d < cosArc) continue;
       }
-      const eff = Math.min(s.dmg, Math.max(0, boss.hp));       // 남은 체력보다 세게 때려도 실제로 깎은 만큼만 기여로 쳐요
-      boss.hp -= s.dmg;
+      const h = rollHit(pl, s.dmg);                             // 치명타 판정
+      const eff = Math.min(h.dmg, Math.max(0, boss.hp));       // 남은 체력보다 세게 때려도 실제로 깎은 만큼만 기여로 쳐요
+      boss.hp -= h.dmg;
+      if (cb.hit) cb.hit(s.pid, boss, h.dmg, h.crit);
       boss.hitters.set(s.pid, (boss.hitters.get(s.pid) || 0) + eff);   // 사람별 누적 피해 기록 (체력 7% 이상 깎은 사람만 보상)
       boss.engaged = true;                                    // 맞으면 전투 시작
       if (boss.hp <= 0) {
