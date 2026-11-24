@@ -26,11 +26,14 @@ export const GOBLIN = {
   VIEW_DIST: 220,          // 플레이어에게 이 거리 안의 고블린만 전송
 };
 
-// 플레이어가 한 번 휘둘러 주는 피해 배율: 스탯으로 정해진 공격력 배율(dmgMult) × (치명타가 터지면 치명타 피해 배율)
-export const dmgMul = (pl) => {
-  let m = pl.dmgMult || 1;
-  if (pl.critChance > 0 && Math.random() < pl.critChance) m *= pl.critDmg || 1.5;
-  return m;
+// 플레이어가 한 번 휘둘러 주는 피해 배율: 스탯으로 정해진 공격력 배율(dmgMult). 치명타는 맞는 순간(rollHit)에 몬스터마다 따로 판정해요
+export const dmgMul = (pl) => pl.dmgMult || 1;
+
+// 맞는 순간 몬스터 한 마리마다 치명타를 굴려요. 치명타가 터지면 피해가 critDmg 배(기본 150%)로 들어가요
+// 반환: { dmg: 실제로 들어가는 피해, crit: 치명타인지 }
+export const rollHit = (pl, dmg) => {
+  const crit = pl.critChance > 0 && Math.random() < pl.critChance;
+  return { dmg: crit ? dmg * (pl.critDmg || 1.5) : dmg, crit };
 };
 
 export const PLAYER_ATK = {
@@ -233,7 +236,9 @@ export function createGoblinSim({ T, seed, WATER_LEVEL, VILLAGE, PLAY_RADIUS }) 
           if (d > s.reach) continue;
           if (d > 0.8 && (dx * fx + dz * fz) / d < cosArc) continue;
         }
-        g.hp -= s.dmg;
+        const h = rollHit(pl, s.dmg);   // 치명타 판정 (몬스터마다 따로)
+        g.hp -= h.dmg;
+        if (cb.hit) cb.hit(s.pid, g, h.dmg, h.crit);
         if (g.hp <= 0) {
           g.dead = true; g.mode = 0; g.target = null; g.deadAt = nowMs;
           g.respawnAt = GOBLIN.RESPAWN_SEC > 0 ? nowMs + GOBLIN.RESPAWN_SEC * 1000 : Infinity;
