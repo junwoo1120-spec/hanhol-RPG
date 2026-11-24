@@ -1,5 +1,6 @@
 // 지형에 들어갈 때마다 화면 위쪽에 지형 이름이 떨어져서 튕기고, 잠시 뒤 그라데이션으로 사라지는 알림
 // 사용: const zb = createZoneBanner(T.biome);  매 프레임 zb.update(x, z, 동굴안인지, 방안인지)
+// 몬스터가 사는 지역은 이름·설명 아래에 '권장 사냥 레벨'도 같이 떠요 (아래 ZONES 의 lv: [최소, 최대] 만 고치면 돼요).
 // 평원은 3등분(plain-zones.mjs)되어 있어서, 시작마을 근처는 '평원', 그 바깥은 토끼 평원 / 고블린 서식지 / 슬라임 고원 알림이 떠요.
 
 import { VILLAGE } from './terrain.js';
@@ -14,11 +15,11 @@ const ZONES = {
              grad: ['#fff0b0', '#ffc94a', '#e8892a'], glow: '255,190,70', edge: '#5a2e0a' },
   plain:   { title: '평원', sub: '푸른 초원이 펼쳐집니다.',
              grad: ['#f2ffc0', '#a8ec6a', '#5cc24a'], glow: '150,240,110', edge: '#17401a' },
-  rabbit:  { title: '토끼 평원', sub: '토끼가 사는 평화로운 평원 입니다.',
+  rabbit:  { title: '토끼 평원', sub: '토끼가 사는 평화로운 평원 입니다.', lv: [1, 5],      // 토끼 Lv.1
              grad: ['#ffffff', '#ffd6e6', '#ff9fc4'], glow: '255,170,205', edge: '#5a1a38' },
-  goblin:  { title: '고블린 서식지', sub: '영악한 고블린이 모여사는 곳입니다.',
+  goblin:  { title: '고블린 서식지', sub: '영악한 고블린이 모여사는 곳입니다.', lv: [3, 7],  // 고블린 Lv.3
              grad: ['#a8d890', '#2e8b3e', '#0f5a28'], glow: '40,150,70', edge: '#04200c' },
-  slime:   { title: '슬라임 고원', sub: '산성 슬라임이 즐비합니다',
+  slime:   { title: '슬라임 고원', sub: '산성 슬라임이 즐비합니다', lv: [7, 11],       // 슬라임 Lv.7
              grad: ['#f6ffa8', '#b6f21e', '#4fbf12'], glow: '175,240,40', edge: '#243d05' },
   volcano: { title: '불타는 화산지대', sub: '끓어오르는 용암과 뜨거운 열기가 가득합니다.',
              grad: ['#fff2a8', '#ff9a2e', '#ff3b1f'], glow: '255,90,40', edge: '#4a0e08' },
@@ -28,7 +29,7 @@ const ZONES = {
              grad: ['#f4ffff', '#8ff3ff', '#3aa6ff'], glow: '110,225,255', edge: '#0a2a55' },
   sea:     { title: '바다', sub: '푸른빛 드넓은 바다가 펼쳐집니다.',
              grad: ['#d8fbff', '#4fd0ff', '#1c6fe0'], glow: '60,170,255', edge: '#06224a' },
-  cave:    { title: '수정동굴', sub: '반짝이는 수정으로 형성된 동굴입니다.',
+  cave:    { title: '수정동굴', sub: '반짝이는 수정으로 형성된 동굴입니다.', lv: [15, 19],  // 골렘 Lv.15
              grad: ['#f3e2ff', '#c79bff', '#6fd8ff'], glow: '170,130,255', edge: '#25104a' },
 };
 
@@ -47,6 +48,7 @@ export function createZoneBanner(biomeAt) {
 .zb-c::before{content:attr(data-c);position:absolute;left:0;top:0;z-index:0;color:var(--e);-webkit-text-stroke:.2em var(--e)}
 .zb-c i{position:relative;z-index:1;font-style:normal;color:transparent;background:linear-gradient(180deg,var(--c0) 0%,var(--c1) 52%,var(--c2) 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-stroke:.03em rgba(255,255,255,.35)}
 .zb-s{margin-top:8px;font-size:clamp(14px,2.7vw,25px);line-height:1.3;color:#fff;opacity:0;transform:translateY(-120px);animation:zbDropS .8s both;text-shadow:-2px 0 var(--e),2px 0 var(--e),0 -2px var(--e),0 2px var(--e),-1px -1px var(--e),1px 1px var(--e),-1px 1px var(--e),1px -1px var(--e),0 0 12px rgba(var(--g),.9)}
+.zb-l{margin-top:10px;padding:3px 16px 4px;border-radius:999px;background:rgba(0,0,0,.42);font-size:clamp(13px,2.4vw,21px);line-height:1.3;color:#ffe38a;opacity:0;transform:translateY(-120px);animation:zbDropS .8s both;text-shadow:-2px 0 var(--e),2px 0 var(--e),0 -2px var(--e),0 2px var(--e),0 0 10px rgba(var(--g),.8)}
 @keyframes zbDrop{
   0%{opacity:0;transform:translateY(-230px) scale(1,1);animation-timing-function:cubic-bezier(.55,0,1,.6)}
   8%{opacity:1}
@@ -103,6 +105,12 @@ export function createZoneBanner(biomeAt) {
     s.className = 'zb-s'; s.textContent = z.sub;
     s.style.animationDelay = (0.18 + z.title.length * 0.07 * 0.6) + 's';
     el.appendChild(t); el.appendChild(s);
+    if (z.lv) {   // 권장 사냥 레벨 (몬스터가 있는 지역만)
+      const l = document.createElement('div');
+      l.className = 'zb-l'; l.textContent = '권장 사냥 레벨  Lv.' + z.lv[0] + ' ~ ' + z.lv[1];
+      l.style.animationDelay = (0.4 + z.title.length * 0.07 * 0.6) + 's';
+      el.appendChild(l);
+    }
     el.classList.add('on');
 
     const land = 950 + (z.title.length - 1) * 70;          // 마지막 글자까지 다 떨어지는 시간
