@@ -389,6 +389,12 @@ function mosquitoTick(dt, now) {
 }
 
 // 평타 판정: 장착·쿨다운 검사를 통과한 공격만 여기로 와요. 실제 피해는 sim 이 위치·방향·사거리를 서버 기준으로 검사해서 확정
+// 몬스터를 때렸을 때(맞는 순간): 치명타가 터진 때만 때린 사람 화면에 알려줘요 (몬스터 머리 위에 "치명타!" 글씨). kind = 몬스터 종류(글씨 높이용)
+const hitCb = (kind) => (pid, m, dmg, crit) => {
+  if (!crit) return;
+  io.to(pid).emit('crit', { k: kind, x: Math.round(m.x * 100) / 100, z: Math.round(m.z * 100) / 100, d: Math.round(dmg * 10) / 10 });
+};
+
 function resolveAttack(attacker, now) {
   if (sim) sim.playerAttack(attacker, now);
   if (rabSim) rabSim.playerAttack(attacker, now);
@@ -683,6 +689,7 @@ setInterval(() => {
     try {
       sim.update(dt, now, players, {
         hurt: hurtPlayer,
+        hit: hitCb('goblin'),
         kill: (pid) => { io.to(pid).emit('kill', { msg: '고블린을 처치했습니다!' }); giveLoot(pid, 'goblin'); giveExp(pid, 'goblin'); }
       });
       for (const p of players.values()) {
@@ -696,6 +703,7 @@ setInterval(() => {
     try {
       rabSim.update(dt, now, players, {
         hurt: hurtPlayer,
+        hit: hitCb('rabbit'),
         kill: (pid) => { io.to(pid).emit('kill', { msg: '토끼를 처치했습니다!' }); giveLoot(pid, 'rabbit'); giveExp(pid, 'rabbit'); }
       });
       for (const p of players.values()) {
@@ -709,6 +717,7 @@ setInterval(() => {
     try {
       sliSim.update(dt, now, players, {
         hurt: hurtPlayer,
+        hit: hitCb('slime'),
         kill: (pid) => { io.to(pid).emit('kill', { msg: '슬라임을 처치했습니다!' }); giveLoot(pid, 'slime'); giveExp(pid, 'slime'); }
       });
       for (const p of players.values()) {
@@ -722,6 +731,7 @@ setInterval(() => {
     try {
       bossSim.update(dt, now, players, {
         hurt: hurtPlayer,
+        hit: hitCb('boss'),
         kill: (pid, b, hitters, dmgMap) => {
           // 보스 체력의 7% 이상 깎은 사람만 보상(마정석·경험치·스킬북)을 받아요. 스킬북 확률(items.mjs BOSS_BOOK_CHANCE)은 사람마다 따로 굴려요
           const need = bossSim.hpMax * BOSS_REWARD_FRAC;
@@ -760,6 +770,7 @@ setInterval(() => {
     try {
       golSim.update(dt, now, players, {
         hurt: hurtPlayer,
+        hit: hitCb('golem'),
         kill: (pid) => { io.to(pid).emit('kill', { msg: '골렘을 처치했습니다!' }); giveLoot(pid, 'golem'); giveExp(pid, 'golem'); }
       });
       for (const p of players.values()) {
