@@ -4,7 +4,7 @@ import { buildVillage } from './village.js';
 import { buildHouses, updateHouses, setRoomsHidden, setPortalTexture } from './buildings.js';
 import {
   collideBuildings, collideRoom, nearestDoor, doorInfo, isDoorOpen, setDoorOpen, ROOMS, CORR_ROOM, roomEntry, roomExit, roomRet,
-  roomFloorY, roomGhost, clampCameraRoom, clampCameraInRoom, innFloor, stairsInfo,
+  roomFloorY, roomGhost, clampCameraRoom, clampCameraInRoom, innFloor, stairsInfo, CHIEF,
 } from './village-layout.js';
 import { makeHumanoid, animateHumanoid, humanReady, setOutfit } from './character.js';
 import { requestToggleWeapon, setRemoteWeapon, startWeaponAttack, startWeaponSweep, startWeaponSlam, setWeaponKind, setWeaponSpeed, setWeaponHandlers, isWeaponEquipped } from './weapon.js';
@@ -13,9 +13,10 @@ import { createNatureWorld } from './nature-world.js';
 import { createZoneBanner } from './zone-banner.js';
 import { createMosquitoFx } from './mosquito-fx.js';
 import { createStatusUI } from './status-ui.js';
+import { createVillageChief } from './npc.js';
 import { createAuth, clearToken } from './auth.js';
 import { createSeaLife } from './sea-life.js';
-import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, CRAFT_RECIPES, lootText } from './items.mjs';
+import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, CRAFT_RECIPES, QUEST_DEFS, CHIEF_TALK, lootText } from './items.mjs';
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
@@ -644,6 +645,8 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
   // 시작마을 터 (선으로만 표시)
   buildVillage(scene);
   buildHouses(scene);   // 여관 + 마을 집들
+  // 마을 이장 NPC: 여관 정문 앞 (자리는 village-layout.js 의 CHIEF). 퀘스트 상태에 따라 머리 위에 '!' / '?' 가 떠요
+  const chief = createVillageChief({ scene, x: CHIEF.x, y: T.height(CHIEF.x, CHIEF.z), z: CHIEF.z, ry: CHIEF.ry });
 
   // 청크 공통 인덱스 (해상도별로 한 번만 만들어 재사용)
   const indexCache = {};
@@ -1421,6 +1424,9 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
       const di = nearestDoor(me.x, me.z, me.y);    // 복도 방의 방문들
       return di >= 0 ? doorAction(di) : null;
     }
+    if (Math.hypot(me.x - CHIEF.x, me.z - CHIEF.z) < 3.2 && Math.abs(me.y - chief.group.position.y) < 3) {   // 마을 이장 옆: 대화
+      return { text: '이장과 대화', x: CHIEF.x, y: chief.group.position.y + 2.5, z: CHIEF.z, run: openChiefTalk };
+    }
     const di = nearestDoor(me.x, me.z, me.y);
     if (di >= 0) return doorAction(di);
     const st = stairsInfo();                       // 여관 안 계단: 올라갈 수는 없고, 누르면 복도 방으로 이동
@@ -2046,6 +2052,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   function openWin(i) {
+    closeChiefTalk();
     closeCraft();
     closeTrade();
     closeQuest();
@@ -2063,6 +2070,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   }
   function closeWin() {
     closeStatus();
+    closeChiefTalk();
     closeCraft();
     closeTrade();
     closeQuest();
@@ -2218,7 +2226,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
         '<span class="scr-vl">' + PLAYER.stats[key] + '</span><span class="scr-pm">' +
         '<button data-st="' + key + '" data-d="-1"' + (PLAYER.stats[key] > 0 ? '' : ' disabled') + '>−</button>' +
         '<button data-st="' + key + '" data-d="1"' + (PLAYER.statPts > 0 ? '' : ' disabled') + '>+</button></span></div>').join('') +
-      '<div class="scr-note">레벨이 오를 때마다 5포인트 · Shift+클릭은 5포인트씩</div>';
+      '<div class="scr-note">레벨이 오를 때마다 6포인트 · Shift+클릭은 5포인트씩</div>';
     scrEl.innerHTML =
       '<div class="scr-wrap"><div class="scr-r top"><i class="cl"></i><i class="bd bl"></i><i class="st"></i><i class="bd br"></i><i class="cr"></i></div>' +
       '<div class="scr-paper"><div class="scr-x" data-sclose="1">✕</div>' +
@@ -2349,6 +2357,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   function openTrade() {
+    closeChiefTalk();
     closeCraft();
     closeQuest();
     winEl.style.display = 'none';
@@ -2383,7 +2392,9 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   //   summary: '숲의 경계 지역으로 이동하기', dist: '342m', desc: '설명...',
   //   goals: [{ text: '숲의 경계 지역으로 이동하기', dist: '342m' }],
   //   rewards: [{ kind: 'gold', text: '골드 500' }, { kind: 'exp', text: '경험치 1,200' }] }
-  const QUESTS = [];
+  const QUESTS = [];            // 퀘스트 창에 보이는 목록. refreshQuests() 가 서버 진행 상황 + 가진 아이템으로 채워요
+  let questStatus = {};         // 서버가 알려준 진행 상황 { 퀘스트id: 'active' | 'done' }
+  let questsLoaded = false;     // 서버에서 한 번이라도 받았는지 (받기 전엔 이장 머리 위 표시를 안 띄움)
   const QUEST_TABS = [
     ['active', '진행중', '진행중인 퀘스트가 없습니다'],
     ['all', '전체', '퀘스트가 없습니다'],
@@ -2449,6 +2460,26 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const key = QUEST_TABS[questTab][0];
     return QUESTS.filter((q) => key === 'all' || q.status === key);
   }
+  // 퀘스트 목록·이장 머리 위 표시 갱신: 서버에서 진행 상황이 오거나 인벤토리가 바뀔 때마다
+  function refreshQuests() {
+    QUESTS.length = 0;
+    let mark = null;
+    for (const id of Object.keys(QUEST_DEFS)) {
+      const st = questStatus[id], def = QUEST_DEFS[id];
+      if (!st) { if (questsLoaded && id === CHIEF_QUEST) mark = '!'; continue; }   // 아직 안 받음 → 이장 머리 위 '!'
+      const need = def.goal.n, have = st === 'done' ? need : Math.min(need, haveN(def.goal.item)), ready = st === 'active' && have >= need;
+      if (ready && id === CHIEF_QUEST) mark = '?';                                  // 다 모음 → 이장 머리 위 '?'
+      const goals = [{ text: ITEMS[def.goal.item].name + ' ' + need + '개 구하기', dist: have + ' / ' + need }];
+      if (ready) goals.push({ text: '마을 이장에게 가져다주기', dist: '' });
+      QUESTS.push({
+        id, title: def.title, status: st, summary: st === 'done' ? '완료했어요' : ready ? '마을 이장에게 가져다주기' : def.summary,
+        dist: st === 'done' ? '' : have + ' / ' + need, desc: def.desc, goals,
+        rewards: [{ kind: 'exp', text: '경험치 ' + def.reward.exp }].concat((def.reward.items || []).map((r) => ({ kind: 'item', text: ITEMS[r.id].name + ' ' + r.n + '개' }))),
+      });
+    }
+    chief.setMarker(mark);
+    if (questOn) renderQuest();
+  }
   const questMark = (st) => (st === 'done' ? '✓' : st === 'fail' ? '✕' : '!');
 
   function questDetail(q) {
@@ -2499,6 +2530,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   function openQuest() {
+    closeChiefTalk();
     closeCraft();
     closeTrade();
     winEl.style.display = 'none';
@@ -2525,6 +2557,120 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (uiOpen && questOn) closeWin();
     else openQuest();
   }
+
+  // ---------- 이장 대화창 (이장 옆에서 E): 대사가 한 글자씩 나오고, 끝나면 선택지 버튼이 떠요 ----------
+  // 대사·선택지 글은 items.mjs 의 CHIEF_TALK, 퀘스트 내용은 QUEST_DEFS. 상태: 처음 → 받기/거절, 진행중(모자람) → 안내, 진행중(다 모음) → 보상 받기, 완료 → 인사
+  const CHIEF_QUEST = 'main_1';
+  const talkStyle = document.createElement('style');
+  talkStyle.textContent = `
+.ct{position:fixed;left:0;right:0;bottom:0;z-index:61;display:none;justify-content:center;padding:0 10px calc(14px + env(safe-area-inset-bottom,0px));pointer-events:none;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#efe4c8;user-select:none;-webkit-user-select:none}
+.ct-box{position:relative;pointer-events:auto;width:min(96vw,780px);box-sizing:border-box;border:2px solid #6a5632;border-radius:8px;background:linear-gradient(rgba(34,29,22,.97),rgba(17,15,12,.97));box-shadow:0 0 0 2px #070605,inset 0 0 0 1px #5a4a30,0 10px 34px rgba(0,0,0,.75);padding:22px 20px 14px}
+.ct-name{position:absolute;top:-17px;left:18px;padding:3px 16px;border:2px solid #b8924a;border-radius:4px;background:#2b2217;color:#ffe9a0;font-weight:700;font-size:17px;text-shadow:0 1px 0 #000}
+.ct-tx{min-height:3.4em;font-size:20px;line-height:1.6;color:#f2e8cd;white-space:pre-wrap;word-break:keep-all;cursor:pointer}
+.ct-more{position:absolute;right:18px;bottom:12px;font-size:16px;color:#ffd96a;animation:ctBlink 1s steps(2) infinite}
+@keyframes ctBlink{50%{opacity:0}}
+.ct-ch{display:none;flex-direction:column;gap:8px;margin-top:12px}
+.ct-ch button{padding:12px 16px;border:2px solid #9a7a3e;border-radius:4px;background:linear-gradient(#4a3a24,#2e2416);color:#f4e3b8;font:700 18px 'Galmuri11','Malgun Gothic',sans-serif;text-align:left;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,235,190,.25),0 2px 4px rgba(0,0,0,.5);text-shadow:0 1px 0 #000}
+.ct-ch button:hover{filter:brightness(1.25)}
+.ct-ch button:active{transform:translateY(1px)}
+.ct-ch button:disabled{filter:grayscale(.8) brightness(.7);cursor:default}
+.ct-ch button i{font-style:normal;color:#ffd96a;margin-right:10px}
+`;
+  document.head.appendChild(talkStyle);
+  const talkEl = document.createElement('div');
+  talkEl.className = 'ct';
+  document.body.appendChild(talkEl);
+  let talkOn = false, talkOpenT = 0, talkTimer = 0, talkMode = '', talkFull = '', talkPos = 0, talkPending = '';
+  const talkChoices = () => {   // 지금 대화 상태의 선택지: [{ t: 글, a: 동작 }]
+    if (talkMode === 'intro') return [{ t: CHIEF_TALK.introChoices[0], a: 'accept' }, { t: CHIEF_TALK.introChoices[1], a: 'decline' }];
+    if (talkMode === 'ready') return [{ t: CHIEF_TALK.readyChoice, a: 'complete' }];
+    return [{ t: CHIEF_TALK.close, a: 'close' }];
+  };
+  function talkText() {
+    const def = QUEST_DEFS[CHIEF_QUEST];
+    if (talkMode === 'intro') return CHIEF_TALK.intro;
+    if (talkMode === 'waiting') return CHIEF_TALK.waiting + '\n(' + ITEMS[def.goal.item].name + ' ' + Math.min(def.goal.n, haveN(def.goal.item)) + ' / ' + def.goal.n + ')';
+    return CHIEF_TALK[talkMode] || '';
+  }
+  function talkStartMode() {   // 이장에게 말을 걸었을 때 퀘스트 상태에 맞는 첫 대사
+    const st = questStatus[CHIEF_QUEST], def = QUEST_DEFS[CHIEF_QUEST];
+    if (!st) return 'intro';
+    if (st === 'done') return 'done';
+    return haveN(def.goal.item) >= def.goal.n ? 'ready' : 'waiting';
+  }
+  function renderTalk() {   // 새 대사를 처음부터 한 글자씩 보여줘요
+    talkFull = talkText();
+    talkPos = 0;
+    talkPending = '';
+    talkEl.innerHTML = '<div class="ct-box"><div class="ct-name">' + esc(CHIEF_TALK.name) + '</div><div class="ct-tx"></div><div class="ct-more">▼</div>' +
+      '<div class="ct-ch">' + talkChoices().map((c, i) => '<button data-ta="' + c.a + '"><i>' + (i + 1) + '</i>' + esc(c.t) + '</button>').join('') + '</div></div>';
+    clearInterval(talkTimer);
+    talkTimer = setInterval(() => { talkPos += 1; talkDraw(); }, 28);
+    talkDraw();
+  }
+  function talkDraw() {
+    const tx = talkEl.querySelector('.ct-tx'), ch = talkEl.querySelector('.ct-ch'), more = talkEl.querySelector('.ct-more');
+    if (!tx) return;
+    const done = talkPos >= talkFull.length;
+    tx.textContent = done ? talkFull : talkFull.slice(0, talkPos);
+    if (done) clearInterval(talkTimer);
+    if (ch) ch.style.display = done ? 'flex' : 'none';
+    if (more) more.style.display = done ? 'none' : 'block';
+  }
+  function openChiefTalk() {
+    closeTrade();
+    closeQuest();
+    closeCraft();
+    winEl.style.display = 'none';
+    scrEl.classList.remove('open', 'show');
+    talkOn = true;
+    talkOpenT = performance.now();
+    talkMode = talkStartMode();
+    renderTalk();
+    talkEl.style.display = 'flex';
+    if (!uiOpen) {
+      uiOpen = true;
+      document.body.classList.add('uw-open');
+      for (const k in keys) keys[k] = false;
+      jumpHeld = false;
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
+    }
+  }
+  function closeChiefTalk() {
+    talkOn = false;
+    clearInterval(talkTimer);
+    talkEl.style.display = 'none';
+  }
+  function talkAct(a) {   // 선택지 동작
+    if (a === 'close') { closeWin(); return; }
+    if (a === 'decline') { talkMode = 'declined'; renderTalk(); return; }
+    if (talkPending) return;   // 서버 답을 기다리는 중
+    if (a === 'accept') { talkPending = 'accept'; socket.emit('quest:accept', { id: CHIEF_QUEST }); }
+    else if (a === 'complete') { talkPending = 'complete'; socket.emit('quest:complete', { id: CHIEF_QUEST }); }
+  }
+  talkEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (performance.now() - talkOpenT < 300) return;   // 창을 연 그 터치의 click 이 바로 눌림으로 처리되는 것 방지
+    const b = t.closest('[data-ta]');
+    if (b && !b.disabled) { talkAct(b.getAttribute('data-ta')); return; }
+    if (talkPos < talkFull.length) { talkPos = talkFull.length; talkDraw(); }   // 대사를 누르면 한 번에 다 보임
+  });
+  window.addEventListener('keydown', (e) => {   // 키보드: 1·2 로 선택, 스페이스·엔터·E 는 대사 넘기기/첫 선택지
+    if (!talkOn || e.repeat || performance.now() - talkOpenT < 300) return;   // 대화를 연 그 E 키가 바로 대사 넘기기로 처리되지 않게
+    const n = { Digit1: 0, Numpad1: 0, Digit2: 1, Numpad2: 1 }[e.code];
+    const list = talkChoices();
+    if (talkPos < talkFull.length) { if (['Space', 'Enter', 'NumpadEnter', 'KeyE'].includes(e.code) || n !== undefined) { talkPos = talkFull.length; talkDraw(); } return; }
+    if (n !== undefined && list[n]) talkAct(list[n].a);
+    else if (list.length === 1 && ['Space', 'Enter', 'NumpadEnter', 'KeyE'].includes(e.code)) talkAct(list[0].a);
+  });
+  // 서버 답: 퀘스트 받기/완료가 됐으면 다음 대사로, 안 됐으면 이유를 알려줘요
+  socket.on('quest:result', (d) => {
+    if (!d) return;
+    if (d.ok) { if (talkOn && talkPending === d.act) { talkMode = d.act === 'accept' ? 'accepted' : 'rewarded'; renderTalk(); } }
+    else { if (d.msg) toast(d.msg); if (talkOn && talkPending === d.act) { talkPending = ''; talkMode = talkStartMode(); renderTalk(); } }
+  });
+  socket.on('quests', (d) => { questStatus = d && typeof d === 'object' ? d : {}; questsLoaded = true; refreshQuests(); });
 
   // ---------- 대장간 무기 제작 창 (제작대에서 E): 제작 목록 → 돌 검 → 필요 재료 → 제작하기(30초) → 수령하기 ----------
   // 재료·시간·결과는 items.mjs 의 CRAFT_RECIPES 에 있어요. 나무검은 목록에만 보이고 아직 만들 수 없어요(준비 중).
@@ -2641,6 +2787,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     else if (a === 'claim') socket.emit('craft:claim');
   });
   function openCraft() {
+    closeChiefTalk();
     closeTrade();
     closeQuest();
     winEl.style.display = 'none';
@@ -3178,6 +3325,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (winSel.inv >= invItems.length) winSel.inv = -1;
     if (winOpenNow()) renderWin();
     if (craftOn) renderCraft();   // 제작 창이 열려 있으면 보유 재료 수도 바로 반영
+    refreshQuests();               // 퀘스트 진행(예: 토끼 간 3 / 5)·이장 머리 위 표시도 같이
   });
   socket.on('craft', (d) => {   // 무기 제작 상태 (서버가 정함). id 가 없으면 제작 중인 게 없음
     craftState = d && d.id && craftRec(d.id) ? { id: d.id, endAt: Date.now() + (Number(d.left) || 0) } : null;
@@ -3466,6 +3614,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       camera.lookAt(ex - Math.sin(me.yaw) * cp, hy - Math.sin(me.pitch), ez - Math.cos(me.yaw) * cp);
     } else camera.lookAt(tx, ty, tz);
     updateCritPops(dt);   // 치명타 글씨 위치·사라짐
+    chief.update(dt, me);   // 이장: 숨쉬기·눈 깜빡임·가까이 오면 바라봄
     updateDoorHint();   // 문 옆에 뜨는 반투명 안내 (카메라 위치가 정해진 뒤에 화면 좌표로 바꿈)
 
     // 물속 효과: 카메라가 수면 아래로 내려가면 시야가 푸르러지고 멀리는 뿌옇게 보임
