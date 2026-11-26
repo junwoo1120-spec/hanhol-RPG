@@ -110,7 +110,7 @@ const saveProfile = (p) => {
   // 땅 위에 있을 때만 위치를 새로 저장 (동굴·집 안이면 마지막 땅 위 위치를 그대로 둠)
   const above = p.spawned && [p.x, p.z].every(Number.isFinite) && p.y >= UNDER_Y && Math.abs(p.x) < 5000 && Math.abs(p.z) < 5000;
   const pos = above ? { x: Math.round(p.x * 10) / 10, z: Math.round(p.z * 10) / 10 } : (old && old.pos) || null;
-  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, craft: p.craft ? { id: p.craft.id, end: p.craft.end } : null, level: p.level, exp: cleanNum(p.exp, EXP_MAX), gold: cleanNum(p.gold, GOLD_MAX), stats: { ...p.stats }, pos });
+  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, craft: p.craft ? { id: p.craft.id, end: p.craft.end } : null, quests: { ...p.quests }, level: p.level, exp: cleanNum(p.exp, EXP_MAX), gold: cleanNum(p.gold, GOLD_MAX), stats: { ...p.stats }, pos });
 };
 function kickPlayer(o) {   // 같은 계정으로 다른 곳에서 로그인하면 먼저 있던 접속을 끊어요
   saveProfile(o);
@@ -177,6 +177,16 @@ function giveLoot(pid, kind) {
   if (got.length) { sendInv(p); io.to(pid).emit('loot', { items: got }); }
   if (full) sendToast(p, '인벤토리가 가득 차서 일부 아이템을 얻지 못했어요');
 }
+// ---------- 퀘스트 (마을 이장) ----------
+// 진행 상황은 p.quests = { 퀘스트id: 'active' | 'done' } (받지 않은 퀘스트는 없음). 내용(목표·보상)은 items.mjs 의 QUEST_DEFS
+const cleanQuests = (raw) => {
+  const out = {};
+  if (raw && typeof raw === 'object' && ITEMS_MOD && ITEMS_MOD.QUEST_DEFS) for (const id of Object.keys(ITEMS_MOD.QUEST_DEFS)) if (raw[id] === 'active' || raw[id] === 'done') out[id] = raw[id];
+  return out;
+};
+const sendQuests = (p) => io.to(p.id).emit('quests', { ...p.quests });
+const questResult = (p, id, act, ok, msg) => io.to(p.id).emit('quest:result', { id, act, ok, msg: msg || '' });
+
 // ---------- 대장간 무기 제작 (제작대에서 E) ----------
 // 재료는 시작할 때 바로 빠지고, 시간(items.mjs 의 CRAFT_RECIPES.time 초)이 지나면 '수령하기'로 받아요. 한 번에 하나만 제작.
 // 끝나는 시각(p.craft.end)을 저장해서, 제작 중에 접속을 끊어도 시간은 계속 흘러요.
@@ -193,11 +203,11 @@ function craftTick(now) {   // 제작이 끝난 사람에게 한 번 알려줘�
 }
 // ---------- 장비 (갑옷·신발): 장착하면 최대 체력이 늘어요 ----------
 const sendGear = (p) => io.to(p.id).emit('gear', { gear: p.gear });
-// ---------- 스탯 (레벨업마다 5포인트) ----------
-// 1포인트당 효과. 만렙 100(총 495포인트) 기준이고, 몬스터를 아주 세게 만들 계획이라 퍼센트를 넉넉하게 잡았어요. 여기 숫자만 바꾸면 돼요
+// ---------- 스탯 (레벨업마다 6포인트) ----------
+// 1포인트당 효과. 아래 퍼센트는 처음에 만렙 100(총 495포인트) 기준으로 잡은 값이고(지금은 레벨당 6포인트라 만렙 총 594포인트), 몬스터를 아주 세게 만들 계획이라 퍼센트를 넉넉하게 잡았어요. 여기 숫자만 바꾸면 돼요
 const STAT_KEYS = ['str', 'dex', 'con', 'int', 'luk', 'agi'];
 const STAT = {
-  PER_LEVEL: 5,
+  PER_LEVEL: 6,                     // 레벨업마다 받는 포인트. 남은 포인트는 'PER_LEVEL × (레벨-1) − 찍은 합'으로 늘 새로 계산해서, 이 숫자를 바꾸면 이미 있는 사람들도 바뀐 만큼 자동으로 더 받아요
   STR_DMG: 0.04,                    // STR: 공격력 +4%
   DEX_MOVE: 1 / (5 * (MAX_LEVEL - 1)), MOVE_MAX: 1.0,   // DEX: 이동 속도 — 만렙(100레벨)의 총 495포인트를 전부 찍으면 정확히 +100% (포인트당 약 +0.2%)
   CON_HP: 10,                       // CON: 최대 HP +10
@@ -447,6 +457,7 @@ io.on('connection', (socket) => {
     me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, pants: sv.gear.pants || null, weapon: sv.gear.weapon || null } : { armor: null, pants: null, weapon: null };
     me.craft = sv && sv.craft && craftOf(sv.craft.id) && Number.isFinite(sv.craft.end) ? { id: sv.craft.id, end: sv.craft.end } : null;   // 제작 중이던 무기
     me.craftNotified = false;
+    me.quests = cleanQuests(sv && sv.quests);   // 퀘스트 진행 상황 { 퀘스트id: 'active'(진행중) | 'done'(완료) }
     if (sv && Number.isFinite(sv.level)) me.level = sv.level;
     me.stats = cleanStats(sv && sv.stats);        // 예전 계정은 스탯이 없어서 0부터 시작
     me.exp = cleanNum(sv && sv.exp, EXP_MAX);     // 예전 계정은 값이 없어서 0부터 시작
@@ -457,7 +468,7 @@ io.on('connection', (socket) => {
     const spawn = sv && sv.pos && Number.isFinite(sv.pos.x) && Number.isFinite(sv.pos.z) ? { x: sv.pos.x, z: sv.pos.z } : undefined;   // 마지막으로 있던 땅 위 위치
     socket.emit('init', { id: socket.id, seed: SEED, spawn, level: me.level, exp: me.exp, expMax: expNeed(me.level), gold: me.gold });
     socket.emit('hp', { hp: me.hp, max: me.hpMax });
-    sendInv(me); sendSkills(me); sendGear(me); sendStats(me); sendCraft(me);
+    sendInv(me); sendSkills(me); sendGear(me); sendStats(me); sendCraft(me); sendQuests(me);
     if (caveEnt) socket.emit('cave', caveEnt);   // 동굴 입구 위치 (아직 계산 전이면 계산이 끝났을 때 전체에게 보냄)
   });
 
@@ -500,7 +511,7 @@ io.on('connection', (socket) => {
   // 화면이 준비되면 인벤토리·스킬 정보를 한 번 더 요청 (접속 직후에 보낸 것을 놓쳤을 때 대비)
   socket.on('sync', () => {
     const p = players.get(socket.id);
-    if (p && p.inv) { sendInv(p); sendSkills(p); sendGear(p); sendStats(p); sendCraft(p); }
+    if (p && p.inv) { sendInv(p); sendSkills(p); sendGear(p); sendStats(p); sendCraft(p); sendQuests(p); }
   });
   // 장비 장착: 인벤토리의 갑옷/신발을 해당 칸에 입음 (이미 입은 게 있으면 서로 바뀜)
   socket.on('wear', (d) => {
@@ -524,6 +535,40 @@ io.on('connection', (socket) => {
     p.inv.push({ id, n: 1 });
     p.gear[d.slot] = null;
     applyGear(p);
+  });
+  // 퀘스트 받기: 아직 안 받은 퀘스트만
+  socket.on('quest:accept', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !p.quests || !ITEMS_MOD || !d || typeof d.id !== 'string') return;
+    const q = ITEMS_MOD.QUEST_DEFS[d.id];
+    if (!q) return;
+    if (p.quests[q.id]) { questResult(p, q.id, 'accept', false, '이미 받은 퀘스트예요'); sendQuests(p); return; }
+    p.quests[q.id] = 'active';
+    saveProfile(p); sendQuests(p);
+    sendToast(p, '퀘스트를 수락했습니다');
+    questResult(p, q.id, 'accept', true);
+  });
+  // 퀘스트 완료: 목표 아이템을 내고(빠짐) 보상(경험치·아이템)을 받아요. 보상 아이템을 넣을 칸이 없으면 아무것도 바뀌지 않아요
+  socket.on('quest:complete', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !p.quests || !p.inv || !ITEMS_MOD || !d || typeof d.id !== 'string') return;
+    const q = ITEMS_MOD.QUEST_DEFS[d.id];
+    if (!q) return;
+    if (p.quests[q.id] !== 'active') { questResult(p, q.id, 'complete', false, '진행 중인 퀘스트가 아니에요'); sendQuests(p); return; }
+    const st = p.inv.find((i) => i.id === q.goal.item);
+    if (!st || st.n < q.goal.n) { questResult(p, q.id, 'complete', false, '아직 재료가 부족해요'); sendInv(p); return; }
+    const backup = p.inv.map((i) => ({ ...i }));
+    st.n -= q.goal.n;
+    if (st.n <= 0) p.inv.splice(p.inv.indexOf(st), 1);
+    for (const r of q.reward.items || []) {
+      if (!addItem(p, r.id, r.n)) { p.inv = backup; sendInv(p); questResult(p, q.id, 'complete', false, '인벤토리가 가득 차서 보상을 받을 수 없어요'); sendToast(p, '인벤토리가 가득 차서 보상을 받을 수 없어요'); return; }
+    }
+    p.quests[q.id] = 'done';
+    if (q.reward.exp) addExp(p, q.reward.exp);
+    saveProfile(p); sendInv(p); sendQuests(p);
+    if (q.reward.items && q.reward.items.length) io.to(p.id).emit('loot', { items: q.reward.items.map((r) => ({ id: r.id, n: r.n })) });
+    sendToast(p, '퀘스트를 완료했습니다! 경험치 +' + (q.reward.exp || 0));
+    questResult(p, q.id, 'complete', true);
   });
   // 무기 제작 시작: 재료가 다 있고 제작 중인 게 없을 때만. 재료는 바로 빠지고 시간이 지나면 수령할 수 있어요
   socket.on('craft:start', (d) => {
