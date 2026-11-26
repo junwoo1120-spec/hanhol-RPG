@@ -110,7 +110,7 @@ const saveProfile = (p) => {
   // 땅 위에 있을 때만 위치를 새로 저장 (동굴·집 안이면 마지막 땅 위 위치를 그대로 둠)
   const above = p.spawned && [p.x, p.z].every(Number.isFinite) && p.y >= UNDER_Y && Math.abs(p.x) < 5000 && Math.abs(p.z) < 5000;
   const pos = above ? { x: Math.round(p.x * 10) / 10, z: Math.round(p.z * 10) / 10 } : (old && old.pos) || null;
-  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, level: p.level, exp: cleanNum(p.exp, EXP_MAX), gold: cleanNum(p.gold, GOLD_MAX), stats: { ...p.stats }, pos });
+  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, craft: p.craft ? { id: p.craft.id, end: p.craft.end } : null, level: p.level, exp: cleanNum(p.exp, EXP_MAX), gold: cleanNum(p.gold, GOLD_MAX), stats: { ...p.stats }, pos });
 };
 function kickPlayer(o) {   // 같은 계정으로 다른 곳에서 로그인하면 먼저 있던 접속을 끊어요
   saveProfile(o);
@@ -177,6 +177,20 @@ function giveLoot(pid, kind) {
   if (got.length) { sendInv(p); io.to(pid).emit('loot', { items: got }); }
   if (full) sendToast(p, '인벤토리가 가득 차서 일부 아이템을 얻지 못했어요');
 }
+// ---------- 대장간 무기 제작 (제작대에서 E) ----------
+// 재료는 시작할 때 바로 빠지고, 시간(items.mjs 의 CRAFT_RECIPES.time 초)이 지나면 '수령하기'로 받아요. 한 번에 하나만 제작.
+// 끝나는 시각(p.craft.end)을 저장해서, 제작 중에 접속을 끊어도 시간은 계속 흘러요.
+const craftOf = (id) => (ITEMS_MOD && ITEMS_MOD.CRAFT_RECIPES ? ITEMS_MOD.CRAFT_RECIPES.find((r) => r.id === id && r.craftable) : null) || null;
+const sendCraft = (p) => io.to(p.id).emit('craft', p.craft ? { id: p.craft.id, left: Math.max(0, p.craft.end - Date.now()) } : { id: null });
+function craftTick(now) {   // 제작이 끝난 사람에게 한 번 알려줘요
+  for (const p of players.values()) {
+    if (!p.craft || p.craftNotified || now < p.craft.end) continue;
+    p.craftNotified = true;
+    const r = craftOf(p.craft.id);
+    sendToast(p, (r ? ITEMS_MOD.ITEMS[r.result].name : '무기') + ' 제작이 완료되었습니다! 대장간 제작대에서 받아가세요.');
+    sendCraft(p);
+  }
+}
 // ---------- 장비 (갑옷·신발): 장착하면 최대 체력이 늘어요 ----------
 const sendGear = (p) => io.to(p.id).emit('gear', { gear: p.gear });
 // ---------- 스탯 (레벨업마다 5포인트) ----------
@@ -199,10 +213,11 @@ const statPts = (p) => STAT.PER_LEVEL * (p.level - 1) - statSum(p);   // 아직 
 // 레벨보다 많이 쓴 상태(저장 데이터가 이상하거나 개발자 도구로 레벨을 내림)면 전부 초기화
 const fitStats = (p) => { if (!p.stats) p.stats = zeroStats(); if (statPts(p) < 0) p.stats = zeroStats(); };
 // 스탯 → 실제 능력치 (몬스터 sim 은 p.dmgMult·critChance·critDmg 를 읽어요)
+const weaponMul = (p) => (ITEMS_MOD && ITEMS_MOD.weaponDmg ? ITEMS_MOD.weaponDmg(p.gear) : 1);   // 장착한 무기의 공격력 배율 (안 끼면 나무검 = 1)
 function applyStats(p) {
   fitStats(p);
   const s = p.stats;
-  p.dmgMult = (p.devDmg || 1) * (1 + STAT.STR_DMG * s.str);   // 개발자 도구 배율 × STR
+  p.dmgMult = (p.devDmg || 1) * (1 + STAT.STR_DMG * s.str) * weaponMul(p);   // 개발자 도구 배율 × STR × 들고 있는 무기 배율(돌 검 2배)
   p.critChance = Math.min(STAT.CRIT_MAX, STAT.AGI_CRIT * s.agi);
   p.critDmg = STAT.CRITDMG_BASE + STAT.LUK_CRITDMG * s.luk;
   p.dropMul = 1 + Math.min(STAT.DROP_MAX, STAT.LUK_DROP * s.luk);
@@ -212,7 +227,7 @@ function applyStats(p) {
 }
 const sendStats = (p) => io.to(p.id).emit('stats', {
   pts: statPts(p), stats: { ...p.stats }, mpMax: p.mpMax,
-  dmg: STAT.STR_DMG * p.stats.str, crit: p.critChance, critDmg: p.critDmg, drop: p.dropMul - 1, aspd: p.atkSpd, move: p.moveSpd
+  dmg: (1 + STAT.STR_DMG * p.stats.str) * weaponMul(p) - 1, crit: p.critChance, critDmg: p.critDmg, drop: p.dropMul - 1, aspd: p.atkSpd, move: p.moveSpd
 });
 const calcHpMax = (p) => Math.max(1, Math.round(PLAYER_HP_MAX * (p.hpMult || 1))) + (ITEMS_MOD ? ITEMS_MOD.gearHp(p.gear) : 0) + (p.stats ? STAT.CON_HP * p.stats.con : 0);
 // 스탯이 바뀐 뒤: 능력치·최대 체력을 다시 계산하고 화면에 알려줘요 (최대 체력이 늘면 현재 체력도 같이 늘어요)
@@ -225,13 +240,14 @@ function refreshStats(p) {
   io.to(p.id).emit('hp', { hp: p.hp, max: p.hpMax });
   sendStats(p); saveProfile(p);
 }
-function applyGear(p) {   // 최대 체력을 다시 계산: 늘어난 만큼 현재 체력도 같이 늘고, 줄면 최대치에 맞춰 깎임
+function applyGear(p) {   // 최대 체력을 다시 계산: 늘어난 만큼 현재 체력도 같이 늘고, 줄면 최대치에 맞춰 깎임 (무기를 바꾸면 공격력도 다시 계산)
+  applyStats(p);
   const max = calcHpMax(p), diff = max - p.hpMax;
   p.hpMax = max;
   p.hp = diff > 0 ? Math.min(max, p.hp + diff) : Math.min(p.hp, max);
   if (p.dead) p.hp = 0;   // 쓰러져 있는 동안은 체력이 늘어도 0 유지
   io.to(p.id).emit('hp', { hp: p.hp, max: p.hpMax });
-  saveProfile(p); sendGear(p); sendInv(p);
+  saveProfile(p); sendGear(p); sendInv(p); sendStats(p);
 }
 
 // ---------- 보스 오크 대전사 (고블린 구역 한가운데의 어두운 흙 터) ----------
@@ -429,6 +445,8 @@ io.on('connection', (socket) => {
     me.learned = sv ? [...sv.learned] : [];
     me.slotR = sv ? sv.slotR : null;
     me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, pants: sv.gear.pants || null, weapon: sv.gear.weapon || null } : { armor: null, pants: null, weapon: null };
+    me.craft = sv && sv.craft && craftOf(sv.craft.id) && Number.isFinite(sv.craft.end) ? { id: sv.craft.id, end: sv.craft.end } : null;   // 제작 중이던 무기
+    me.craftNotified = false;
     if (sv && Number.isFinite(sv.level)) me.level = sv.level;
     me.stats = cleanStats(sv && sv.stats);        // 예전 계정은 스탯이 없어서 0부터 시작
     me.exp = cleanNum(sv && sv.exp, EXP_MAX);     // 예전 계정은 값이 없어서 0부터 시작
@@ -439,7 +457,7 @@ io.on('connection', (socket) => {
     const spawn = sv && sv.pos && Number.isFinite(sv.pos.x) && Number.isFinite(sv.pos.z) ? { x: sv.pos.x, z: sv.pos.z } : undefined;   // 마지막으로 있던 땅 위 위치
     socket.emit('init', { id: socket.id, seed: SEED, spawn, level: me.level, exp: me.exp, expMax: expNeed(me.level), gold: me.gold });
     socket.emit('hp', { hp: me.hp, max: me.hpMax });
-    sendInv(me); sendSkills(me); sendGear(me); sendStats(me);
+    sendInv(me); sendSkills(me); sendGear(me); sendStats(me); sendCraft(me);
     if (caveEnt) socket.emit('cave', caveEnt);   // 동굴 입구 위치 (아직 계산 전이면 계산이 끝났을 때 전체에게 보냄)
   });
 
@@ -482,7 +500,7 @@ io.on('connection', (socket) => {
   // 화면이 준비되면 인벤토리·스킬 정보를 한 번 더 요청 (접속 직후에 보낸 것을 놓쳤을 때 대비)
   socket.on('sync', () => {
     const p = players.get(socket.id);
-    if (p && p.inv) { sendInv(p); sendSkills(p); sendGear(p); sendStats(p); }
+    if (p && p.inv) { sendInv(p); sendSkills(p); sendGear(p); sendStats(p); sendCraft(p); }
   });
   // 장비 장착: 인벤토리의 갑옷/신발을 해당 칸에 입음 (이미 입은 게 있으면 서로 바뀜)
   socket.on('wear', (d) => {
@@ -506,6 +524,31 @@ io.on('connection', (socket) => {
     p.inv.push({ id, n: 1 });
     p.gear[d.slot] = null;
     applyGear(p);
+  });
+  // 무기 제작 시작: 재료가 다 있고 제작 중인 게 없을 때만. 재료는 바로 빠지고 시간이 지나면 수령할 수 있어요
+  socket.on('craft:start', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !p.inv || !d || typeof d.id !== 'string') return;
+    const r = craftOf(d.id);
+    if (!r) return;
+    if (p.craft) { sendToast(p, '이미 제작 중인 무기가 있어요'); sendCraft(p); return; }
+    if (!r.mats.every((m) => { const st = p.inv.find((i) => i.id === m.id); return st && st.n >= m.n; })) { sendToast(p, '재료가 부족해요'); sendInv(p); return; }
+    for (const m of r.mats) { const st = p.inv.find((i) => i.id === m.id); st.n -= m.n; if (st.n <= 0) p.inv.splice(p.inv.indexOf(st), 1); }
+    p.craft = { id: r.id, end: Date.now() + r.time * 1000 };
+    p.craftNotified = false;
+    saveProfile(p); sendInv(p); sendCraft(p);
+  });
+  // 완성된 무기 수령: 인벤토리(장비 보관)로 들어와요. 칸이 없으면 못 받고 제작은 그대로 남아 있어요
+  socket.on('craft:claim', () => {
+    const p = players.get(socket.id);
+    if (!p || !p.inv || !p.craft) return;
+    const r = craftOf(p.craft.id);
+    if (!r) { p.craft = null; saveProfile(p); sendCraft(p); return; }   // 없어진 제작 항목이면 정리
+    if (Date.now() < p.craft.end - 300) { sendCraft(p); return; }       // 아직 안 끝났어요
+    if (!addItem(p, r.result, 1)) { sendToast(p, '인벤토리가 가득 차서 받을 수 없어요'); return; }
+    p.craft = null;
+    saveProfile(p); sendInv(p); sendCraft(p);
+    io.to(p.id).emit('loot', { items: [{ id: r.result, n: 1 }] });   // '돌 검x1을 획득했습니다.'
   });
   // 스킬북 배우기: 인벤토리의 책을 하나 쓰고 그 스킬을 익힘 (이미 배운 스킬이면 책을 쓰지 않음)
   socket.on('learn', (d) => {
@@ -685,6 +728,7 @@ setInterval(() => {
   lastTick = now;
   regenPlayers(dt);
   mosquitoTick(dt, now);
+  craftTick(now);   // 무기 제작이 끝난 사람에게 알림
   if (sim) {
     try {
       sim.update(dt, now, players, {
@@ -787,7 +831,7 @@ setInterval(() => {
   const list = [];
   for (const p of players.values()) {
     // 마지막 값 = 입은 옷 (1 = 갑옷, 2 = 바지, 3 = 둘 다) → 다른 플레이어 화면에도 입은 모습이 보임
-    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level, (p.gear && p.gear.armor ? 1 : 0) | (p.gear && p.gear.pants ? 2 : 0) | (p.gear && p.gear.weapon ? 4 : 0), p.dead ? 1 : 0]);   // 마지막 값 = 쓰러져 있는지 (다른 플레이어 화면에도 쓰러진 모습이 보임)
+    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level, (p.gear && p.gear.armor ? 1 : 0) | (p.gear && p.gear.pants ? 2 : 0) | (p.gear && p.gear.weapon ? (p.gear.weapon === 'stone_sword' ? 8 : 4) : 0), p.dead ? 1 : 0]);   // 마지막 값 = 쓰러져 있는지 (다른 플레이어 화면에도 쓰러진 모습이 보임)
   }
   io.emit('state', list);
 }, 1000 / 15);
