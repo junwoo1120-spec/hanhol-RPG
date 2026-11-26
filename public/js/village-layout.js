@@ -676,6 +676,8 @@ const INN_C = Math.cos(innH.rot), INN_S = Math.sin(innH.rot), INN_Y2 = VILLAGE.h
 // 월드 좌표의 상자(본관 + 여유 1.1칸, 2층 바닥 위 ~ 지붕 위)이며, buildings.js 가 평면 6개로 바꿔 건물 재질에 건다.
 export const INN_PORTAL_CLIP = { cx: innH.x, cz: innH.z, c: INN_C, s: INN_S, hw: ROOM.INN.w / 2 + 1.1, hd: ROOM.INN.d / 2 + 1.1, y0: VILLAGE.h + INN2.floorY + 0.1, y1: VILLAGE.h + 45 };
 const innWorld = (lx, lz) => ({ x: innH.x + (lx * INN_C + lz * INN_S) * innH.k, z: innH.z + (-lx * INN_S + lz * INN_C) * innH.k });
+// 마을 이장 NPC 자리: 여관 정문 앞, 현관 지붕 기둥의 오른쪽 옆 (통·가로등 사이 빈 곳). 얼굴은 광장 쪽(여관 앞쪽)을 향해요. r = 지나갈 수 없는 반지름
+export const CHIEF = { ...innWorld(4.3, ROOM.INN.d / 2 + 3.8), ry: innH.rot, r: 0.5 };
 {
   const c0 = innWorld(0, 0);
   CORR_ROOM.ghost = { x: c0.x, y: INN_Y2, z: c0.z, rot: innH.rot, s: 0.5, clip: true };
@@ -836,6 +838,10 @@ export function collideBuildings(x, z, pr = 0.4) {
     const b = HBOUND[i];
     if ((x - b.x) ** 2 + (z - b.z) ** 2 > (b.r + pr + 1) ** 2) continue;
     pushOut(HCOLS[i], pr);
+  }
+  {   // 마을 이장: 사람이 지나갈 수 없는 작은 원
+    const dx = _out.x - CHIEF.x, dz = _out.z - CHIEF.z, rr = CHIEF.r + pr, d2 = dx * dx + dz * dz;
+    if (d2 < rr * rr) { const d = Math.sqrt(d2) || 1e-6; _out.x = CHIEF.x + (dx / d) * rr; _out.z = CHIEF.z + (dz / d) * rr; }
   }
   return _out;
 }
