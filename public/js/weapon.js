@@ -69,7 +69,7 @@ const COL = {
   nail: '#9a9a9a'
 };
 
-function buildSwordGeometry() {
+function buildSwordGeometry(pal = COL, S = SWORD, stone = false) {   // pal = 색, S = 날 크기, stone = 돌 느낌(날을 잘게 나눠 점마다 색을 불규칙하게 + 끝이 뾰족 + 이음선·못 없음)
   const pos = [];
   const col = [];
   const c = new THREE.Color();
@@ -94,24 +94,37 @@ function buildSwordGeometry() {
   };
 
   // --- 손잡이 / 가드 / 손잡이 끝 ---
-  box(0, 0, 0, 0.036, 0.17, 0.044, COL.grip);
-  box(0, -0.035, 0, 0.040, 0.012, 0.048, COL.band);
-  box(0, 0.035, 0, 0.040, 0.012, 0.048, COL.band);
-  box(0, 0.105, 0, 0.17, 0.04, 0.058, COL.guard, COL.guardTop);
-  box(0, -0.11, 0, 0.062, 0.05, 0.062, COL.pommel, COL.pommelTop);
+  box(0, 0, 0, 0.036, 0.17, 0.044, pal.grip);
+  box(0, -0.035, 0, 0.040, 0.012, 0.048, pal.band);
+  box(0, 0.035, 0, 0.040, 0.012, 0.048, pal.band);
+  box(0, 0.105, 0, 0.17, 0.04, 0.058, pal.guard, pal.guardTop);
+  box(0, -0.11, 0, 0.062, 0.05, 0.062, pal.pommel, pal.pommelTop);
 
   // --- 검날: 단면(가운데가 솟은 6각형)을 길이 방향으로 이어 붙임 ---
-  const { bladeBase: y0, bladeLen: L, bladeHalfW: hw, bladeThick: t, tipCut } = SWORD;
-  const secs = [
+  const { bladeBase: y0, bladeLen: L, bladeHalfW: hw, bladeThick: t, tipCut } = S;
+  let secs = stone ? [
+    { y: 0, xl: -hw, xr: hw, m: 1 },
+    { y: L - tipCut, xl: -hw, xr: hw, m: 1 },
+    { y: L, xl: -0.004, xr: 0.004, m: 1 }                 // 뾰족한 끝
+  ] : [
     { y: 0, xl: -hw, xr: hw, m: 1 },
     { y: 0.29, xl: -hw, xr: hw, m: 1 },
-    { y: 0.30, xl: -hw, xr: hw, m: COL.seamDark },     // 가로 이음선(얇은 어두운 줄)
+    { y: 0.30, xl: -hw, xr: hw, m: pal.seamDark },     // 가로 이음선(얇은 어두운 줄)
     { y: 0.31, xl: -hw, xr: hw, m: 1 },
     { y: L - tipCut, xl: -hw, xr: hw, m: 1 },
     { y: L, xl: -hw, xr: -hw + 0.006, m: 1 }           // 왼쪽 위 모서리가 뾰족, 오른쪽은 비스듬히 잘림
   ];
+  if (stone) {   // 날을 잘게 나눠야 점마다 다른 색이 얼룩덜룩한 돌처럼 보여요
+    const sub = [];
+    for (let i = 0; i < secs.length - 1; i++) for (let k = 0; k < 6; k++) {
+      const f = k / 6, A = secs[i], B = secs[i + 1];
+      sub.push({ y: A.y + (B.y - A.y) * f, xl: A.xl + (B.xl - A.xl) * f, xr: A.xr + (B.xr - A.xr) * f, m: 1 });
+    }
+    sub.push(secs[secs.length - 1]);
+    secs = sub;
+  }
   const ring = (s) => {
-    const xm = (s.xl + s.xr) / 2, e = rgb(COL.edge, s.m), r = rgb(COL.ridge, s.m);
+    const xm = (s.xl + s.xr) / 2, e = rgb(pal.edge, s.m), r = rgb(pal.ridge, s.m);
     return [
       { p: [s.xl, y0 + s.y, 0.3 * t], c: e }, { p: [xm, y0 + s.y, 0.5 * t], c: r }, { p: [s.xr, y0 + s.y, 0.3 * t], c: e },
       { p: [s.xr, y0 + s.y, -0.3 * t], c: e }, { p: [xm, y0 + s.y, -0.5 * t], c: r }, { p: [s.xl, y0 + s.y, -0.3 * t], c: e }
@@ -125,8 +138,15 @@ function buildSwordGeometry() {
     }
   }
 
-  // --- 못 (참고 이미지의 작은 금속 점) ---
-  for (const ny of [0.20, 0.33, 0.41]) box(0.022, y0 + ny, 0.0125, 0.011, 0.011, 0.011, COL.nail);
+  // --- 못 (참고 이미지의 작은 금속 점) / 돌 검은 대신 날을 손잡이에 묶은 가죽 끈 ---
+  if (stone) {
+    for (const dy of [0.0, 0.03, 0.06]) box(0, y0 + 0.02 + dy, 0, hw * 2 + 0.012, 0.018, t + 0.014, pal.cord);
+    const hash = (x, y, z) => { const v = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453; return v - Math.floor(v); };
+    for (let i = 0; i < pos.length; i += 3) {   // 점마다 밝기를 불규칙하게: 거친 돌 느낌
+      const h = hash(Math.round(pos[i] * 160), Math.round(pos[i + 1] * 160), Math.round(pos[i + 2] * 160)), m = 0.80 + h * 0.34;
+      col[i] *= m; col[i + 1] *= m; col[i + 2] *= m;
+    }
+  } else for (const ny of [0.20, 0.33, 0.41]) box(0.022, y0 + ny, 0.0125, 0.011, 0.011, 0.011, pal.nail);
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -135,6 +155,16 @@ function buildSwordGeometry() {
   geo.computeBoundingSphere();
   return geo;
 }
+
+// 돌 검: 나무검과 같은 모양이지만 회색 돌 날 + 굵고 뾰족한 날 + 가죽 감김 손잡이 (크기는 나무검보다 날이 조금 넓고 두꺼움)
+const STONE_SWORD = { bladeBase: 0.10, bladeLen: 0.60, bladeHalfW: 0.058, bladeThick: 0.042, tipCut: 0.10 };
+const STONE_COL = {
+  edge: '#b3b6bb', ridge: '#80848b', seamDark: 1,
+  guard: '#4b3a2a', guardTop: '#6b553c',
+  grip: '#6e4d2e', band: '#2f2113',
+  pommel: '#3d4046', pommelTop: '#5f636b',
+  nail: '#c9c9c9', cord: '#8a6b3f'
+};
 
 // 공유 리소스 (처음 쓸 때 한 번만 생성)
 let shared = null;
@@ -262,9 +292,16 @@ const BASIS = new THREE.Matrix4().makeBasis(
   new THREE.Vector3(-1, 0, 0)    // 검 Z(앞면) → 손 -X (바깥쪽)
 );
 
+let sharedStone = null;
+function sharedStoneSword() {
+  if (!sharedStone) sharedStone = { geo: buildSwordGeometry(STONE_COL, STONE_SWORD, true), mat: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }) };
+  return sharedStone;
+}
+
 // 무기 종류 표 (나중에 무기를 더할 때 여기에 추가)
 const WEAPONS = {
   wooden_sword: { build: sharedSword, grip: GRIP },
+  stone_sword: { build: sharedStoneSword, grip: GRIP },   // 돌 검 (대장간 제작 장비). 모션은 나무검과 같음(공격 속도 동일)
   orc_axe: { build: sharedAxe, grip: GRIP }   // 오크 도끼 (보스 드랍 장비). 모션은 아래 MOTION 표
 };
 const DEFAULT_WEAPON = 'wooden_sword';
@@ -342,6 +379,7 @@ const MOTION = {
     slam: AXE.slam
   }
 };
+MOTION.stone_sword = MOTION.wooden_sword;   // 돌 검은 나무검과 같은 모션·같은 공격 속도
 const motionOf = (wp) => MOTION[wp.kind] || MOTION[DEFAULT_WEAPON];
 const PROC_UPPER_Z = 0.61;   // 코드 캐릭터(fallback)는 팔이 곧게 내려가 있어서 GLB(A자 팔)보다 이만큼 덜 모음
 
@@ -472,7 +510,7 @@ export function setWeaponSpeed(rig, speed) {
   getWp(rig).speed = Math.min(2, Math.max(1, Number(speed) || 1));
 }
 
-// 들고 있는 무기 종류 바꾸기 ('wooden_sword' | 'orc_axe'). 이미 손에 붙어 있으면 모양만 바꿔 끼움 (모션 상태는 그대로)
+// 들고 있는 무기 종류 바꾸기 ('wooden_sword' | 'stone_sword' | 'orc_axe'). 이미 손에 붙어 있으면 모양만 바꿔 끼움 (모션 상태는 그대로)
 export function setWeaponKind(rig, kind) {
   if (!rig) return;
   if (!WEAPONS[kind]) kind = DEFAULT_WEAPON;
