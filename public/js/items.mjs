@@ -59,6 +59,32 @@ export const CRAFT_RECIPES = [
   { id: 'wooden_sword', name: '나무검', icon: '🗡️', craftable: false },
   { id: 'stone_sword', name: '돌 검', result: 'stone_sword', time: 30, craftable: true, mats: [{ id: 'mana_low', n: 5 }, { id: 'rabbit_liver', n: 5 }] },
 ];
+// ---------- 퀘스트 (마을 이장이 줘요) ----------
+// goal = 모아야 하는 아이템 (완료할 때 이장에게 내고 빠져요), reward = 보상 (exp 와 아이템).
+// main_1 의 exp 82 = 1레벨 필요 경험치(165)의 절반 → 1레벨에서 2레벨로 가는 길의 중간쯤
+export const QUEST_DEFS = {
+  main_1: {
+    id: 'main_1', title: '메인퀘스트 1', summary: '토끼 간 5개 구하기',
+    desc: '마을 이장이 토끼 간 5개를 구해다 달라고 부탁했다.\n평원의 토끼를 사냥해서 토끼 간을 모은 뒤, 이장에게 가져다주자.',
+    goal: { item: 'rabbit_liver', n: 5 },
+    reward: { exp: 82, items: [{ id: 'mana_low', n: 5 }] },
+  },
+};
+// 이장 대사 (선택지는 화면 아래 버튼으로 떠요). 퀘스트 상태에 따라 화면(main.js)이 골라서 보여줘요
+export const CHIEF_TALK = {
+  name: '마을 이장',
+  intro: '허허 안녕하신가? 나는 이 마을의 이장이라네. 내 부탁을 좀 들어주지 않겠나?',
+  introChoices: ['메인퀘스트 시작하기', '거절하기'],
+  accepted: '고맙구먼! 평원의 토끼들에게서 토끼 간 5개만 구해다 주게나. 부탁하네.',
+  declined: '그런가... 마음이 바뀌면 언제든 다시 찾아오게나.',
+  waiting: '토끼 간은 아직 다 구하지 못했나? 서두를 건 없으니 천천히 구해다 주게나.',
+  ready: '오오, 토끼 간을 구해왔구먼! 정말 고맙네. 약소하지만 보답을 받아주게나.',
+  readyChoice: '보상 받기',
+  rewarded: '고맙네! 자네 덕분에 큰 도움이 되었네.',
+  done: '자네 덕분에 한시름 놓았다네. 정말 고맙네!',
+  close: '닫기',
+};
+
 // 들고 있는 무기로 정해지는 공격력 배율 (무기를 안 끼면 나무검 = 1배). gear = { weapon: 아이템id | null, ... }
 export const weaponDmg = (gear) => { const d = gear && ITEMS[gear.weapon]; return d && d.dmg ? d.dmg : 1; };
 
