@@ -15,7 +15,7 @@ import { createMosquitoFx } from './mosquito-fx.js';
 import { createStatusUI } from './status-ui.js';
 import { createAuth, clearToken } from './auth.js';
 import { createSeaLife } from './sea-life.js';
-import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, lootText } from './items.mjs';
+import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, CRAFT_RECIPES, lootText } from './items.mjs';
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
@@ -1413,6 +1413,11 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
     if (curRoom >= 0) {
       const ex = roomExit(curRoom);
       if (Math.hypot(me.x - ex.x, me.z - ex.z) < ex.reach) return { text: ex.text, x: ex.x, y: ex.y + 3.0, z: ex.z, run: leaveRoom };
+      const rm = ROOMS[curRoom];
+      if (rm.type === 'SMITH') {   // 대장간 안: 제작대 가까이에서 "무기 제작"
+        const tb = rm.items.find((it) => it.k === 'forgeTable');
+        if (tb && Math.hypot(me.x - (rm.x + tb.x), me.z - (rm.z + tb.z)) < 3.0) return { text: '무기 제작', x: rm.x + tb.x, y: ex.y + 2.1, z: rm.z + tb.z, run: openCraft };
+      }
       const di = nearestDoor(me.x, me.z, me.y);    // 복도 방의 방문들
       return di >= 0 ? doorAction(di) : null;
     }
@@ -2041,6 +2046,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   function openWin(i) {
+    closeCraft();
     closeTrade();
     closeQuest();
     scrEl.classList.remove('open', 'show');   // 상태창 두루마리가 열려 있으면 바로 닫음
@@ -2057,6 +2063,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   }
   function closeWin() {
     closeStatus();
+    closeCraft();
     closeTrade();
     closeQuest();
     uiOpen = false;
@@ -2342,6 +2349,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   function openTrade() {
+    closeCraft();
     closeQuest();
     winEl.style.display = 'none';
     scrEl.classList.remove('open', 'show');
@@ -2491,6 +2499,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   });
 
   function openQuest() {
+    closeCraft();
     closeTrade();
     winEl.style.display = 'none';
     scrEl.classList.remove('open', 'show');
@@ -2515,6 +2524,146 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   function toggleQuest() {
     if (uiOpen && questOn) closeWin();
     else openQuest();
+  }
+
+  // ---------- 대장간 무기 제작 창 (제작대에서 E): 제작 목록 → 돌 검 → 필요 재료 → 제작하기(30초) → 수령하기 ----------
+  // 재료·시간·결과는 items.mjs 의 CRAFT_RECIPES 에 있어요. 나무검은 목록에만 보이고 아직 만들 수 없어요(준비 중).
+  const craftStyle = document.createElement('style');
+  craftStyle.textContent = `
+.cf{position:fixed;inset:0;z-index:61;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#e8dcc0;user-select:none;-webkit-user-select:none}
+.cf-box{position:relative;display:flex;flex-direction:column;box-sizing:border-box;width:min(94vw,460px);max-height:min(88vh,720px);border:2px solid #4a4030;border-radius:6px;background:linear-gradient(#1c1a18,#121110);box-shadow:0 0 0 2px #070605,inset 0 0 0 1px #5a4a30,0 12px 40px rgba(0,0,0,.8)}
+.cf-hd{flex:none;display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid #3a3226;background:linear-gradient(#26221c,#1a1814)}
+.cf-hd .ic{flex:none;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;background:radial-gradient(circle at 35% 30%,#4a3a22,#1f170c);border:2px solid #b8924a}
+.cf-hd h2{margin:0;font-size:24px;font-weight:700;color:#f1e6c8;text-shadow:0 2px 0 #000}
+.cf-x{margin-left:auto;font-size:24px;line-height:1;padding:6px 8px;cursor:pointer;color:#bba880}
+.cf-x:hover{color:#fff}
+.cf-sec{flex:none;padding:14px 16px 8px;font-size:19px;font-weight:700;color:#e2c98a;text-shadow:0 1px 0 #000}
+.cf-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:0 12px 14px;touch-action:pan-y;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#5a4a30 transparent}
+.cf-row,.cf-mat,.cf-ban,.cf-info2{display:flex;align-items:center;gap:12px;padding:8px 10px;margin-bottom:8px;border:1px solid #3a3226;border-radius:5px;background:linear-gradient(#24211d,#1a1816);box-shadow:inset 0 0 0 1px rgba(255,235,190,.04)}
+.cf-row[data-cf]{cursor:pointer}
+.cf-row[data-cf]:hover{filter:brightness(1.25)}
+.cf-row.off{opacity:.55}
+.cf-ic{flex:none;width:58px;height:58px;box-sizing:border-box;border:2px solid #8a6b3a;border-radius:3px;display:flex;align-items:center;justify-content:center;background:#17140f;box-shadow:0 0 0 1px #0a0705}
+.cf-ic.sm{width:46px;height:46px}
+.cf-info{flex:1;min-width:0}
+.cf-nm{font-size:18px;font-weight:700;color:#f4ead0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cf-sub{margin-top:4px;font-size:14px;color:#a89c82}
+.cf-go{flex:none;font-size:26px;color:#c9a85a}
+.cf-tag{flex:none;font-size:13px;color:#8f846c;border:1px solid #4a4030;border-radius:10px;padding:3px 9px}
+.cf-mat .cf-nm{flex:1}
+.cf-cnt{flex:none;font-size:18px;font-weight:700}
+.cf-cnt.ok{color:#7fe08a}
+.cf-cnt.no{color:#ff7a6a}
+.cf-info2{flex-direction:column;align-items:stretch;gap:6px;font-size:15px;color:#d8cba8;line-height:1.5}
+.cf-info2 b{color:#ffe9a0}
+.cf-ban{flex-direction:column;align-items:stretch;gap:8px;border-color:#9a7a3e}
+.cf-bt{font-size:17px;font-weight:700;color:#ffe9a0}
+.cf-bar{height:14px;border:1px solid #5a4a30;border-radius:7px;background:#0d0b09;overflow:hidden}
+.cf-bar i{display:block;height:100%;width:0;background:linear-gradient(#f0c35a,#b9802c);transition:width .25s linear}
+.cf-left{font-size:14px;color:#cdbf9a;text-align:center}
+.cf-btn{padding:12px 16px;border:2px solid #9a7a3e;border-radius:4px;background:linear-gradient(#4a3a24,#2e2416);color:#f1dfb6;font:700 17px 'Galmuri11','Malgun Gothic',sans-serif;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,235,190,.25),0 2px 4px rgba(0,0,0,.5);text-shadow:0 1px 0 #000;width:100%;box-sizing:border-box}
+.cf-btn:hover{filter:brightness(1.2)}
+.cf-btn:active{transform:translateY(1px)}
+.cf-btn:disabled{filter:grayscale(.8) brightness(.7);cursor:default;transform:none}
+.cf-back{display:inline-block;margin:12px 0 0 14px;padding:4px 8px;font-size:15px;color:#bba880;cursor:pointer}
+.cf-back:hover{color:#fff}
+`;
+  document.head.appendChild(craftStyle);
+  const craftEl = document.createElement('div');
+  craftEl.className = 'cf';
+  document.body.appendChild(craftEl);
+  let craftOn = false, craftOpenT = 0, craftTimer = 0;
+  let craftView = null;      // null = 제작 목록, 아니면 재료를 보고 있는 제작 id
+  let craftState = null;     // 서버가 알려준 제작 상태 { id, endAt } (내 시계 기준 끝나는 시각). 제작 중이 아니면 null
+  let craftShown = '';       // 마지막으로 그린 화면의 상태 (바뀔 때만 다시 그려요)
+  const craftLeft = () => (craftState ? Math.max(0, craftState.endAt - Date.now()) : 0);
+  const craftRec = (id) => CRAFT_RECIPES.find((r) => r.id === id);
+  const haveN = (id) => { const s = invItems.find((i) => i.id === id); return s ? s.n : 0; };
+  const craftKey = () => [craftView, craftState ? craftState.id : '', craftState ? (craftLeft() > 0 ? 'run' : 'done') : '', invItems.map((i) => i.id + ':' + i.n).join(',')].join('|');
+  function craftBar() {   // 진행 막대 + 남은 시간
+    const r = craftState && craftRec(craftState.id), total = r && r.time ? r.time * 1000 : 30000, left = craftLeft();
+    return '<div class="cf-bar"><i style="width:' + Math.min(100, Math.max(0, 100 * (1 - left / total))) + '%"></i></div><div class="cf-left">남은 시간 ' + Math.ceil(left / 1000) + '초</div>';
+  }
+  function renderCraft() {
+    craftShown = craftKey();
+    const running = !!craftState && craftLeft() > 0, ready = !!craftState && !running;
+    let head = '<div class="cf-hd"><div class="ic">🔨</div><h2>' + (craftView ? esc(craftRec(craftView).name) + ' 제작' : '무기 제작') + '</h2><div class="cf-x" data-cclose="1">✕</div></div>', body = '';
+    if (!craftView) {   // ----- 제작 목록 -----
+      if (craftState) {
+        const r = craftRec(craftState.id), nm = r ? r.name : '무기';
+        body += '<div class="cf-ban">' + (running
+          ? '<div class="cf-bt">' + esc(nm) + ' 제작 중…</div>' + craftBar()
+          : '<div class="cf-bt">' + esc(nm) + ' 제작 완료!</div><button class="cf-btn" data-cf="claim">수령하기</button>') + '</div>';
+      }
+      body += CRAFT_RECIPES.map((r) => {
+        const def = (r.result && ITEMS[r.result]) || r;
+        return '<div class="cf-row' + (r.craftable ? '' : ' off') + '"' + (r.craftable ? ' data-cf="open" data-id="' + r.id + '"' : '') + '>' +
+          '<div class="cf-ic">' + iconHtml(def, 40) + '</div><div class="cf-info"><div class="cf-nm">' + esc(r.name) + ' 제작</div>' +
+          '<div class="cf-sub">' + (r.craftable ? '눌러서 필요한 재료 보기' : '아직 만들 수 없어요') + '</div></div>' +
+          (r.craftable ? '<span class="cf-go">›</span>' : '<span class="cf-tag">준비 중</span>') + '</div>';
+      }).join('');
+      craftEl.innerHTML = '<div class="cf-box">' + head + '<div class="cf-sec">제작 목록</div><div class="cf-body">' + body + '</div></div>';
+    } else {   // ----- 재료 화면 -----
+      const r = craftRec(craftView), res = ITEMS[r.result], mine = !!craftState && craftState.id === r.id;
+      const enough = r.mats.every((m) => haveN(m.id) >= m.n);
+      body += '<div class="cf-info2"><div style="display:flex;align-items:center;gap:12px"><div class="cf-ic">' + iconHtml(res, 40) + '</div><div class="cf-info"><div class="cf-nm">' + esc(res.name) + '</div></div></div>' +
+        (res.dmg ? '<div>공격력 <b>나무검의 ' + res.dmg + '배</b> · 공격 속도 <b>나무검과 같음</b></div>' : '') +
+        '<div>제작 시간 <b>' + r.time + '초</b></div></div>' +
+        '<div class="cf-sec" style="padding:6px 4px 8px">필요 재료</div>' +
+        r.mats.map((m) => { const d = ITEMS[m.id], n = haveN(m.id); return '<div class="cf-mat"><div class="cf-ic sm">' + iconHtml(d, 34) + '</div><div class="cf-nm">' + esc(d.name) + '</div><div class="cf-cnt ' + (n >= m.n ? 'ok' : 'no') + '">' + n + ' / ' + m.n + '</div></div>'; }).join('');
+      if (mine) body += '<div class="cf-ban">' + (running ? '<div class="cf-bt">제작 중…</div>' + craftBar() : '<div class="cf-bt">제작 완료!</div><button class="cf-btn" data-cf="claim">수령하기</button>') + '</div>';
+      else if (craftState) body += '<button class="cf-btn" disabled>다른 무기를 제작 중이에요</button>';
+      else if (enough) body += '<button class="cf-btn" data-cf="start" data-id="' + r.id + '">제작하기</button>';
+      else body += '<button class="cf-btn" disabled>재료가 부족해요</button>';
+      craftEl.innerHTML = '<div class="cf-box">' + head + '<div><span class="cf-back" data-cf="back">← 제작 목록</span></div><div class="cf-body">' + body + '</div></div>';
+    }
+  }
+  function tickCraft() {   // 열려 있는 동안: 상태가 바뀌었으면 다시 그리고, 아니면 막대·남은 시간만 갱신
+    if (!craftOn) return;
+    if (craftKey() !== craftShown) { renderCraft(); return; }
+    if (!craftState || craftLeft() <= 0) return;
+    const r = craftRec(craftState.id), total = r && r.time ? r.time * 1000 : 30000, left = craftLeft();
+    const bar = craftEl.querySelector('.cf-bar i'), tx = craftEl.querySelector('.cf-left');
+    if (bar) bar.style.width = Math.min(100, Math.max(0, 100 * (1 - left / total))) + '%';
+    if (tx) tx.textContent = '남은 시간 ' + Math.ceil(left / 1000) + '초';
+  }
+  craftEl.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (performance.now() - craftOpenT < 400) return;   // 창을 연 그 터치의 click 이 바로 닫기로 처리되는 것 방지
+    if (t === craftEl || t.closest('[data-cclose]')) { closeWin(); return; }
+    const b = t.closest('[data-cf]');
+    if (!b || b.disabled) return;
+    const a = b.getAttribute('data-cf'), id = b.getAttribute('data-id');
+    if (a === 'open') { craftView = id; renderCraft(); }
+    else if (a === 'back') { craftView = null; renderCraft(); }
+    else if (a === 'start') socket.emit('craft:start', { id });
+    else if (a === 'claim') socket.emit('craft:claim');
+  });
+  function openCraft() {
+    closeTrade();
+    closeQuest();
+    winEl.style.display = 'none';
+    scrEl.classList.remove('open', 'show');
+    craftOn = true;
+    craftOpenT = performance.now();
+    craftView = null;
+    renderCraft();
+    craftEl.style.display = 'flex';
+    clearInterval(craftTimer);
+    craftTimer = setInterval(tickCraft, 250);
+    if (!uiOpen) {
+      uiOpen = true;
+      document.body.classList.add('uw-open');
+      for (const k in keys) keys[k] = false;
+      jumpHeld = false;
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
+    }
+  }
+  function closeCraft() {
+    craftOn = false;
+    clearInterval(craftTimer);
+    craftEl.style.display = 'none';
   }
 
   // ---------- 화면 크기에 맞춰 터치 UI 크기 조절 ----------
@@ -2588,7 +2737,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
         setRemoteWeapon(remote.g.userData.rig, p.eq);          // 장착/해제 모션 재생
       }
 
-      if (remote.gm !== p.gm) { remote.gm = p.gm; setOutfit(remote.g, { armor: !!(p.gm & 1), pants: !!(p.gm & 2) }); setWeaponKind(remote.g.userData.rig, (p.gm & 4) ? 'orc_axe' : 'wooden_sword'); }   // 다른 플레이어가 입은 옷
+      if (remote.gm !== p.gm) { remote.gm = p.gm; setOutfit(remote.g, { armor: !!(p.gm & 1), pants: !!(p.gm & 2) }); setWeaponKind(remote.g.userData.rig, (p.gm & 8) ? 'stone_sword' : (p.gm & 4) ? 'orc_axe' : 'wooden_sword'); }   // 다른 플레이어가 입은 옷
       remote.eq = !!p.eq;
       if (p.dead && !remote.dead) remote.side = Math.random() < 0.5 ? -1 : 1;   // 쓰러지는 쪽
       remote.dead = !!p.dead;
@@ -2992,7 +3141,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     gearEq = {};
     for (const k of Object.keys(GEAR_SLOT_NAME)) gearEq[k] = g[k] && ITEMS[g[k]] ? g[k] : null;
     setOutfit(myAvatar, { armor: !!gearEq.armor, pants: !!gearEq.pants });   // 입은 옷이 내 캐릭터에 보임
-    setWeaponKind(myRig, (gearEq.weapon && ITEMS[gearEq.weapon] && ITEMS[gearEq.weapon].weapon) || 'wooden_sword');   // 장착한 무기(오크 도끼)가 손에 보임
+    setWeaponKind(myRig, (gearEq.weapon && ITEMS[gearEq.weapon] && ITEMS[gearEq.weapon].weapon) || 'wooden_sword');   // 장착한 무기(오크 도끼·돌 검)가 손에 보임
     if (winOpenNow()) renderWin();
   });
   // 몬스터를 잡으면 화면 아래 UI 바로 위에 '토끼 가죽x2를 획득했습니다.' 처럼 뜸 (여러 개면 줄줄이, 3초 뒤 사라짐)
@@ -3028,6 +3177,11 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     invItems = d && Array.isArray(d.items) ? d.items.filter((i) => i && ITEMS[i.id] && Number.isFinite(i.n)) : [];
     if (winSel.inv >= invItems.length) winSel.inv = -1;
     if (winOpenNow()) renderWin();
+    if (craftOn) renderCraft();   // 제작 창이 열려 있으면 보유 재료 수도 바로 반영
+  });
+  socket.on('craft', (d) => {   // 무기 제작 상태 (서버가 정함). id 가 없으면 제작 중인 게 없음
+    craftState = d && d.id && craftRec(d.id) ? { id: d.id, endAt: Date.now() + (Number(d.left) || 0) } : null;
+    if (craftOn) renderCraft();
   });
   socket.on('skills', (d) => {   // 배운 스킬 + R 칸 장착 상태 (서버가 정함)
     learnedSk = d && Array.isArray(d.learned) ? d.learned.filter((id) => SKILL_INFO[id]) : [];
