@@ -45,11 +45,22 @@ export const ITEMS = {
   orc_hide: { name: '오크 가죽', kind: 'material', icon: '🟩', img: '/ui/items/orc_hide.png', label: '재료', desc: '냄새나는 오크 가죽 입니다.' },
   // 무기 장비: 장착하면 손에 드는 무기가 오크 도끼로 바뀌고, 평타·휩쓸기·내려찍기 모션도 도끼 전용이 돼요 (weapon.js 의 MOTION.orc_axe)
   orc_axe: { name: '오크 도끼', kind: 'gear', slot: 'weapon', weapon: 'orc_axe', stack: false, icon: '🪓', img: '/ui/items/orc_axe.png', label: '무기', note: '장착하면 들고 있는 무기가<br>오크 도끼로 바뀌어요.', desc: '오크가 쓰던 낡은 도끼 입니다.' },
+  // 제작 무기: 대장간 제작대에서 만들어요 (CRAFT_RECIPES). 장착하면 손에 드는 무기가 돌 검으로 바뀌고, 공격력(평타·스킬 전부)이 dmg 배가 돼요. 공격 속도는 나무검과 같아요
+  stone_sword: { name: '돌 검', kind: 'gear', slot: 'weapon', weapon: 'stone_sword', dmg: 2, stack: false, icon: '🗡️', img: '/ui/items/stone_sword.png', label: '무기', note: '장착하면 들고 있는 무기가<br>돌 검으로 바뀌어요.<br>공격력이 나무검의 2배예요.', desc: '단단한 돌을 갈아 만든 검입니다.<br>나무검보다 두 배 강합니다.' },
   orc_heart: { name: '오크 심장', kind: 'material', icon: '❤️', img: '/ui/items/orc_heart.png', label: '재료', desc: '오크의 거대한 심장 입니다.<br>어딘가에 쓰일지도 모릅니다...' },
   goblin_armor: { name: '고블린 갑옷', kind: 'gear', slot: 'armor', hp: 5, stack: false, icon: '🦺', img: '/ui/items/goblin_armor.png', label: '갑옷', desc: '고블린이 입던 갑옷 입니다.<br>더럽습니다.' },
   goblin_pants: { name: '고블린 바지', kind: 'gear', slot: 'pants', hp: 5, stack: false, icon: '👖', img: '/ui/items/goblin_pants.png', label: '바지', desc: '고블린이 입던 바지 입니다.<br>더럽습니다.' },
 };
 export const GEAR_SLOT_NAME = { armor: '갑옷', pants: '바지', weapon: '무기' };
+
+// 대장간 제작 목록 (제작대에서 E). time = 제작 시간(초), mats = 필요 재료, result = 완성되는 아이템.
+// craftable: false 면 목록에만 보이고 아직 만들 수 없어요. 재료·시간을 바꾸려면 여기만 고치면 돼요 (서버와 화면이 같이 읽어요)
+export const CRAFT_RECIPES = [
+  { id: 'wooden_sword', name: '나무검', icon: '🗡️', craftable: false },
+  { id: 'stone_sword', name: '돌 검', result: 'stone_sword', time: 30, craftable: true, mats: [{ id: 'mana_low', n: 5 }, { id: 'rabbit_liver', n: 5 }] },
+];
+// 들고 있는 무기로 정해지는 공격력 배율 (무기를 안 끼면 나무검 = 1배). gear = { weapon: 아이템id | null, ... }
+export const weaponDmg = (gear) => { const d = gear && ITEMS[gear.weapon]; return d && d.dmg ? d.dmg : 1; };
 
 // 몬스터 드랍표. chance = 확률(1 = 100%), min~max = 개수. pick 이 있으면 그중 하나를 같은 확률로 골라서 줌
 export const LOOT = {
