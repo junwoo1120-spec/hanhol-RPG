@@ -1147,7 +1147,7 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
 .crit-pop b{display:block;font-size:14px;letter-spacing:1px;color:#fff1b8;text-shadow:-1px 0 #4a1000,1px 0 #4a1000,0 -1px #4a1000,0 1px #4a1000}
 .crit-pop span{display:block;font-size:32px;color:#ff5a1f;text-shadow:-2px 0 #4a1000,2px 0 #4a1000,0 -2px #4a1000,0 2px #4a1000,-2px -2px #4a1000,2px 2px #4a1000,-2px 2px #4a1000,2px -2px #4a1000,0 0 14px rgba(255,140,40,.9)}`;
   document.head.appendChild(critCss);
-  const CRIT_HEAD = { rabbit: 1.1, goblin: 2.3, slime: 1.0, golem: 3.6, boss: 4.6 };   // 몬스터 머리 높이 (발 기준, m)
+  const CRIT_HEAD = { rabbit: 1.9, goblin: 2.3, slime: 1.0, golem: 3.6, boss: 4.6 };   // 몬스터 머리 높이 (발 기준, m)
   const CRIT_LIFE = 0.95;                                                              // 글씨가 떠 있는 시간(초)
   const critPops = [];
   const _cv = new THREE.Vector3();
@@ -2069,6 +2069,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     }
   }
   function closeWin() {
+    closeTradeWin(true);   // 거래 창이 열려 있으면 거래 취소
     closeStatus();
     closeChiefTalk();
     closeCraft();
@@ -2351,8 +2352,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (t === tradeEl || t.closest('[data-tclose]')) { closeWin(); return; }
     const b = t.closest('[data-trade]');
     if (b) {
-      const r = remotes.get(b.getAttribute('data-trade'));
-      toast((r && r.nick ? r.nick + '님과의 ' : '') + '거래는 아직 준비 중이에요');   // TODO: 거래 신청 소켓 이벤트 연결
+      socket.emit('trade:request', { to: b.getAttribute('data-trade') });   // 상대 화면 오른쪽 위에 요청이 떠요
+      closeWin();
     }
   });
 
@@ -2385,6 +2386,210 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (uiOpen && tradeOn) closeWin();
     else openTrade();
   }
+
+  // ---------- 거래: 요청 알림(오른쪽 위) + 거래 창 ----------
+  // 흐름: [거래하기] → 상대 화면 오른쪽 위에 "○○님이 거래를 요청하였습니다." + 수락/거절 → 수락하면 양쪽에 거래 창
+  //       → 인벤토리의 전리품·장비·스킬북을 원하는 수만큼 올림 → 둘 다 [거래수락] 누르면 5초 뒤 완료
+  // (올린 물건이 바뀌면 양쪽 수락이 풀려요. 실제 아이템 이동은 서버가 해요)
+  const twStyle = document.createElement('style');
+  twStyle.textContent = `
+.tq{position:fixed;top:66px;right:8px;z-index:75;width:min(78vw,270px);box-sizing:border-box;padding:12px 12px 10px;border:2px solid #9a7a3e;border-radius:6px;background:linear-gradient(#26221c,#14120f);box-shadow:0 0 0 2px #070605,0 8px 24px rgba(0,0,0,.7);font-family:'Galmuri11','Malgun Gothic',sans-serif;color:#f1e6c8;display:none;animation:tqIn .25s ease-out}
+@keyframes tqIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+.tq-msg{font-size:15px;line-height:1.5;word-break:keep-all}.tq-msg b{color:#ffd96a}
+.tq-btns{display:flex;gap:8px;margin-top:10px}
+.tq-btns button{flex:1;padding:9px 0;font:700 16px 'Galmuri11','Malgun Gothic',sans-serif;border-radius:4px;cursor:pointer;color:#fff;border:2px solid}
+.tq-ok{border-color:#4f9a52!important;background:linear-gradient(#2f6a33,#1c4220)}
+.tq-no{border-color:#9a4a3e!important;background:linear-gradient(#6a2f28,#421c18)}
+.tq-btns button:active{transform:translateY(1px)}
+.tq-bar{height:3px;margin-top:9px;background:#0007;border-radius:2px;overflow:hidden}.tq-bar i{display:block;height:100%;background:#d9b25c;transform-origin:left;animation:tqBar linear forwards}
+@keyframes tqBar{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+body.tw-open .toast{z-index:90}
+.tw{position:fixed;inset:0;z-index:62;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:'Galmuri11','Malgun Gothic',sans-serif;color:#f1e6c8}
+.tw-box{width:min(96vw,580px);max-height:96vh;overflow:auto;box-sizing:border-box;padding:10px 12px 12px;border:2px solid #9a7a3e;border-radius:6px;background:linear-gradient(#26221c,#14120f);box-shadow:0 0 0 2px #070605,0 10px 30px rgba(0,0,0,.75)}
+.tw-hd{display:flex;align-items:center;gap:8px}.tw-hd h2{flex:1;margin:0;font-size:20px;color:#ffd96a}
+.tw-x{cursor:pointer;padding:2px 10px;font-size:20px;color:#d9b25c}
+.tw-offers{display:flex;gap:8px;margin-top:8px}
+.tw-side{flex:1;min-width:0;border:1px solid #6b5630;border-radius:4px;background:#0c0b09;padding:6px}
+.tw-side.ok{border-color:#5fbf63;box-shadow:0 0 8px #3f9f4388}
+.tw-name{font-size:13px;color:#d9b25c;display:flex;justify-content:space-between;gap:4px}.tw-name em{font-style:normal;color:#7ee081}
+.tw-grid{display:flex;flex-wrap:wrap;gap:4px;min-height:58px;margin-top:5px;align-content:flex-start}
+.tw-slot{position:relative;width:54px;height:54px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border:2px solid #4a3d24;border-radius:4px;background:#1b1812;cursor:pointer}
+.tw-slot.on{border-color:#5fbf63}.tw-slot.sel{border-color:#ffd96a;box-shadow:0 0 6px #ffd96a99}
+.tw-n{position:absolute;right:2px;bottom:0;font-size:13px;font-weight:700;color:#fff;text-shadow:0 0 3px #000,0 0 3px #000}
+.tw-count{margin:8px 0 4px;text-align:center;font-size:15px;min-height:20px;color:#ffe9a8}
+.tw-tabs{display:flex;gap:4px;margin-top:4px}
+.tw-tabs button{flex:1;padding:6px 0;font:700 14px 'Galmuri11','Malgun Gothic',sans-serif;color:#cdbb8b;border:2px solid #4a3d24;border-radius:4px 4px 0 0;background:#1b1812;cursor:pointer}
+.tw-tabs button.on{color:#fff;border-color:#9a7a3e;background:#3a2e1a}
+.tw-inv{display:flex;flex-wrap:wrap;gap:4px;align-content:flex-start;height:132px;overflow-y:auto;padding:6px;border:1px solid #6b5630;background:#0c0b09}
+.tw-empty,.tw-pick-empty{color:#8f8466;font-size:13px;padding:8px}
+.tw-pick{margin-top:6px;min-height:74px;padding:6px 8px;border:1px solid #6b5630;border-radius:4px;background:#14110c}
+.tw-pick-hd{display:flex;gap:8px;align-items:center;font-size:14px}.tw-pick-hd b{color:#ffd96a}.tw-desc{font-size:12px;color:#b9ad8a;margin-top:2px;line-height:1.35}
+.tw-step{display:flex;align-items:center;gap:5px;margin-top:6px;flex-wrap:wrap}
+.tw-step button{min-width:34px;padding:5px 8px;font:700 15px 'Galmuri11','Malgun Gothic',sans-serif;color:#f1dfb6;border:2px solid #9a7a3e;border-radius:4px;background:linear-gradient(#4a3a24,#2e2416);cursor:pointer}
+.tw-step input{width:58px;padding:5px 2px;text-align:center;font:700 15px 'Galmuri11','Malgun Gothic',sans-serif;color:#fff;background:#0c0b09;border:2px solid #6b5630;border-radius:4px}
+.tw-step span{font-size:12px;color:#9c9174}
+.tw-btns{display:flex;gap:8px;margin-top:10px}
+.tw-btns button{flex:1;padding:11px 0;font:700 17px 'Galmuri11','Malgun Gothic',sans-serif;border-radius:4px;cursor:pointer;color:#fff;border:2px solid}
+.tw-acc{border-color:#4f9a52!important;background:linear-gradient(#2f6a33,#1c4220)}.tw-acc.on{border-color:#e0c25a!important;background:linear-gradient(#7a6420,#4a3c10)}
+.tw-cc{border-color:#9a4a3e!important;background:linear-gradient(#6a2f28,#421c18)}
+.tw-btns button:active{transform:translateY(1px)}
+`;
+  document.head.appendChild(twStyle);
+  const tqEl = document.createElement('div');
+  tqEl.className = 'tq';
+  document.body.appendChild(tqEl);
+  const twEl = document.createElement('div');
+  twEl.className = 'tw';
+  document.body.appendChild(twEl);
+  let tqFrom = '', tqTimer = 0;
+  let twOn = false, twPartner = null, twMine = [], twTheirs = [], twOkMe = false, twOkThem = false, twEnd = 0, twTab = 'loot', twSel = null, twTick = 0;
+
+  function hideRequest() {
+    clearTimeout(tqTimer);
+    tqEl.style.display = 'none';
+    tqFrom = '';
+  }
+  function showRequest(d) {
+    tqFrom = d.from;
+    const ms = Math.max(1000, Number(d.ms) || 30000);
+    tqEl.innerHTML = '<div class="tq-msg"><b>' + esc(d.nick) + '</b>님이 거래를 요청하였습니다.</div>' +
+      '<div class="tq-btns"><button class="tq-ok" data-tq="1">수락</button><button class="tq-no" data-tq="0">거절</button></div>' +
+      '<div class="tq-bar"><i style="animation-duration:' + ms + 'ms"></i></div>';
+    tqEl.style.display = 'block';
+    clearTimeout(tqTimer);
+    tqTimer = setTimeout(hideRequest, ms);
+    try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }   // 마우스가 잠겨 있으면 버튼을 못 누르니까 풀어줘요
+  }
+  tqEl.addEventListener('click', (e) => {
+    const b = e.target instanceof Element ? e.target.closest('[data-tq]') : null;
+    if (!b || !tqFrom) return;
+    socket.emit('trade:respond', { from: tqFrom, accept: b.getAttribute('data-tq') === '1' });
+    hideRequest();
+  });
+
+  const twKind = (id) => { const k = ITEMS[id].kind; return k === 'gear' ? 'gear' : k === 'skillbook' ? 'book' : 'loot'; };
+  const twCnt = (list, id) => { const e = list.find((x) => x.id === id); return e ? e.n : 0; };
+  const twAvail = () => { const m = new Map(); for (const it of invItems) if (ITEMS[it.id]) m.set(it.id, (m.get(it.id) || 0) + it.n); return m; };
+  const twSlot = (id, n, cls, attr) => '<div class="tw-slot' + cls + '" ' + attr + '="' + esc(id) + '" title="' + esc(ITEMS[id].name) + '">' + iconHtml(ITEMS[id], 38) + '<span class="tw-n">' + n + '</span></div>';
+  function twCountText() {
+    const left = twEnd - Date.now();
+    if (twEnd && left > 0) return Math.ceil(left / 1000) + '초 후 거래가 완료됩니다...';
+    if (twOkMe && twOkThem) return '거래를 마무리하는 중...';
+    if (twOkMe) return '상대방의 수락을 기다리는 중...';
+    if (twOkThem) return esc(twPartner ? twPartner.nick : '상대방') + '님이 거래수락을 눌렀어요';
+    return '아이템을 올린 뒤 거래수락을 눌러 주세요';
+  }
+  function renderTW() {
+    if (!twOn || !twPartner) return;
+    const old = twEl.querySelector('.tw-inv');
+    const sc = old ? old.scrollTop : 0;
+    const av = twAvail();
+    const ids = [...av.keys()].filter((id) => twKind(id) === twTab);
+    const invHtml = ids.length
+      ? ids.map((id) => twSlot(id, av.get(id), (twCnt(twMine, id) ? ' on' : '') + (twSel && twSel.side === 'me' && twSel.id === id ? ' sel' : ''), 'data-twinv')).join('')
+      : '<div class="tw-empty">올릴 수 있는 아이템이 없어요</div>';
+    const mineHtml = twMine.filter((e) => ITEMS[e.id]).map((e) => twSlot(e.id, e.n, (twSel && twSel.side === 'me' && twSel.id === e.id ? ' sel' : ''), 'data-twme')).join('');
+    const theirHtml = twTheirs.filter((e) => ITEMS[e.id]).map((e) => twSlot(e.id, e.n, (twSel && twSel.side === 'them' && twSel.id === e.id ? ' sel' : ''), 'data-twth')).join('');
+    let pick = '<div class="tw-pick-empty">아이템을 눌러 올릴 수량을 정하세요</div>';
+    if (twSel && ITEMS[twSel.id]) {
+      const def = ITEMS[twSel.id], id = twSel.id;
+      const head = (n) => '<div class="tw-pick-hd">' + iconHtml(def, 34) + '<div><b>' + esc(def.name) + '</b>' + (n != null ? ' × ' + n : '') + '<div class="tw-desc">' + (def.desc || '') + '</div></div></div>';
+      if (twSel.side === 'them') pick = head(twCnt(twTheirs, id));
+      else {
+        const cur = twCnt(twMine, id), max = av.get(id) || 0;
+        pick = head(null) + '<div class="tw-step"><button data-twq="-1">−</button><input type="number" min="0" max="' + max + '" value="' + cur + '" data-twin="1"><button data-twq="1">＋</button><button data-twq="max">최대</button><button data-twq="0">빼기</button><span>올림 ' + cur + ' / 가진 수 ' + max + '</span></div>';
+      }
+    }
+    const tab = (k, name) => '<button class="' + (twTab === k ? 'on' : '') + '" data-twtab="' + k + '">' + name + '</button>';
+    twEl.innerHTML = '<div class="tw-box"><div class="tw-hd"><h2>거래</h2><div class="tw-x" data-twcancel="1">✕</div></div>' +
+      '<div class="tw-offers">' +
+      '<div class="tw-side' + (twOkMe ? ' ok' : '') + '"><div class="tw-name"><span>내가 올린 물건</span>' + (twOkMe ? '<em>✔ 수락</em>' : '') + '</div><div class="tw-grid">' + mineHtml + '</div></div>' +
+      '<div class="tw-side' + (twOkThem ? ' ok' : '') + '"><div class="tw-name"><span>' + esc(twPartner.nick) + (twPartner.level ? ' Lv.' + twPartner.level : '') + '</span>' + (twOkThem ? '<em>✔ 수락</em>' : '') + '</div><div class="tw-grid">' + theirHtml + '</div></div>' +
+      '</div>' +
+      '<div class="tw-count">' + twCountText() + '</div>' +
+      '<div class="tw-tabs">' + tab('loot', '전리품') + tab('gear', '장비') + tab('book', '스킬북') + '</div>' +
+      '<div class="tw-inv">' + invHtml + '</div>' +
+      '<div class="tw-pick">' + pick + '</div>' +
+      '<div class="tw-btns"><button class="tw-acc' + (twOkMe ? ' on' : '') + '" data-twacc="1">' + (twOkMe ? '수락 취소' : '거래수락') + '</button><button class="tw-cc" data-twcancel="1">거래취소</button></div></div>';
+    const inv = twEl.querySelector('.tw-inv');
+    if (inv) inv.scrollTop = sc;
+  }
+  function twSetOffer(id, n) {
+    const max = twAvail().get(id) || 0;
+    n = Math.max(0, Math.min(max, Math.floor(Number(n)) || 0));
+    twMine = twMine.filter((e) => e.id !== id);
+    if (n > 0) twMine.push({ id, n });
+    twOkMe = false; twOkThem = false; twEnd = 0;   // 올린 게 바뀌면 수락이 풀려요 (서버도 똑같이 처리)
+    renderTW();
+    socket.emit('trade:offer', { items: twMine });
+  }
+  twEl.addEventListener('click', (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    if (!t || !twOn) return;
+    let b;
+    if ((b = t.closest('[data-twcancel]'))) { closeTradeWin(true); return; }
+    if ((b = t.closest('[data-twacc]'))) { socket.emit('trade:accept', { v: !twOkMe }); return; }
+    if ((b = t.closest('[data-twtab]'))) { twTab = b.getAttribute('data-twtab'); renderTW(); return; }
+    if ((b = t.closest('[data-twinv]'))) { twSel = { id: b.getAttribute('data-twinv'), side: 'me' }; renderTW(); return; }
+    if ((b = t.closest('[data-twme]'))) { const id = b.getAttribute('data-twme'); twSel = { id, side: 'me' }; if (ITEMS[id]) twTab = twKind(id); renderTW(); return; }
+    if ((b = t.closest('[data-twth]'))) { twSel = { id: b.getAttribute('data-twth'), side: 'them' }; renderTW(); return; }
+    if ((b = t.closest('[data-twq]')) && twSel && twSel.side === 'me') {
+      const v = b.getAttribute('data-twq'), cur = twCnt(twMine, twSel.id), max = twAvail().get(twSel.id) || 0;
+      twSetOffer(twSel.id, v === 'max' ? max : v === '0' ? 0 : cur + Number(v));
+    }
+  });
+  twEl.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t && t.matches && t.matches('[data-twin]') && twSel && twSel.side === 'me') twSetOffer(twSel.id, t.value);
+  });
+
+  function openTradeWin(partner) {
+    hideRequest();
+    closeStatus();
+    closeChiefTalk();
+    closeCraft();
+    closeTrade();
+    closeQuest();
+    winEl.style.display = 'none';
+    scrEl.classList.remove('open', 'show');
+    twOn = true; twPartner = partner || null; twMine = []; twTheirs = []; twOkMe = false; twOkThem = false; twEnd = 0; twTab = 'loot'; twSel = null;
+    twEl.style.display = 'flex';
+    document.body.classList.add('tw-open');
+    clearInterval(twTick);
+    twTick = setInterval(() => { const c = twEl.querySelector('.tw-count'); if (c) c.innerHTML = twCountText(); }, 100);
+    renderTW();
+    if (!uiOpen) {
+      uiOpen = true;
+      document.body.classList.add('uw-open');
+      for (const k in keys) keys[k] = false;
+      jumpHeld = false;
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) { /* 무시 */ }
+    }
+  }
+  function closeTradeWin(sendCancel) {
+    if (!twOn) return;
+    twOn = false;
+    clearInterval(twTick);
+    twEl.style.display = 'none';
+    document.body.classList.remove('tw-open');
+    if (sendCancel) socket.emit('trade:cancel');
+    if (uiOpen) { uiOpen = false; document.body.classList.remove('uw-open'); }
+  }
+  socket.on('trade:incoming', (d) => { if (d && typeof d.from === 'string') showRequest(d); });
+  socket.on('trade:incoming:end', (d) => { if (!d || d.from === tqFrom) hideRequest(); });
+  socket.on('trade:open', (d) => { if (d && d.partner) openTradeWin(d.partner); });
+  socket.on('trade:state', (d) => {
+    if (!twOn || !d) return;
+    twMine = Array.isArray(d.mine) ? d.mine : [];
+    twTheirs = Array.isArray(d.theirs) ? d.theirs : [];
+    twOkMe = !!d.okMe; twOkThem = !!d.okThem;
+    twEnd = d.left > 0 ? Date.now() + d.left : 0;
+    renderTW();
+  });
+  socket.on('trade:closed', (d) => {
+    closeTradeWin(false);
+    if (d && d.msg) toast(d.msg);
+  });
 
   // ---------- 퀘스트 창: 진행중 / 전체 / 완료 / 실패 ----------
   // 퀘스트 데이터. 지금은 퀘스트가 하나도 없어서 비어 있어요. 나중에 아래 모양으로 넣으면 목록에 바로 나타나요.
@@ -3325,6 +3530,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (winSel.inv >= invItems.length) winSel.inv = -1;
     if (winOpenNow()) renderWin();
     if (craftOn) renderCraft();   // 제작 창이 열려 있으면 보유 재료 수도 바로 반영
+    if (twOn) renderTW();         // 거래 창이 열려 있으면 내 인벤토리도 바로 반영
     refreshQuests();               // 퀘스트 진행(예: 토끼 간 3 / 5)·이장 머리 위 표시도 같이
   });
   socket.on('craft', (d) => {   // 무기 제작 상태 (서버가 정함). id 가 없으면 제작 중인 게 없음
