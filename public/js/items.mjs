@@ -42,12 +42,12 @@ export const ITEMS = {
   slime_goo: { name: '슬라임 점액', kind: 'material', icon: '🟢', img: '/ui/items/slime_goo.png', label: '재료', desc: '슬라임을 잡고 나온 찌꺼기입니다.' },
   mana_low: { name: '하급 마정석', kind: 'material', icon: '💠', img: '/ui/items/mana_low.png', label: '재료', desc: '이 세상의 재화인 마정석 입니다.<br>여러 방면으로 사용할 수 있습니다.' },
   golem_core: { name: '골렘 코어', kind: 'material', icon: '🔷', img: '/ui/items/golem_core.png', label: '재료', desc: '골렘의 눈에 박혀 있던 빛나는 보석입니다.' },
-  orc_hide: { name: '오크 가죽', kind: 'material', icon: '🟩', img: '/ui/items/orc_hide.png', label: '재료', desc: '냄새나는 오크 가죽 입니다.' },
+  orc_hide: { name: '오크 가죽', kind: 'material', icon: '🟩', img: '/ui/orc_hide.png', label: '재료', desc: '냄새나는 오크 가죽 입니다.' },
   // 무기 장비: 장착하면 손에 드는 무기가 오크 도끼로 바뀌고, 평타·휩쓸기·내려찍기 모션도 도끼 전용이 돼요 (weapon.js 의 MOTION.orc_axe)
-  orc_axe: { name: '오크 도끼', kind: 'gear', slot: 'weapon', weapon: 'orc_axe', stack: false, icon: '🪓', img: '/ui/items/orc_axe.png', label: '무기', note: '장착하면 들고 있는 무기가<br>오크 도끼로 바뀌어요.', desc: '오크가 쓰던 낡은 도끼 입니다.' },
+  orc_axe: { name: '오크 도끼', kind: 'gear', slot: 'weapon', weapon: 'orc_axe', stack: false, icon: '🪓', img: '/ui/orc_axe.png', label: '무기', note: '장착하면 들고 있는 무기가<br>오크 도끼로 바뀌어요.', desc: '오크가 쓰던 낡은 도끼 입니다.' },
   // 제작 무기: 대장간 제작대에서 만들어요 (CRAFT_RECIPES). 장착하면 손에 드는 무기가 돌 검으로 바뀌고, 공격력(평타·스킬 전부)이 dmg 배가 돼요. 공격 속도는 나무검과 같아요
-  stone_sword: { name: '돌 검', kind: 'gear', slot: 'weapon', weapon: 'stone_sword', dmg: 2, stack: false, icon: '🗡️', img: '/ui/items/stone_sword.png', label: '무기', note: '장착하면 들고 있는 무기가<br>돌 검으로 바뀌어요.<br>공격력이 나무검의 2배예요.', desc: '단단한 돌을 갈아 만든 검입니다.<br>나무검보다 두 배 강합니다.' },
-  orc_heart: { name: '오크 심장', kind: 'material', icon: '❤️', img: '/ui/items/orc_heart.png', label: '재료', desc: '오크의 거대한 심장 입니다.<br>어딘가에 쓰일지도 모릅니다...' },
+  stone_sword: { name: '돌 검', kind: 'gear', slot: 'weapon', weapon: 'stone_sword', dmg: 2, stack: false, icon: '🗡️', img: '/ui/stone_sword.png', label: '무기', note: '장착하면 들고 있는 무기가<br>돌 검으로 바뀌어요.<br>공격력이 나무검의 2배예요.', desc: '단단한 돌을 갈아 만든 검입니다.<br>나무검보다 두 배 강합니다.' },
+  orc_heart: { name: '오크 심장', kind: 'material', icon: '❤️', img: '/ui/orc_heart.png', label: '재료', desc: '오크의 거대한 심장 입니다.<br>어딘가에 쓰일지도 모릅니다...' },
   goblin_armor: { name: '고블린 갑옷', kind: 'gear', slot: 'armor', hp: 5, stack: false, icon: '🦺', img: '/ui/items/goblin_armor.png', label: '갑옷', desc: '고블린이 입던 갑옷 입니다.<br>더럽습니다.' },
   goblin_pants: { name: '고블린 바지', kind: 'gear', slot: 'pants', hp: 5, stack: false, icon: '👖', img: '/ui/items/goblin_pants.png', label: '바지', desc: '고블린이 입던 바지 입니다.<br>더럽습니다.' },
 };
@@ -60,29 +60,62 @@ export const CRAFT_RECIPES = [
   { id: 'stone_sword', name: '돌 검', result: 'stone_sword', time: 30, craftable: true, mats: [{ id: 'mana_low', n: 5 }, { id: 'rabbit_liver', n: 5 }] },
 ];
 // ---------- 퀘스트 (마을 이장이 줘요) ----------
-// goal = 모아야 하는 아이템 (완료할 때 이장에게 내고 빠져요), reward = 보상 (exp 와 아이템).
+// 메인퀘스트는 main_1 → main_2 → main_3 순서로 이어져요 (prev = 먼저 끝내야 하는 퀘스트).
+// goal = 모아야 하는 아이템. 이장에게 줘도 인벤토리에서 빠지지 않아요 (가진 걸 확인만 해요. 입고 있는 장비도 가진 걸로 쳐요).
+// goalText = 퀘스트 창에 보이는 목표 글, reward = 보상 (exp 와 아이템).
 // main_1 의 exp 82 = 1레벨 필요 경험치(165)의 절반 → 1레벨에서 2레벨로 가는 길의 중간쯤
 export const QUEST_DEFS = {
   main_1: {
-    id: 'main_1', title: '메인퀘스트 1', summary: '토끼 간 5개 구하기',
+    id: 'main_1', title: '메인퀘스트 1', summary: '토끼 간 5개 구하기', goalText: '토끼 간 5개 구하기',
     desc: '마을 이장이 토끼 간 5개를 구해다 달라고 부탁했다.\n평원의 토끼를 사냥해서 토끼 간을 모은 뒤, 이장에게 가져다주자.',
     goal: { item: 'rabbit_liver', n: 5 },
     reward: { exp: 82, items: [{ id: 'mana_low', n: 5 }] },
   },
+  main_2: {
+    id: 'main_2', prev: 'main_1', title: '메인퀘스트 2', summary: '마정석 10개 구하기', goalText: '하급 마정석 10개 구하기',
+    desc: '이장이 이번에는 마정석 10개를 구해보라고 했다.\n고블린·슬라임·골렘 같은 몬스터를 사냥하면 마정석을 얻을 수 있다.\n10개를 모으면 이장에게 가자. (이장에게 보여주기만 하고 빼앗기지는 않는다)',
+    goal: { item: 'mana_low', n: 10 },
+    reward: { exp: 200, items: [{ id: 'rabbit_pelt', n: 10 }] },
+  },
+  main_3: {
+    id: 'main_3', prev: 'main_2', title: '메인퀘스트 3', summary: '돌 검 만들기', goalText: '돌 검 만들기',
+    desc: '이장이 이제 강해질 시간이라며 돌 검을 만들어보라고 했다.\n대장간 제작대에서 돌 검(하급 마정석 5개 + 토끼 간 5개)을 만들어 이장에게 보여주자.',
+    goal: { item: 'stone_sword', n: 1 },
+    reward: { exp: 250, items: [{ id: 'mana_low', n: 20 }] },
+  },
 };
 // 이장 대사 (선택지는 화면 아래 버튼으로 떠요). 퀘스트 상태에 따라 화면(main.js)이 골라서 보여줘요
+// quests[퀘스트id] = { intro(처음 말 걸 때, 없으면 위 intro), accepted(수락 후), waiting(아직 모자람), ready(다 모음), rewarded(보상 받은 뒤) }
 export const CHIEF_TALK = {
   name: '마을 이장',
   intro: '허허 안녕하신가? 나는 이 마을의 이장이라네. 내 부탁을 좀 들어주지 않겠나?',
   introChoices: ['메인퀘스트 시작하기', '거절하기'],
-  accepted: '고맙구먼! 평원의 토끼들에게서 토끼 간 5개만 구해다 주게나. 부탁하네.',
   declined: '그런가... 마음이 바뀌면 언제든 다시 찾아오게나.',
-  waiting: '토끼 간은 아직 다 구하지 못했나? 서두를 건 없으니 천천히 구해다 주게나.',
-  ready: '오오, 토끼 간을 구해왔구먼! 정말 고맙네. 약소하지만 보답을 받아주게나.',
   readyChoice: '보상 받기',
-  rewarded: '고맙네! 자네 덕분에 큰 도움이 되었네.',
   done: '자네 덕분에 한시름 놓았다네. 정말 고맙네!',
   close: '닫기',
+  quests: {
+    main_1: {
+      accepted: '고맙구먼! 평원의 토끼들에게서 토끼 간 5개만 구해다 주게나. 부탁하네.',
+      waiting: '토끼 간은 아직 다 구하지 못했나? 서두를 건 없으니 천천히 구해다 주게나.',
+      ready: '오오, 토끼 간을 구해왔구먼! 정말 고맙네. 약소하지만 보답을 받아주게나.',
+      rewarded: '고맙네! 자네 덕분에 큰 도움이 되었네.',
+    },
+    main_2: {
+      intro: '허허 토끼간을 구해다 주어서 고맙네. 그럼 이번엔 마정석 10개를 구해보게나.',
+      accepted: '고맙구먼! 몬스터들이 가끔 떨어뜨리는 마정석을 10개만 구해다 주게나.',
+      waiting: '마정석은 아직 다 구하지 못했나? 천천히 구해다 주게나.',
+      ready: '오오, 마정석을 다 구해왔구먼! 정말 고맙네. 보답을 받아주게나. 마정석은 자네가 계속 가지고 있게나.',
+      rewarded: '고맙네! 자네는 정말 믿음직한 사람이구먼.',
+    },
+    main_3: {
+      intro: '마정석을 구해줘서 고맙네. 이제 자네도 강해질 시간이군. 돌검을 만들어보게나.',
+      accepted: '대장간 제작대에서 돌 검을 만들 수 있다네. 재료를 챙겨서 가보게나.',
+      waiting: '돌 검은 아직 만들지 못했나? 대장간 제작대를 찾아가 보게나.',
+      ready: '오오, 돌 검을 만들었구먼! 한결 든든하네. 보답을 받아주게나.',
+      rewarded: '자네가 점점 강해지는 모습이 보기 좋구먼! 앞으로도 몸조심하게나.',
+    },
+  },
 };
 
 // 들고 있는 무기로 정해지는 공격력 배율 (무기를 안 끼면 나무검 = 1배). gear = { weapon: 아이템id | null, ... }
