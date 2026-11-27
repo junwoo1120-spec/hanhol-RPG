@@ -113,6 +113,7 @@ const saveProfile = (p) => {
   acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, craft: p.craft ? { id: p.craft.id, end: p.craft.end } : null, quests: { ...p.quests }, level: p.level, exp: cleanNum(p.exp, EXP_MAX), gold: cleanNum(p.gold, GOLD_MAX), stats: { ...p.stats }, pos });
 };
 function kickPlayer(o) {   // 같은 계정으로 다른 곳에서 로그인하면 먼저 있던 접속을 끊어요
+  dropTradeFor(o.id);
   saveProfile(o);
   players.delete(o.id);
   const s = io.sockets.sockets.get(o.id);
@@ -427,6 +428,110 @@ function resolveAttack(attacker, now) {
   if (sliSim) sliSim.playerAttack(attacker, now);
   if (bossSim) bossSim.playerAttack(attacker, now);
   if (golSim) golSim.playerAttack(attacker, now);
+}
+
+// ---------- 거래 ----------
+// 흐름: trade:request(상대 지목) → 상대 화면 오른쪽 위에 수락/거절 → trade:respond → trade:open(양쪽 거래 창)
+//       → trade:offer(올린 아이템 전체를 보냄) → trade:accept(거래수락 토글) → 둘 다 수락하면 5초 뒤 완료
+// 규칙: 올린 아이템이 바뀌면 양쪽 수락이 풀리고 카운트다운도 멈춰요. 완료 직전에 다시 한 번 가진 수량·인벤토리 칸을 확인해요.
+// 올릴 수 있는 것은 인벤토리에 있는 아이템(전리품·보관 장비·스킬북). 입고 있는 장비는 벗어야 올릴 수 있어요.
+const TRADE_REQ_MS = 30000;      // 거래 요청이 유지되는 시간 (응답이 없으면 자동 취소)
+const TRADE_COUNTDOWN_MS = 5000; // 둘 다 수락한 뒤 완료까지
+const trades = new Map();        // 거래id -> { id, ids:[a,b], offer:{id:[{id,n}]}, ok:{id:bool}, timer, endAt }
+const tradeReqs = new Map();     // 받는 사람 socket id -> { from, timer }
+let tradeSeq = 0;
+const tradeOf = (p) => (p && p.tradeId ? trades.get(p.tradeId) || null : null);
+const invCount = (inv, id) => inv.reduce((s, i) => (i.id === id ? s + i.n : s), 0);
+function clampOffer(p, raw) {   // 올린 목록을 정리: 없는 아이템 제거 · 같은 아이템 합치기 · 가진 수보다 많으면 가진 수로 줄임
+  const merged = new Map();
+  if (Array.isArray(raw) && ITEMS_MOD) {
+    for (const e of raw.slice(0, 60)) {
+      if (!e || typeof e.id !== 'string' || !ITEMS_MOD.ITEMS[e.id]) continue;
+      const n = Math.floor(Number(e.n));
+      if (Number.isFinite(n) && n > 0) merged.set(e.id, (merged.get(e.id) || 0) + n);
+    }
+  }
+  const out = [];
+  for (const [id, n] of merged) { const k = Math.min(n, invCount(p.inv, id)); if (k > 0) out.push({ id, n: k }); }
+  return out;
+}
+function simulateInv(inv, removeList, addList) {   // 거래 후 인벤토리를 미리 계산 (칸이 모자라면 null)
+  const cur = inv.map((i) => ({ ...i }));
+  for (const { id, n } of removeList) {
+    let need = n;
+    for (let k = cur.length - 1; k >= 0 && need > 0; k--) {
+      if (cur[k].id !== id) continue;
+      const take = Math.min(cur[k].n, need); cur[k].n -= take; need -= take;
+    }
+    if (need > 0) return null;
+  }
+  const out = cur.filter((i) => i.n > 0);
+  for (const { id, n } of addList) {
+    const def = ITEMS_MOD.ITEMS[id];
+    if (!def) return null;
+    if (def.stack === false) { for (let i = 0; i < n; i++) out.push({ id, n: 1 }); }
+    else { const st = out.find((i) => i.id === id); if (st) st.n += n; else out.push({ id, n }); }
+  }
+  return out.length > ITEMS_MOD.INV_CAP ? null : out;
+}
+function sendTrade(t) {
+  const left = t.endAt ? Math.max(0, t.endAt - Date.now()) : 0;
+  for (const id of t.ids) {
+    const other = t.ids[0] === id ? t.ids[1] : t.ids[0];
+    io.to(id).emit('trade:state', { mine: t.offer[id], theirs: t.offer[other], okMe: t.ok[id], okThem: t.ok[other], left });
+  }
+}
+function resetTradeOk(t) {
+  clearTimeout(t.timer); t.timer = null; t.endAt = 0;
+  for (const id of t.ids) t.ok[id] = false;
+}
+function closeTrade(t, done, msgFor) {   // msgFor(id) → 그 사람에게 보여줄 문구
+  clearTimeout(t.timer);
+  trades.delete(t.id);
+  for (const id of t.ids) {
+    const q = players.get(id);
+    if (q) q.tradeId = null;
+    io.to(id).emit('trade:closed', { done, msg: msgFor ? msgFor(id) : '' });
+  }
+}
+function clearReq(targetId, expired) {
+  const r = tradeReqs.get(targetId);
+  if (!r) return;
+  clearTimeout(r.timer);
+  tradeReqs.delete(targetId);
+  io.to(targetId).emit('trade:incoming:end', { from: r.from });
+  if (expired) { const f = players.get(r.from), q = players.get(targetId); if (f) sendToast(f, (q ? q.nick + '님이 ' : '') + '응답하지 않아 거래 요청이 취소되었어요'); }
+}
+function dropTradeFor(id) {   // 접속이 끊기거나 쫓겨날 때: 진행 중인 거래·요청 정리
+  const p = players.get(id), t = tradeOf(p);
+  if (t) closeTrade(t, false, (pid) => (pid === id ? '' : '상대방이 접속을 종료해 거래가 취소되었어요'));
+  clearReq(id, false);
+  for (const [target, r] of [...tradeReqs]) if (r.from === id) clearReq(target, false);
+}
+function finishTrade(t) {
+  t.timer = null; t.endAt = 0;
+  const A = players.get(t.ids[0]), B = players.get(t.ids[1]);
+  if (!A || !B || !A.inv || !B.inv || !ITEMS_MOD) { closeTrade(t, false, () => '거래가 취소되었어요'); return; }
+  const oa = t.offer[A.id], ob = t.offer[B.id];
+  const stillA = clampOffer(A, oa), stillB = clampOffer(B, ob);
+  if (JSON.stringify(stillA) !== JSON.stringify(oa) || JSON.stringify(stillB) !== JSON.stringify(ob)) {   // 그 사이 아이템을 쓰거나 바꿨음
+    t.offer[A.id] = stillA; t.offer[B.id] = stillB; resetTradeOk(t); sendTrade(t);
+    sendToast(A, '가진 아이템이 바뀌어서 거래가 멈췄어요. 다시 확인해 주세요'); sendToast(B, '가진 아이템이 바뀌어서 거래가 멈췄어요. 다시 확인해 주세요');
+    return;
+  }
+  const newA = simulateInv(A.inv, oa, ob), newB = simulateInv(B.inv, ob, oa);
+  if (!newA || !newB) {
+    resetTradeOk(t); sendTrade(t);
+    if (!newA) { sendToast(A, '인벤토리가 가득 차서 거래를 마칠 수 없어요'); sendToast(B, A.nick + '님의 인벤토리가 가득 차서 거래를 마칠 수 없어요'); }
+    if (!newB) { sendToast(B, '인벤토리가 가득 차서 거래를 마칠 수 없어요'); sendToast(A, B.nick + '님의 인벤토리가 가득 차서 거래를 마칠 수 없어요'); }
+    return;
+  }
+  A.inv = newA; B.inv = newB;
+  saveProfile(A); saveProfile(B);
+  sendInv(A); sendInv(B);
+  closeTrade(t, true, () => '거래가 완료되었어요!');
+  if (ob.length) io.to(A.id).emit('loot', { items: ob.map((e) => ({ id: e.id, n: e.n })) });
+  if (oa.length) io.to(B.id).emit('loot', { items: oa.map((e) => ({ id: e.id, n: e.n })) });
 }
 
 io.on('connection', (socket) => {
@@ -762,7 +867,64 @@ io.on('connection', (socket) => {
     if (p) p.fast = !!v;
   });
 
-  socket.on('disconnect', () => { const p = players.get(socket.id); if (p && p.inv) saveProfile(p); players.delete(socket.id); });
+  // ----- 거래 -----
+  socket.on('trade:request', (d) => {
+    const p = players.get(socket.id);
+    if (!p || !p.inv || !ITEMS_MOD || !d || typeof d.to !== 'string') return;
+    const q = players.get(d.to);
+    if (!q || q === p || !q.spawned || !q.inv) { sendToast(p, '거래할 수 없는 상대예요'); return; }
+    if (tradeOf(p)) { sendToast(p, '이미 거래 중이에요'); return; }
+    if (tradeOf(q)) { sendToast(p, q.nick + '님은 지금 거래 중이에요'); return; }
+    if (p.dead || q.dead) { sendToast(p, '지금은 거래할 수 없어요'); return; }
+    const old = tradeReqs.get(q.id);
+    if (old) { sendToast(p, old.from === p.id ? '이미 거래를 요청했어요' : q.nick + '님은 다른 거래 요청에 응답 중이에요'); return; }
+    for (const [target, r] of [...tradeReqs]) if (r.from === p.id) clearReq(target, false);   // 내가 보낸 이전 요청은 취소
+    tradeReqs.set(q.id, { from: p.id, timer: setTimeout(() => clearReq(q.id, true), TRADE_REQ_MS) });
+    io.to(q.id).emit('trade:incoming', { from: p.id, nick: p.nick, ms: TRADE_REQ_MS });
+    sendToast(p, q.nick + '님에게 거래를 요청했어요');
+  });
+  socket.on('trade:respond', (d) => {
+    const p = players.get(socket.id), r = tradeReqs.get(socket.id);
+    if (!p || !r || !d || r.from !== d.from) return;
+    const f = players.get(r.from);
+    clearReq(socket.id, false);
+    if (!d.accept) { if (f) sendToast(f, p.nick + '님이 거래를 거절했어요'); return; }
+    if (!f || !f.inv || !p.inv || tradeOf(f) || tradeOf(p)) { sendToast(p, '거래를 시작할 수 없어요'); return; }
+    const t = { id: ++tradeSeq, ids: [f.id, p.id], offer: { [f.id]: [], [p.id]: [] }, ok: { [f.id]: false, [p.id]: false }, timer: null, endAt: 0 };
+    trades.set(t.id, t);
+    f.tradeId = t.id; p.tradeId = t.id;
+    io.to(f.id).emit('trade:open', { partner: { id: p.id, nick: p.nick, level: p.level } });
+    io.to(p.id).emit('trade:open', { partner: { id: f.id, nick: f.nick, level: f.level } });
+    sendTrade(t);
+  });
+  socket.on('trade:offer', (d) => {
+    const p = players.get(socket.id), t = tradeOf(p);
+    if (!t || !d) return;
+    t.offer[p.id] = clampOffer(p, d.items);
+    resetTradeOk(t);
+    sendTrade(t);
+  });
+  socket.on('trade:accept', (d) => {
+    const p = players.get(socket.id), t = tradeOf(p);
+    if (!t) return;
+    const want = !!(d && d.v);
+    if (want && !t.ids.some((id) => t.offer[id].length)) { sendToast(p, '올린 아이템이 없어요'); return; }
+    if (want && t.ok[p.id]) return;
+    t.ok[p.id] = want;
+    if (t.ids.every((id) => t.ok[id])) {
+      t.endAt = Date.now() + TRADE_COUNTDOWN_MS;
+      clearTimeout(t.timer);
+      t.timer = setTimeout(() => finishTrade(t), TRADE_COUNTDOWN_MS);
+    } else { clearTimeout(t.timer); t.timer = null; t.endAt = 0; }
+    sendTrade(t);
+  });
+  socket.on('trade:cancel', () => {
+    const p = players.get(socket.id), t = tradeOf(p);
+    if (!t) return;
+    closeTrade(t, false, (id) => (id === p.id ? '거래를 취소했어요' : p.nick + '님이 거래를 취소했어요'));
+  });
+
+  socket.on('disconnect', () => { dropTradeFor(socket.id); const p = players.get(socket.id); if (p && p.inv) saveProfile(p); players.delete(socket.id); });
 });
 
 // 20Hz 고블린·토끼 시뮬레이션 + 주변 몬스터 목록 전송
