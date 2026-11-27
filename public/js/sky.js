@@ -31,6 +31,8 @@ const MOON_SRC = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABc
 const Q = typeof location !== 'undefined' ? location.search : '';
 const OPT = Object.assign({
   dayLength: 1200,    // 하루(초)
+  noNight: true,      // true 면 밤이 없어요 (항상 낮). false 로 바꾸면 예전처럼 해가 뜨고 져요
+  fixedTime: 250,     // noNight 일 때 고정할 시각(초). 0=해 뜸, 300=정오 (250 = 정오 직전의 밝은 낮)
   speed: 1,           // 1 = 실제 속도
   latitude: 37,       // 북위(도): 별이 도는 모양과 해의 높이를 정해요
   starCount: 3600,
@@ -699,7 +701,7 @@ function dirOf(p) {
 
 function computeState(nowSec) {   // nowSec = 서버 기준 지금(초)
   const L = OPT.dayLength, half = L / 2;
-  const t = (((ANCHOR.phase + (nowSec - ANCHOR.sec) * ANCHOR.speed + offset) % L) + L) % L;
+  const t = OPT.noNight ? OPT.fixedTime : (((ANCHOR.phase + (nowSec - ANCHOR.sec) * ANCHOR.speed + offset) % L) + L) % L;
   const H = 2 * Math.PI * (t - L / 4) / L;          // t=0 해 뜸(동), L/4 정오(남), L/2 해 짐(서)
   const lat = rad(OPT.latitude);
   const sun = altaz(H, 0, lat), moon = altaz(H + Math.PI, 0, lat);
