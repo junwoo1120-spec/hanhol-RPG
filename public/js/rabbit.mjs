@@ -21,9 +21,10 @@ const sm01 = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x
 
 // ================= 모델 =================
 const COL = {
-  fur: 0xdad7e8, furLight: 0xf0edf8, furDark: 0xb3afc6, furShade: 0x9e9ab4,
-  earIn: 0xcfaec3, nose: 0xd99aa8, eye: 0x07070c, glint: 0xffffff, tooth: 0xf6f1e2, claw: 0x8f8ba3,
+  fur: 0xffffff, furLight: 0xffffff, furDark: 0xf4f4f8, furShade: 0xe2e2ea,   // 완전 밝은 하얀색 (그늘진 부분만 아주 살짝 어둡게)
+  earIn: 0xf5d2dd, nose: 0xea9fb2, eye: 0x07070c, glint: 0xffffff, tooth: 0xfffdf4, claw: 0xd2d2dc,
 };
+const SIZE = RABBIT.SCALE * 1.7;   // 토끼 크기: 예전 크기(RABBIT.SCALE)의 1.7배
 
 const V3 = THREE.Vector3, Q = THREE.Quaternion, M4 = THREE.Matrix4, EU = THREE.Euler;
 
@@ -172,7 +173,7 @@ function template() {
   // 멀리 있는 토끼용: 모든 부위를 기본 자세로 합친 메시 1개
   LOD_GEO = mergeGeometries(defs.map((d) => d.geo.clone().translate(d.pivot[0], d.pivot[1], d.pivot[2])), false);
   TEMPLATE = defs;
-  MAT = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide });
+  MAT = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide, emissive: 0x707070 });   // emissive: 그늘에서도 하얗게 보이게
   MAT_HIT = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide, emissive: 0xff2a14, emissiveIntensity: 0.9 });
   return TEMPLATE;
 }
@@ -394,7 +395,7 @@ export function createRabbitWorld({ scene, camera, T, WATER_LEVEL }) {
       let e = map.get(id);
       if (!e) {
         const obj = buildRabbit();
-        obj.scale.setScalar(RABBIT.SCALE);
+        obj.scale.setScalar(SIZE);
         obj.rotation.order = 'YXZ';   // 방향(y)을 돌린 뒤 쓰러지는 기울기(z)를 적용
         const bar = makeBar();
         scene.add(obj, bar);
@@ -444,7 +445,7 @@ export function createRabbitWorld({ scene, camera, T, WATER_LEVEL }) {
         const f = fallCurve(e.dd / RABBIT.DEATH_FALL);
         if (!e.far) { animateRabbit(e.obj, dt, 0); deathPose(e.obj, f, e.side); }
         e.obj.rotation.z = e.side * (Math.PI / 2) * 0.97 * f;
-        e.obj.position.y = y + 0.1 * RABBIT.SCALE * f;
+        e.obj.position.y = y + 0.1 * SIZE * f;
         e.bar.visible = false;
         continue;
       }
@@ -455,7 +456,7 @@ export function createRabbitWorld({ scene, camera, T, WATER_LEVEL }) {
       e.bar.visible = show;
       if (show) {
         const ratio = Math.max(0, e.hp / RABBIT.HP);
-        e.bar.position.set(e.x, y + 0.4 * RABBIT.SCALE + 0.25, e.z);
+        e.bar.position.set(e.x, y + 0.4 * SIZE + 0.25, e.z);
         e.bar.quaternion.copy(camera.quaternion);
         const fg = e.bar.userData.fg;
         fg.scale.x = BAR_W * ratio;
