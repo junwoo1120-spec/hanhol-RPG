@@ -11,7 +11,7 @@ import { PLAYER_ATK, SKILLS, inSquare, dmgMul, rollHit } from './goblin-ai.mjs';
 export const BOSS = {
   NAME: '오크 대전사',
   SCALE: 1.5,              // 크기 배율. 모델 높이 약 2.7 × 1.5 ≈ 4.0m (플레이어 약 2.4m, 골렘 약 2.9m)
-  HP: 500,                 // 체력
+  HP: 625,                 // 체력
   DAMAGE: 50,              // 공격력 (한 방 50 → 플레이어 체력 100 이면 두 방)
   HIT_RADIUS: 1.6,         // 몸통 반지름 (플레이어 검이 닿는 거리에 더해짐)
 
