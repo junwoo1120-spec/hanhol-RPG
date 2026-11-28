@@ -7,7 +7,7 @@ const server = http.createServer(app);
 const io = new Server(server);
 // .mjs 파일(goblin.mjs)을 자바스크립트로 인식시키기. 안 하면 브라우저가 모듈 로드를 거부해요.
 try { if (express.static.mime) express.static.mime.define({ 'application/javascript': ['mjs'] }); } catch (e) { /* 무시 */ }
-app.use(express.static('public'));
+app.use(express.static('public', { setHeaders: (res, fp) => { if (/\.(html|js|mjs)$/.test(fp)) res.setHeader('Cache-Control', 'no-cache'); } }));   // 코드 파일은 매번 새 버전인지 확인 (예전 items.mjs 가 브라우저에 남아 퀘스트가 안 이어지던 문제 방지)
 // ---------- 회원가입 / 로그인 (accounts.js) ----------
 const acc = require('./accounts.js');
 app.set('trust proxy', 1);
@@ -83,6 +83,21 @@ let sliSim = null;
   }
 })();
 
+// ---------- 고릴라 (정글 몬스터: 가운데를 조금 비운 정글을 3구역으로 나눠 구역마다 한 마리) ----------
+// 계산 코드는 public/js/gorilla-ai.mjs. 로드에 실패해도 다른 몬스터·게임은 그대로 돌아가요.
+let gorillaSim = null;
+(async () => {
+  try {
+    const src = fs.readFileSync(path.join(__dirname, 'public/js/terrain.js'), 'utf8');
+    const terr = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
+    const ai = await import(pathToFileURL(path.join(__dirname, 'public/js/gorilla-ai.mjs')).href);
+    gorillaSim = ai.createGorillaSim({ T: terr.makeTerrain(SEED), seed: SEED, WATER_LEVEL: terr.WATER_LEVEL, PLAY_RADIUS: terr.PLAY_RADIUS });
+    console.log('고릴라 ' + gorillaSim.gorillas.length + '마리 배치 완료');
+  } catch (e) {
+    console.error('고릴라 시스템 로드 실패 (고릴라 없이 계속 진행):', e);
+  }
+})();
+
 // ---------- 아이템 · 스킬북 (인벤토리 / 배우기 / 장착) ----------
 // 목록·설명·확률·수치는 public/js/items.mjs. 로드에 실패해도 게임은 그대로 돌아가요(아이템만 못 얻음).
 // 플레이어 정보: p.inv = [{ id, n }] (인벤토리), p.learned = ['slam'] (배운 스킬), p.slotR = 'slam' | null (R 칸에 장착한 스킬)
@@ -110,7 +125,7 @@ const saveProfile = (p) => {
   // 땅 위에 있을 때만 위치를 새로 저장 (동굴·집 안이면 마지막 땅 위 위치를 그대로 둠)
   const above = p.spawned && [p.x, p.z].every(Number.isFinite) && p.y >= UNDER_Y && Math.abs(p.x) < 5000 && Math.abs(p.z) < 5000;
   const pos = above ? { x: Math.round(p.x * 10) / 10, z: Math.round(p.z * 10) / 10 } : (old && old.pos) || null;
-  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, craft: p.craft ? { id: p.craft.id, end: p.craft.end } : null, quests: { ...p.quests }, level: p.level, exp: cleanNum(p.exp, EXP_MAX), gold: cleanNum(p.gold, GOLD_MAX), stats: { ...p.stats }, pos });
+  acc.setProfile(p.acct, { inv: p.inv.map((i) => ({ ...i })), learned: [...p.learned], slotR: p.slotR, gear: { ...p.gear }, craft: p.craft ? { id: p.craft.id, end: p.craft.end } : null, quests: { ...p.quests }, qprog: { ...(p.qprog || {}) }, level: p.level, exp: cleanNum(p.exp, EXP_MAX), gold: cleanNum(p.gold, GOLD_MAX), stats: { ...p.stats }, fixes: { ...(p.fixes || {}) }, pos });
 };
 function kickPlayer(o) {   // 같은 계정으로 다른 곳에서 로그인하면 먼저 있던 접속을 끊어요
   dropTradeFor(o.id);
@@ -126,17 +141,13 @@ const sendExp = (p) => { io.to(p.id).emit('exp', { level: p.level, exp: p.exp, e
 const addExp = (p, n) => { if (!p || !Number.isFinite(n) || n <= 0) return; p.exp = cleanNum(p.exp + n, EXP_MAX); settleExp(p); sendExp(p); };   // 저장은 30초마다·접속 끊길 때 자동으로 돼요
 // ---- 몬스터 레벨 · 처치 경험치 ----
 const BOSS_REWARD_FRAC = 0.07;   // 보스 체력의 7% 이상 깎아야 보상
-const MOB_LV = { rabbit: 1, goblin: 3, slime: 7, golem: 15, boss: 35 };   // boss = 오크 대전사
+const MOB_LV = { rabbit: 1, goblin: 3, slime: 7, golem: 15, boss: 27, gorilla: 35 };   // boss = 오크 대전사, gorilla = 정글 고릴라
 const MOB_EXP_MULT = { boss: 4 };                                          // 보스는 같은 레벨 일반 몬스터의 4배
 const mobBaseExp = (type) => (10 + 5 * MOB_LV[type]) * (MOB_EXP_MULT[type] || 1);   // 같은 레벨일 때 주는 경험치
 // 내 레벨(plv)로 type 몬스터를 잡았을 때 받는 경험치
-//  - 몬스터 단계(약한 순: 토끼 → 고블린 → 슬라임 → 골렘 → 오크)로 따져서, 내 단계보다 두 단계 이상 강한 몬스터는 경험치·전리품 모두 없음
-//    (내 단계 = 내 레벨 이하인 몬스터 중 가장 강한 몬스터. 예: 1레벨은 토끼 단계라서 고블린까지만 보상, 슬라임은 0)
 //  - 위 몬스터: 레벨 차이 1당 +5%(최대 +25%) / 아래 몬스터: 레벨 차이 1당 -15%, 6 이상 낮으면 0
-const MOB_TIERS = ['rabbit', 'goblin', 'slime', 'golem', 'boss'];
-const playerTier = (plv) => { let k = 0; for (let i = 0; i < MOB_TIERS.length; i++) if (MOB_LV[MOB_TIERS[i]] <= plv) k = i; return k; };
-// 내 단계보다 두 단계 이상 강한 몬스터는 경험치도 전리품도 없어요 (보스 포함)
-const canReward = (plv, type) => !MOB_LV[type] || MOB_TIERS.indexOf(type) - playerTier(plv) < 2;
+//  - 아무리 센 몬스터여도 잡으면 경험치·전리품을 받아요 (레벨 차이로 막지 않음)
+const canReward = () => true;
 const expReward = (plv, type) => {
   const mlv = MOB_LV[type];
   if (!mlv || !canReward(plv, type)) return 0;
@@ -158,6 +169,7 @@ function addItem(p, id, n = 1) {   // 성공하면 true, 칸이 없으면 false 
     else if (p.inv.length < ITEMS_MOD.INV_CAP) p.inv.push({ id, n });
     else return false;
   }
+  questGain(p, id, n);   // 진행 중인 퀘스트의 목표 아이템이면 진행도 올리기
   saveProfile(p);
   return true;
 }
@@ -185,7 +197,23 @@ const cleanQuests = (raw) => {
   if (raw && typeof raw === 'object' && ITEMS_MOD && ITEMS_MOD.QUEST_DEFS) for (const id of Object.keys(ITEMS_MOD.QUEST_DEFS)) if (raw[id] === 'active' || raw[id] === 'done') out[id] = raw[id];
   return out;
 };
-const sendQuests = (p) => io.to(p.id).emit('quests', { ...p.quests });
+// 퀘스트 진행도: 퀘스트를 '받은 뒤에' 목표 아이템을 얻은 수만 세요 (이미 가지고 있던 건 안 셈). p.qprog = { 퀘스트id: 개수 }
+const cleanProg = (raw) => {
+  const out = {};
+  if (raw && typeof raw === 'object' && ITEMS_MOD && ITEMS_MOD.QUEST_DEFS) for (const q of Object.values(ITEMS_MOD.QUEST_DEFS)) { const v = Math.floor(Number(raw[q.id])); if (Number.isFinite(v) && v > 0) out[q.id] = Math.min(v, q.goal.n); }
+  return out;
+};
+function questGain(p, itemId, n) {
+  if (!p.quests || !p.qprog || !ITEMS_MOD || !ITEMS_MOD.QUEST_DEFS) return;
+  let changed = false;
+  for (const q of Object.values(ITEMS_MOD.QUEST_DEFS)) {
+    if (p.quests[q.id] !== 'active' || q.goal.item !== itemId) continue;
+    const v = Math.min(q.goal.n, (p.qprog[q.id] || 0) + n);
+    if (v !== (p.qprog[q.id] || 0)) { p.qprog[q.id] = v; changed = true; }
+  }
+  if (changed) io.to(p.id).emit('qprog', { ...p.qprog });
+}
+const sendQuests = (p) => { io.to(p.id).emit('quests', { ...p.quests }); io.to(p.id).emit('qprog', { ...(p.qprog || {}) }); };
 const questResult = (p, id, act, ok, msg) => io.to(p.id).emit('quest:result', { id, act, ok, msg: msg || '' });
 
 // ---------- 대장간 무기 제작 (제작대에서 E) ----------
@@ -213,7 +241,7 @@ const STAT = {
   DEX_MOVE: 1 / (5 * (MAX_LEVEL - 1)), MOVE_MAX: 1.0,   // DEX: 이동 속도 — 만렙(100레벨)의 총 495포인트를 전부 찍으면 정확히 +100% (포인트당 약 +0.2%)
   CON_HP: 10,                       // CON: 최대 HP +10
   INT_MP: 6, MP_BASE: 50,           // INT: 최대 MP +6 (기본 50)
-  LUK_CRITDMG: 0.02, CRITDMG_BASE: 1.5, LUK_DROP: 0.006, DROP_MAX: 1.0,   // LUK: 치명타 피해 +2%(기본 150%), 아이템 획득 확률 +0.6%(최대 +100%)
+  LUK_CRITDMG: 0.02, CRITDMG_BASE: 1.5, LUK_DROP: 2 / (6 * (MAX_LEVEL - 1)), DROP_MAX: 2.0,   // LUK: 치명타 피해 +2%(기본 150%), 아이템 획득 확률: 만렙까지 받는 포인트(6×99)를 전부 LUK 에 찍어야 +200%(3배, 1% → 3%)
   AGI_ASPD: 0.008, ASPD_MAX: 0.5,   // AGI: 공격 속도 +0.8% (최대 +50%)
   AGI_CRIT: 0.008, CRIT_MAX: 0.5    // AGI: 치명타 확률 +0.8% (최대 50%)
 };
@@ -228,7 +256,7 @@ const weaponMul = (p) => (ITEMS_MOD && ITEMS_MOD.weaponDmg ? ITEMS_MOD.weaponDmg
 function applyStats(p) {
   fitStats(p);
   const s = p.stats;
-  p.dmgMult = (p.devDmg || 1) * (1 + STAT.STR_DMG * s.str) * weaponMul(p);   // 개발자 도구 배율 × STR × 들고 있는 무기 배율(돌 검 2배)
+  p.dmgMult = (p.devDmg || 1) * (1 + STAT.STR_DMG * s.str) * weaponMul(p);   // 개발자 도구 배율 × STR × 들고 있는 무기 배율(돌 검 1.4배, 오크 도끼 2.2배)
   p.critChance = Math.min(STAT.CRIT_MAX, STAT.AGI_CRIT * s.agi);
   p.critDmg = STAT.CRITDMG_BASE + STAT.LUK_CRITDMG * s.luk;
   p.dropMul = 1 + Math.min(STAT.DROP_MAX, STAT.LUK_DROP * s.luk);
@@ -340,6 +368,7 @@ function hurtPlayer(pid, dmg, quiet) {   // quiet = true 면 화면이 붉게 �
   if (sliSim) sliSim.dropTarget(pid);
   if (bossSim) bossSim.dropTarget(pid);
   if (golSim) golSim.dropTarget(pid);
+  if (gorillaSim) gorillaSim.dropTarget(pid);
   io.to(pid).emit('dead');
   setTimeout(() => respawnPlayer(p), PLAYER_DEATH_MS);
 }
@@ -428,6 +457,7 @@ function resolveAttack(attacker, now) {
   if (sliSim) sliSim.playerAttack(attacker, now);
   if (bossSim) bossSim.playerAttack(attacker, now);
   if (golSim) golSim.playerAttack(attacker, now);
+  if (gorillaSim) gorillaSim.playerAttack(attacker, now);
 }
 
 // ---------- 거래 ----------
@@ -534,6 +564,39 @@ function finishTrade(t) {
   if (oa.length) io.to(B.id).emit('loot', { items: oa.map((e) => ({ id: e.id, n: e.n })) });
 }
 
+// ---------- 한 번만 적용되는 아이템 보정 (닉네임으로 찾아서, 그 사람이 접속할 때 딱 한 번) ----------
+// set = { 아이템id: 총 개수 }. 입고 있는 장비도 개수에 포함해서, 인벤토리 + 입은 것의 합이 정확히 그 개수가 돼요.
+const ONE_TIME_FIXES = [
+  { id: 'mase_items_1', nick: '마세윤', set: { orc_axe: 3, orc_heart: 2 } },
+];
+function setItemTotal(p, id, total) {
+  const def = ITEMS_MOD.ITEMS[id];
+  if (!def) return;
+  const worn = Object.values(p.gear || {}).filter((v) => v === id).length;
+  const want = Math.max(0, total - worn);
+  let have = invCount(p.inv, id);
+  for (let k = p.inv.length - 1; k >= 0 && have > want; k--) {   // 남는 건 뒤에서부터 덜어내요
+    if (p.inv[k].id !== id) continue;
+    const take = Math.min(p.inv[k].n, have - want);
+    p.inv[k].n -= take; have -= take;
+    if (p.inv[k].n <= 0) p.inv.splice(k, 1);
+  }
+  if (have < want) {
+    if (def.stack === false) { for (; have < want; have++) p.inv.push({ id, n: 1 }); }
+    else { const st = p.inv.find((i) => i.id === id); if (st) st.n += want - have; else p.inv.push({ id, n: want - have }); }
+  }
+}
+function applyOneTimeFixes(p) {
+  if (!ITEMS_MOD || !p.fixes) return;
+  let changed = false;
+  for (const f of ONE_TIME_FIXES) {
+    if (p.fixes[f.id] || String(p.nick).normalize('NFC').trim() !== f.nick) continue;
+    for (const [id, total] of Object.entries(f.set)) setItemTotal(p, id, total);
+    p.fixes[f.id] = true; changed = true;
+  }
+  if (changed) saveProfile(p);
+}
+
 io.on('connection', (socket) => {
   socket.on('join', (d) => {
     if (players.has(socket.id)) return;
@@ -562,11 +625,17 @@ io.on('connection', (socket) => {
     me.gear = sv && sv.gear ? { armor: sv.gear.armor || null, pants: sv.gear.pants || null, weapon: sv.gear.weapon || null } : { armor: null, pants: null, weapon: null };
     me.craft = sv && sv.craft && craftOf(sv.craft.id) && Number.isFinite(sv.craft.end) ? { id: sv.craft.id, end: sv.craft.end } : null;   // 제작 중이던 무기
     me.craftNotified = false;
+    me.fixes = sv && sv.fixes && typeof sv.fixes === 'object' ? { ...sv.fixes } : {};
+    me.qprog = cleanProg(sv && sv.qprog);
     me.quests = cleanQuests(sv && sv.quests);   // 퀘스트 진행 상황 { 퀘스트id: 'active'(진행중) | 'done'(완료) }
+    if (ITEMS_MOD && ITEMS_MOD.QUEST_DEFS) for (const q of Object.values(ITEMS_MOD.QUEST_DEFS)) {   // 진행도 기록이 없던 예전 진행중 퀘스트는 지금 가진 만큼으로 시작
+      if (me.quests[q.id] === 'active' && me.qprog[q.id] == null) me.qprog[q.id] = Math.min(q.goal.n, invCount(me.inv, q.goal.item) + Object.values(me.gear).filter((v) => v === q.goal.item).length);
+    }
     if (sv && Number.isFinite(sv.level)) me.level = sv.level;
     me.stats = cleanStats(sv && sv.stats);        // 예전 계정은 스탯이 없어서 0부터 시작
     me.exp = cleanNum(sv && sv.exp, EXP_MAX);     // 예전 계정은 값이 없어서 0부터 시작
     me.gold = cleanNum(sv && sv.gold, GOLD_MAX);
+    applyOneTimeFixes(me);   // 한 번만 적용되는 아이템 보정 (닉네임 기준)
     settleExp(me);   // 저장된 경험치가 이미 가득이면 레벨로 넘겨요
     applyStats(me);
     me.hpMax = calcHpMax(me); me.hp = me.hpMax;   // 장비·체력 스탯으로 늘어난 최대 체력 포함
@@ -648,23 +717,23 @@ io.on('connection', (socket) => {
     const q = ITEMS_MOD.QUEST_DEFS[d.id];
     if (!q) return;
     if (p.quests[q.id]) { questResult(p, q.id, 'accept', false, '이미 받은 퀘스트예요'); sendQuests(p); return; }
+    if (q.prev && p.quests[q.prev] !== 'done') { questResult(p, q.id, 'accept', false, '먼저 이전 퀘스트를 완료해야 해요'); sendQuests(p); return; }
     p.quests[q.id] = 'active';
+    p.qprog = p.qprog || {};
+    p.qprog[q.id] = 0;   // 받은 뒤에 얻은 것부터 세요
     saveProfile(p); sendQuests(p);
     sendToast(p, '퀘스트를 수락했습니다');
     questResult(p, q.id, 'accept', true);
   });
-  // 퀘스트 완료: 목표 아이템을 내고(빠짐) 보상(경험치·아이템)을 받아요. 보상 아이템을 넣을 칸이 없으면 아무것도 바뀌지 않아요
+  // 퀘스트 완료: 목표 아이템을 가지고 있으면(빠지지 않음) 보상(경험치·아이템)을 받아요. 보상 아이템을 넣을 칸이 없으면 아무것도 바뀌지 않아요
   socket.on('quest:complete', (d) => {
     const p = players.get(socket.id);
     if (!p || !p.quests || !p.inv || !ITEMS_MOD || !d || typeof d.id !== 'string') return;
     const q = ITEMS_MOD.QUEST_DEFS[d.id];
     if (!q) return;
     if (p.quests[q.id] !== 'active') { questResult(p, q.id, 'complete', false, '진행 중인 퀘스트가 아니에요'); sendQuests(p); return; }
-    const st = p.inv.find((i) => i.id === q.goal.item);
-    if (!st || st.n < q.goal.n) { questResult(p, q.id, 'complete', false, '아직 재료가 부족해요'); sendInv(p); return; }
-    const backup = p.inv.map((i) => ({ ...i }));
-    st.n -= q.goal.n;
-    if (st.n <= 0) p.inv.splice(p.inv.indexOf(st), 1);
+    if (((p.qprog && p.qprog[q.id]) || 0) < q.goal.n) { questResult(p, q.id, 'complete', false, '아직 재료가 부족해요'); sendQuests(p); return; }   // 퀘스트를 받은 뒤 얻은 수로 확인
+    const backup = p.inv.map((i) => ({ ...i }));   // 목표 아이템은 이장에게 줘도 빠지지 않아요
     for (const r of q.reward.items || []) {
       if (!addItem(p, r.id, r.n)) { p.inv = backup; sendInv(p); questResult(p, q.id, 'complete', false, '인벤토리가 가득 차서 보상을 받을 수 없어요'); sendToast(p, '인벤토리가 가득 차서 보상을 받을 수 없어요'); return; }
     }
@@ -822,7 +891,7 @@ io.on('connection', (socket) => {
   socket.on('skill', (d) => {
     const p = players.get(socket.id);
     if (!p || p.dead || !p.eq || !SKILLS || !d || (d.id !== 'sweep' && d.id !== 'slam')) return;
-    if (!sim && !rabSim && !sliSim && !bossSim && !golSim) return;
+    if (!sim && !rabSim && !sliSim && !bossSim && !golSim && !gorillaSim) return;
     const now = Date.now();
     p.skillCd = p.skillCd || {};
     if (d.id === 'sweep') {
@@ -834,6 +903,7 @@ io.on('connection', (socket) => {
       if (sliSim) sliSim.playerSkill(p, 'sweep', now);
       if (bossSim) bossSim.playerSkill(p, 'sweep', now);
       if (golSim) golSim.playerSkill(p, 'sweep', now);
+      if (gorillaSim) gorillaSim.playerSkill(p, 'sweep', now);
       return;
     }
     // 내려찍기: 배우고 R 칸에 장착해야 씀. 내 둘레 정사각형 범위(쓴 순간 위치·방향으로 고정)에 DELAY 뒤 피해
@@ -848,6 +918,7 @@ io.on('connection', (socket) => {
     if (sliSim) sliSim.playerSquare(p, now, sq);
     if (bossSim) bossSim.playerSquare(p, now, sq);
     if (golSim) golSim.playerSquare(p, now, sq);
+    if (gorillaSim) gorillaSim.playerSquare(p, now, sq);
   });
 
   // 대쉬 (Q): 이동 자체는 클라이언트가 하고(5m), 서버는 쿨타임(1초)만 확인해서 다른 플레이어에게 이펙트를 알려줌
@@ -976,6 +1047,20 @@ setInterval(() => {
       }
     } catch (e) {
       console.error('슬라임 업데이트 오류:', e);
+    }
+  }
+  if (gorillaSim) {
+    try {
+      gorillaSim.update(dt, now, players, {
+        hurt: hurtPlayer,
+        hit: hitCb('gorilla'),
+        kill: (pid) => { io.to(pid).emit('kill', { msg: '고릴라를 처치했습니다!' }); giveLoot(pid, 'gorilla'); giveExp(pid, 'gorilla'); }
+      });
+      for (const p of players.values()) {
+        if (p.spawned && p.y >= UNDER_Y) io.to(p.id).emit('gor', gorillaSim.snapshot(p.x, p.z));
+      }
+    } catch (e) {
+      console.error('고릴라 업데이트 오류:', e);
     }
   }
   if (bossSim) {
