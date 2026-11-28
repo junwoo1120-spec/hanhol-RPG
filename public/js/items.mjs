@@ -44,8 +44,8 @@ export const ITEMS = {
   golem_core: { name: '골렘 코어', kind: 'material', icon: '🔷', img: '/ui/items/golem_core.png', label: '재료', desc: '골렘의 눈에 박혀 있던 빛나는 보석입니다.' },
   orc_hide: { name: '오크 가죽', kind: 'material', icon: '🟩', img: '/ui/orc_hide.png', label: '재료', desc: '냄새나는 오크 가죽 입니다.' },
   // 무기 장비: 장착하면 손에 드는 무기가 오크 도끼로 바뀌고, 평타·휩쓸기·내려찍기 모션도 도끼 전용이 돼요 (weapon.js 의 MOTION.orc_axe)
-  orc_axe: { name: '오크 도끼', kind: 'gear', slot: 'weapon', weapon: 'orc_axe', dmg: 1.7, stack: false, icon: '🪓', img: '/ui/orc_axe.png', label: '무기', note: '장착하면 들고 있는 무기가<br>오크 도끼로 바뀌어요.<br>공격력이 나무검의 1.7배예요.', desc: '오크가 쓰던 낡은 도끼 입니다.<br>나무검보다 1.7배 강합니다.' },
-  // 제작 무기: 대장간 제작대에서 만들어요 (CRAFT_RECIPES). 장착하면 손에 드는 무기가 돌 검으로 바뀌고, 공격력(평타·스킬 전부)이 dmg 배가 돼요 (돌 검 1.4배, 오크 도끼 1.7배). 공격 속도는 나무검과 같아요
+  orc_axe: { name: '오크 도끼', kind: 'gear', slot: 'weapon', weapon: 'orc_axe', dmg: 2.2, stack: false, icon: '🪓', img: '/ui/orc_axe.png', label: '무기', note: '장착하면 들고 있는 무기가<br>오크 도끼로 바뀌어요.<br>공격력이 나무검의 2.2배예요.', desc: '오크가 쓰던 낡은 도끼 입니다.<br>나무검보다 2.2배 강합니다.' },
+  // 제작 무기: 대장간 제작대에서 만들어요 (CRAFT_RECIPES). 장착하면 손에 드는 무기가 돌 검으로 바뀌고, 공격력(평타·스킬 전부)이 dmg 배가 돼요 (돌 검 1.4배, 오크 도끼 2.2배). 공격 속도는 나무검과 같아요
   stone_sword: { name: '돌 검', kind: 'gear', slot: 'weapon', weapon: 'stone_sword', dmg: 1.4, stack: false, icon: '🗡️', img: '/ui/stone_sword.png', label: '무기', note: '장착하면 들고 있는 무기가<br>돌 검으로 바뀌어요.<br>공격력이 나무검의 1.4배예요.', desc: '단단한 돌을 갈아 만든 검입니다.<br>나무검보다 1.4배 강합니다.' },
   orc_heart: { name: '오크 심장', kind: 'material', icon: '❤️', img: '/ui/orc_heart.png', label: '재료', desc: '오크의 거대한 심장 입니다.<br>어딘가에 쓰일지도 모릅니다...' },
   // 고릴라 전리품 (그림 파일이 없어서 이모지로 보여요. /ui/gorilla_hide.png, /ui/gorilla_skull.png 를 올리고 img 를 추가하면 그림으로 바뀌어요)
