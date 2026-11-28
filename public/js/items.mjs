@@ -47,6 +47,9 @@ export const ITEMS = {
   orc_axe: { name: '오크 도끼', kind: 'gear', slot: 'weapon', weapon: 'orc_axe', dmg: 2.2, stack: false, icon: '🪓', img: '/ui/orc_axe.png', label: '무기', note: '장착하면 들고 있는 무기가<br>오크 도끼로 바뀌어요.<br>공격력이 나무검의 2.2배예요.', desc: '오크가 쓰던 낡은 도끼 입니다.<br>나무검보다 2.2배 강합니다.' },
   // 제작 무기: 대장간 제작대에서 만들어요 (CRAFT_RECIPES). 장착하면 손에 드는 무기가 돌 검으로 바뀌고, 공격력(평타·스킬 전부)이 dmg 배가 돼요 (돌 검 1.4배, 오크 도끼 2.2배). 공격 속도는 나무검과 같아요
   stone_sword: { name: '돌 검', kind: 'gear', slot: 'weapon', weapon: 'stone_sword', dmg: 1.4, stack: false, icon: '🗡️', img: '/ui/stone_sword.png', label: '무기', note: '장착하면 들고 있는 무기가<br>돌 검으로 바뀌어요.<br>공격력이 나무검의 1.4배예요.', desc: '단단한 돌을 갈아 만든 검입니다.<br>나무검보다 1.4배 강합니다.' },
+  // 철 (골렘이 떨어뜨림) · 철검 (대장간 제작: 마정석 300개 + 철 50개). 철검은 돌 검보다 희고 반짝이는 은빛이에요. 공격력 배율 dmg 는 여기서 바꿔요
+  iron: { name: '철', kind: 'material', icon: '🔩', img: '/ui/iron.png', label: '재료', desc: '단단하고 묵직한 철 덩어리입니다.<br>대장간에서 무기를 만들 때 쓰여요.' },
+  iron_sword: { name: '철검', kind: 'gear', slot: 'weapon', weapon: 'iron_sword', dmg: 3, stack: false, icon: '⚔️', img: '/ui/iron_sword.png', label: '무기', note: '장착하면 들고 있는 무기가<br>철검으로 바뀌어요.<br>공격력이 나무검의 3배예요.', desc: '단단한 철을 벼려 만든 검입니다.<br>돌 검보다 희고 반짝입니다.' },
   orc_heart: { name: '오크 심장', kind: 'material', icon: '❤️', img: '/ui/orc_heart.png', label: '재료', desc: '오크의 거대한 심장 입니다.<br>어딘가에 쓰일지도 모릅니다...' },
   // 고릴라 전리품 (그림 파일이 없어서 이모지로 보여요. /ui/gorilla_hide.png, /ui/gorilla_skull.png 를 올리고 img 를 추가하면 그림으로 바뀌어요)
   gorilla_hide: { name: '고릴라의 두꺼운 가죽', kind: 'material', icon: '🟫', label: '재료', desc: '고릴라의 두꺼운 가죽입니다.' },
@@ -61,6 +64,7 @@ export const GEAR_SLOT_NAME = { armor: '갑옷', pants: '바지', weapon: '무�
 export const CRAFT_RECIPES = [
   { id: 'wooden_sword', name: '나무검', icon: '🗡️', craftable: false },
   { id: 'stone_sword', name: '돌 검', result: 'stone_sword', time: 30, craftable: true, mats: [{ id: 'mana_low', n: 5 }, { id: 'rabbit_liver', n: 5 }] },
+  { id: 'iron_sword', name: '철검', result: 'iron_sword', time: 120, craftable: true, mats: [{ id: 'mana_low', n: 300 }, { id: 'iron', n: 50 }] },
 ];
 // ---------- 퀘스트 (마을 이장이 줘요) ----------
 // 메인퀘스트는 main_1 → main_2 → main_3 순서로 이어져요 (prev = 먼저 끝내야 하는 퀘스트).
@@ -141,6 +145,7 @@ export const LOOT = {
   golem: [
     { id: 'mana_low', chance: 1, min: 5, max: 5 },
     { id: 'golem_core', chance: 0.1, min: 1, max: 1 },
+    { id: 'iron', chance: 0.8, min: 1, max: 3 },        // 80% · 1~3개
   ],
   gorilla: [   // 정글 고릴라
     { id: 'gorilla_hide', chance: 1, min: 1, max: 5 },       // 100% · 1~5개
