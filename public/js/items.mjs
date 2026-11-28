@@ -1,7 +1,7 @@
 // 아이템 · 스킬 정보 (서버와 브라우저가 같이 쓰는 파일)
 // 인벤토리 창·스킬 창의 설명 글, 스킬북 드랍 확률, 플레이어 '내려찍기' 수치가 전부 여기 있어요.
 
-export const INV_CAP = 30;                    // 인벤토리 칸 수 (서로 다른 아이템 종류 기준, 같은 아이템은 겹쳐 쌓임)
+export const INV_CAP = Infinity;              // 인벤토리 칸 수: 무제한 (숫자로 바꾸면 그 칸 수까지만 가질 수 있어요. 서로 다른 아이템 종류 기준, 같은 아이템은 겹쳐 쌓임)
 export const BOSS_BOOK_CHANCE = 0.01;         // 보스를 잡을 때 스킬북이 나올 확률 (보스에게 피해를 준 사람마다 따로 굴려요)
 
 // 플레이어가 쓰는 '내려찍기' (오크 대전사의 스킬을 책으로 배운 것)
@@ -44,10 +44,13 @@ export const ITEMS = {
   golem_core: { name: '골렘 코어', kind: 'material', icon: '🔷', img: '/ui/items/golem_core.png', label: '재료', desc: '골렘의 눈에 박혀 있던 빛나는 보석입니다.' },
   orc_hide: { name: '오크 가죽', kind: 'material', icon: '🟩', img: '/ui/orc_hide.png', label: '재료', desc: '냄새나는 오크 가죽 입니다.' },
   // 무기 장비: 장착하면 손에 드는 무기가 오크 도끼로 바뀌고, 평타·휩쓸기·내려찍기 모션도 도끼 전용이 돼요 (weapon.js 의 MOTION.orc_axe)
-  orc_axe: { name: '오크 도끼', kind: 'gear', slot: 'weapon', weapon: 'orc_axe', stack: false, icon: '🪓', img: '/ui/orc_axe.png', label: '무기', note: '장착하면 들고 있는 무기가<br>오크 도끼로 바뀌어요.', desc: '오크가 쓰던 낡은 도끼 입니다.' },
-  // 제작 무기: 대장간 제작대에서 만들어요 (CRAFT_RECIPES). 장착하면 손에 드는 무기가 돌 검으로 바뀌고, 공격력(평타·스킬 전부)이 dmg 배가 돼요. 공격 속도는 나무검과 같아요
-  stone_sword: { name: '돌 검', kind: 'gear', slot: 'weapon', weapon: 'stone_sword', dmg: 2, stack: false, icon: '🗡️', img: '/ui/stone_sword.png', label: '무기', note: '장착하면 들고 있는 무기가<br>돌 검으로 바뀌어요.<br>공격력이 나무검의 2배예요.', desc: '단단한 돌을 갈아 만든 검입니다.<br>나무검보다 두 배 강합니다.' },
+  orc_axe: { name: '오크 도끼', kind: 'gear', slot: 'weapon', weapon: 'orc_axe', dmg: 1.7, stack: false, icon: '🪓', img: '/ui/orc_axe.png', label: '무기', note: '장착하면 들고 있는 무기가<br>오크 도끼로 바뀌어요.<br>공격력이 나무검의 1.7배예요.', desc: '오크가 쓰던 낡은 도끼 입니다.<br>나무검보다 1.7배 강합니다.' },
+  // 제작 무기: 대장간 제작대에서 만들어요 (CRAFT_RECIPES). 장착하면 손에 드는 무기가 돌 검으로 바뀌고, 공격력(평타·스킬 전부)이 dmg 배가 돼요 (돌 검 1.4배, 오크 도끼 1.7배). 공격 속도는 나무검과 같아요
+  stone_sword: { name: '돌 검', kind: 'gear', slot: 'weapon', weapon: 'stone_sword', dmg: 1.4, stack: false, icon: '🗡️', img: '/ui/stone_sword.png', label: '무기', note: '장착하면 들고 있는 무기가<br>돌 검으로 바뀌어요.<br>공격력이 나무검의 1.4배예요.', desc: '단단한 돌을 갈아 만든 검입니다.<br>나무검보다 1.4배 강합니다.' },
   orc_heart: { name: '오크 심장', kind: 'material', icon: '❤️', img: '/ui/orc_heart.png', label: '재료', desc: '오크의 거대한 심장 입니다.<br>어딘가에 쓰일지도 모릅니다...' },
+  // 고릴라 전리품 (그림 파일이 없어서 이모지로 보여요. /ui/gorilla_hide.png, /ui/gorilla_skull.png 를 올리고 img 를 추가하면 그림으로 바뀌어요)
+  gorilla_hide: { name: '고릴라의 두꺼운 가죽', kind: 'material', icon: '🟫', label: '재료', desc: '고릴라의 두꺼운 가죽입니다.' },
+  gorilla_skull: { name: '고릴라의 두개골', kind: 'material', icon: '💀', label: '재료', desc: '고릴라의 단단한 두개골 입니다.' },
   goblin_armor: { name: '고블린 갑옷', kind: 'gear', slot: 'armor', hp: 5, stack: false, icon: '🦺', img: '/ui/items/goblin_armor.png', label: '갑옷', desc: '고블린이 입던 갑옷 입니다.<br>더럽습니다.' },
   goblin_pants: { name: '고블린 바지', kind: 'gear', slot: 'pants', hp: 5, stack: false, icon: '👖', img: '/ui/items/goblin_pants.png', label: '바지', desc: '고블린이 입던 바지 입니다.<br>더럽습니다.' },
 };
@@ -138,6 +141,10 @@ export const LOOT = {
   golem: [
     { id: 'mana_low', chance: 1, min: 5, max: 5 },
     { id: 'golem_core', chance: 0.1, min: 1, max: 1 },
+  ],
+  gorilla: [   // 정글 고릴라
+    { id: 'gorilla_hide', chance: 1, min: 1, max: 5 },       // 100% · 1~5개
+    { id: 'gorilla_skull', chance: 0.5, min: 1, max: 1 },    // 50%
   ],
   boss: [   // 오크 대전사: 피해를 준 사람마다 각자 받아요
     { id: 'mana_low', chance: 1, min: 10, max: 15 },
