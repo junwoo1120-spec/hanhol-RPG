@@ -16,7 +16,7 @@ import { createStatusUI } from './status-ui.js';
 import { createVillageChief } from './npc.js';
 import { createAuth, clearToken } from './auth.js';
 import { createSeaLife } from './sea-life.js';
-import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, CRAFT_RECIPES, QUEST_DEFS, CHIEF_TALK, lootText } from './items.mjs';
+import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, CRAFT_RECIPES, QUEST_DEFS, CHIEF_TALK, lootText } from './items.mjs?v=9';   // ?v= : 브라우저에 남은 예전 items.mjs 를 안 쓰게 (items.mjs 를 고치면 숫자를 올려요)
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
@@ -1147,7 +1147,7 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
 .crit-pop b{display:block;font-size:14px;letter-spacing:1px;color:#fff1b8;text-shadow:-1px 0 #4a1000,1px 0 #4a1000,0 -1px #4a1000,0 1px #4a1000}
 .crit-pop span{display:block;font-size:32px;color:#ff5a1f;text-shadow:-2px 0 #4a1000,2px 0 #4a1000,0 -2px #4a1000,0 2px #4a1000,-2px -2px #4a1000,2px 2px #4a1000,-2px 2px #4a1000,2px -2px #4a1000,0 0 14px rgba(255,140,40,.9)}`;
   document.head.appendChild(critCss);
-  const CRIT_HEAD = { rabbit: 1.9, goblin: 2.3, slime: 1.0, golem: 3.6, boss: 4.6 };   // 몬스터 머리 높이 (발 기준, m)
+  const CRIT_HEAD = { rabbit: 1.9, goblin: 2.3, slime: 1.0, golem: 3.6, gorilla: 3.0, boss: 4.6 };   // 몬스터 머리 높이 (발 기준, m)
   const CRIT_LIFE = 0.95;                                                              // 글씨가 떠 있는 시간(초)
   const critPops = [];
   const _cv = new THREE.Vector3();
@@ -1425,7 +1425,7 @@ function boot(socket, { id, seed, spawn, level: initLevel, exp: initExp, expMax:
       return di >= 0 ? doorAction(di) : null;
     }
     if (Math.hypot(me.x - CHIEF.x, me.z - CHIEF.z) < 3.2 && Math.abs(me.y - chief.group.position.y) < 3) {   // 마을 이장 옆: 대화
-      return { text: '이장과 대화', x: CHIEF.x, y: chief.group.position.y + 2.5, z: CHIEF.z, run: openChiefTalk };
+      return { text: '이장과 대화', x: CHIEF.x, y: chief.group.position.y + 3.4, z: CHIEF.z, run: openChiefTalk };
     }
     const di = nearestDoor(me.x, me.z, me.y);
     if (di >= 0) return doorAction(di);
@@ -1876,7 +1876,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .uwb-grid{position:absolute;display:grid;gap:4px}
 .uwb-eq{position:absolute}
 .uwb-lb{position:absolute;width:160px;margin-left:-80px;text-align:center;font-size:24px;font-weight:700;color:#2a1a0c}
-.uwb-detail{position:absolute;left:840px;top:270px;width:560px;height:520px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;font-size:30px;line-height:1.9;color:#5a4328}
+.uwb-detail{position:absolute;left:840px;top:255px;width:560px;height:555px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;font-size:30px;line-height:1.9;color:#5a4328}
 .uwb-orn{font-size:34px;color:rgba(90,60,28,.5);line-height:1}
 .uwb-x{position:absolute;left:1380px;top:146px;width:52px;height:48px;font-size:40px;line-height:48px;text-align:center;cursor:pointer;color:#3a2814}
 .uwb-x:hover{color:#000}
@@ -1884,12 +1884,12 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 .uw-node.sel{stroke:#ffd77a}
 .uw-slot{position:relative}
 .uw-slot .ic{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:54px;line-height:1;pointer-events:none}
-.uw-slot .ic small{font-size:16px;margin-top:4px;font-weight:700;color:#f1dfb6;text-shadow:0 1px 0 #000,0 0 3px #000}
-.uw-slot .cnt{position:absolute;right:8px;bottom:4px;font-size:22px;font-weight:700;color:#fff;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000;pointer-events:none}
-.uwb-dt{font-size:44px;font-weight:800;color:#2a1a0c;line-height:1.3}
-.uwb-dsc{font-size:22px;line-height:1.5;color:#4a3720}
+.uw-slot .ic small{font-size:19px;margin-top:2px;font-weight:700;color:#f1dfb6;text-shadow:0 1px 0 #000,0 0 3px #000}
+.uw-slot .cnt{position:absolute;right:7px;bottom:3px;font-size:28px;font-weight:700;color:#fff;text-shadow:-1px 0 #000,1px 0 #000,0 -1px #000,0 1px #000;pointer-events:none}
+.uwb-dt{font-size:50px;font-weight:800;color:#2a1a0c;line-height:1.3}
+.uwb-dsc{font-size:26px;line-height:1.45;color:#4a3720}
 .uwb-dsc b{color:#8a2a14}
-.uwb-btn{display:inline-block;margin-top:6px;padding:8px 38px;font-size:30px;font-weight:700;color:#f1dfb6;background:#5a3b1c;border:3px solid #2a1a0c;border-radius:6px;cursor:pointer;box-shadow:0 3px 0 #2a1a0c}
+.uwb-btn{display:inline-block;margin-top:6px;padding:10px 44px;font-size:36px;font-weight:700;color:#f1dfb6;background:#5a3b1c;border:3px solid #2a1a0c;border-radius:6px;cursor:pointer;box-shadow:0 3px 0 #2a1a0c}
 .uwb-btn:hover{filter:brightness(1.2)}
 .uwb-btn.off{background:#7a7468;color:#c8c0b0;cursor:default;box-shadow:none}
 `;
@@ -1919,12 +1919,12 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
   const itemSlot = (e) => {
     const it = e && e.it, def = it && ITEMS[it.id];
     return '<div class="uw-slot' + (e && winSel.inv === e.i ? ' sel' : '') + '"' + (e ? ' data-inv="' + e.i + '"' : '') + '>' +
-      (def ? '<div class="ic">' + iconHtml(def, 66) + '<small>' + (def.label || '아이템') + '</small></div>' + (it.n > 1 ? '<span class="cnt">' + it.n + '</span>' : '') : '') + '</div>';
+      (def ? '<div class="ic">' + iconHtml(def, 80) + '<small>' + (def.label || '아이템') + '</small></div>' + (it.n > 1 ? '<span class="cnt">' + it.n + '</span>' : '') : '') + '</div>';
   };
-  const wInv = () => { const list = tabList(); return wHead(138, 158, winIdx === 1 ? '보관 장비' : '인벤토리') +
-    '<div class="uwb-grid" style="' + at(147, 249, 581, 551) + ';grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(5,1fr)">' + Array.from({ length: 30 }, (_, k) => itemSlot(list[k])).join('') + '</div>' +
+  const wInv = () => { const list = tabList(), rows = Math.max(5, Math.ceil(list.length / 6)); return wHead(138, 158, winIdx === 1 ? '보관 장비' : '인벤토리') +   // 인벤토리는 무제한: 30칸이 넘으면 줄이 늘어나고 위아래로 스크롤돼요
+    '<div class="uwb-grid" style="' + at(147, 249, 581, 551) + ';grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(' + rows + ',107px);overflow-y:auto;overflow-x:hidden;align-content:start;scrollbar-width:thin;scrollbar-color:#8a6a3a transparent">' + Array.from({ length: rows * 6 }, (_, k) => itemSlot(list[k])).join('') + '</div>' +
     '<img src="/ui/icon_bag.png" alt="" style="position:absolute;left:153px;top:831px;width:40px;height:40px;object-fit:contain;filter:sepia(.7) brightness(.45)">' +
-    '<div style="position:absolute;left:205px;top:832px;font-size:30px;font-weight:700">' + invItems.length + ' / ' + INV_CAP + '</div>'; };
+    '<div style="position:absolute;left:205px;top:832px;font-size:30px;font-weight:700">' + invItems.length + ' / ∞</div>'; };
   const invDetail = () => {
     if (winSel.inv < 0) return '아이템을 선택하면<br>상세 정보가 표시됩니다.';
     const it = invItems[winSel.inv], def = it && ITEMS[it.id];
@@ -1937,10 +1937,10 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (def.kind === 'gear') {
       const worn = gearEq[def.slot] ? ITEMS[gearEq[def.slot]] : null;
       btn = '<div class="uwb-dsc" style="color:#2a6a2a">' + (def.hp ? '최대 체력 +' + def.hp : (def.note || '')) + '</div>' +
-        (worn ? '<div class="uwb-dsc" style="color:#7a5a30;font-size:18px">(지금 입은 ' + worn.name + '과(와) 서로 바뀌어요)</div>' : '') +
+        (worn ? '<div class="uwb-dsc" style="color:#7a5a30;font-size:22px">(지금 입은 ' + worn.name + '과(와) 서로 바뀌어요)</div>' : '') +
         '<div class="uwb-btn" data-act="wear" data-id="' + it.id + '">장착</div>';
     }
-    return '<div class="uwb-dt">' + iconHtml(def, 74) + '<br>' + def.name + (it.n > 1 ? ' ×' + it.n : '') + '</div><div class="uwb-dsc">' + def.desc + '</div>' + btn;
+    return '<div class="uwb-dt">' + iconHtml(def, 104) + '<br>' + def.name + (it.n > 1 ? ' ×' + it.n : '') + '</div><div class="uwb-dsc">' + def.desc + '</div>' + btn;
   };
   const skillList = () => ['sweep', ...learnedSk.filter((id) => SKILL_INFO[id] && id !== 'sweep')];
   const wSkillGrid = () => {
@@ -1967,7 +1967,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     const sl = (img, x, y, w, h, lx, ly, name, key) => {
       const worn = key && gearEq[key] ? ITEMS[gearEq[key]] : null;
       return '<div class="uw-slot uwb-eq" ' + (worn ? 'data-eq="' + key + '" title="누르면 벗어요" ' : '') + 'style="' + at(x, y, w, h) + ';background-image:url(/ui/' + img + '.png)">' +
-        (worn ? '<div class="ic">' + iconHtml(worn, 84) + '<small>' + (worn.hp ? '+' + worn.hp + ' 체력' : worn.name) + '</small></div>' : '') + '</div>' +
+        (worn ? '<div class="ic">' + iconHtml(worn, 92) + '<small>' + (worn.hp ? '+' + worn.hp + ' 체력' : worn.name) + '</small></div>' : '') + '</div>' +
       '<div class="uwb-lb" style="left:' + lx + 'px;top:' + ly + 'px">' + name + '</div>';
     };
     return wHead(820, 152, '장비') +
@@ -1975,8 +1975,8 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       sl('slot_head', 1043, 252, 112, 107, 1099, 363, '투구') +
       sl('slot_armor', 858, 426, 118, 118, 917, 548, '갑옷', 'armor') +
       sl('slot_weapon', 1225, 426, 119, 118, 1284, 548, '무기', 'weapon') +
-      sl('slot_pants', 1038, 626, 121, 121, 1099, 752, '바지', 'pants') +
-      '<div style="position:absolute;left:820px;top:840px;width:560px;text-align:center;font-size:22px;color:#6a4a28">장비 아이템을 누르면 입고, 입은 장비를 누르면 벗어요</div>';
+      sl('slot_boots', 1038, 626, 121, 121, 1099, 752, '바지', 'pants') +
+      '<div style="position:absolute;left:820px;top:840px;width:560px;text-align:center;font-size:26px;color:#6a4a28">장비 아이템을 누르면 입고, 입은 장비를 누르면 벗어요</div>';
   };
   const wTree = () => {
     const cx = 290, cy = 275, R = 185;
@@ -2004,6 +2004,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     st.style.transform = 'scale(' + (Math.min(window.innerWidth / 1536, window.innerHeight / 1024) * 0.98) + ')';
   }
   window.addEventListener('resize', fitWin);
+  let gridTab = -1;
   function renderWin() {
     let h = '<div class="uwb-stage">';
     WIN_TABS.forEach(([ti, tn], k) => {
@@ -2011,7 +2012,11 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       h += '<div class="uwb-tab' + (on ? ' on' : '') + '" data-tab="' + k + '" style="' + at(x, on ? 35 : y, w, on ? 92 : hh) + '"><img src="' + ti + '" alt="">' + tn + '</div>';
     });
     h += winBody(winIdx) + '<div class="uwb-x" data-close="1">✕</div></div>';
+    const g0 = winEl.querySelector('.uwb-grid'), keepScroll = g0 && gridTab === winIdx ? g0.scrollTop : 0;   // 칸을 눌러 다시 그려도 스크롤 위치 유지 (탭을 바꾸면 맨 위로)
+    gridTab = winIdx;
     winEl.innerHTML = h;
+    const g1 = winEl.querySelector('.uwb-grid');
+    if (g1) g1.scrollTop = keepScroll;
     fitWin();
   }
 
@@ -2193,7 +2198,7 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     ['DEX', '민첩', '이동 속도 +0.2% (만렙 총 495포인트면 +100%)', 'dex'],
     ['CON', '체력', '최대 HP +10', 'con'],
     ['INT', '지능', '최대 MP +6', 'int'],
-    ['LUK', '운', '치명타 피해 +2%, 아이템 획득 확률 +0.6% (최대 +100%)', 'luk'],
+    ['LUK', '운', '치명타 피해 +2%, 아이템 획득 확률 포인트당 약 +0.34% (전부 찍으면 3배: 1% → 3%)', 'luk'],
     ['AGI', '공속/치명', '공격 속도 +0.8% (최대 +50%), 치명타 확률 +0.8% (최대 50%)', 'agi']
   ];
   const pc = (x, d = 1) => (Math.round(x * 100 * Math.pow(10, d)) / Math.pow(10, d)) + '%';
@@ -2405,29 +2410,29 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
 @keyframes tqBar{from{transform:scaleX(1)}to{transform:scaleX(0)}}
 body.tw-open .toast{z-index:90}
 .tw{position:fixed;inset:0;z-index:62;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);font-family:'Galmuri11','Malgun Gothic',sans-serif;color:#f1e6c8}
-.tw-box{width:min(96vw,580px);max-height:96vh;overflow:auto;box-sizing:border-box;padding:10px 12px 12px;border:2px solid #9a7a3e;border-radius:6px;background:linear-gradient(#26221c,#14120f);box-shadow:0 0 0 2px #070605,0 10px 30px rgba(0,0,0,.75)}
+.tw-box{width:min(98vw,700px);max-height:96vh;overflow:auto;box-sizing:border-box;padding:10px 12px 12px;border:2px solid #9a7a3e;border-radius:6px;background:linear-gradient(#26221c,#14120f);box-shadow:0 0 0 2px #070605,0 10px 30px rgba(0,0,0,.75)}
 .tw-hd{display:flex;align-items:center;gap:8px}.tw-hd h2{flex:1;margin:0;font-size:20px;color:#ffd96a}
 .tw-x{cursor:pointer;padding:2px 10px;font-size:20px;color:#d9b25c}
 .tw-offers{display:flex;gap:8px;margin-top:8px}
 .tw-side{flex:1;min-width:0;border:1px solid #6b5630;border-radius:4px;background:#0c0b09;padding:6px}
 .tw-side.ok{border-color:#5fbf63;box-shadow:0 0 8px #3f9f4388}
-.tw-name{font-size:13px;color:#d9b25c;display:flex;justify-content:space-between;gap:4px}.tw-name em{font-style:normal;color:#7ee081}
-.tw-grid{display:flex;flex-wrap:wrap;gap:4px;min-height:58px;margin-top:5px;align-content:flex-start}
-.tw-slot{position:relative;width:54px;height:54px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border:2px solid #4a3d24;border-radius:4px;background:#1b1812;cursor:pointer}
+.tw-name{font-size:16px;color:#d9b25c;display:flex;justify-content:space-between;gap:4px}.tw-name em{font-style:normal;color:#7ee081}
+.tw-grid{display:flex;flex-wrap:wrap;gap:5px;min-height:76px;margin-top:5px;align-content:flex-start}
+.tw-slot{position:relative;width:70px;height:70px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border:2px solid #4a3d24;border-radius:4px;background:#1b1812;cursor:pointer}
 .tw-slot.on{border-color:#5fbf63}.tw-slot.sel{border-color:#ffd96a;box-shadow:0 0 6px #ffd96a99}
-.tw-n{position:absolute;right:2px;bottom:0;font-size:13px;font-weight:700;color:#fff;text-shadow:0 0 3px #000,0 0 3px #000}
-.tw-count{margin:8px 0 4px;text-align:center;font-size:15px;min-height:20px;color:#ffe9a8}
+.tw-n{position:absolute;right:3px;bottom:0;font-size:17px;font-weight:700;color:#fff;text-shadow:0 0 3px #000,0 0 3px #000}
+.tw-count{margin:8px 0 4px;text-align:center;font-size:18px;min-height:20px;color:#ffe9a8}
 .tw-tabs{display:flex;gap:4px;margin-top:4px}
-.tw-tabs button{flex:1;padding:6px 0;font:700 14px 'Galmuri11','Malgun Gothic',sans-serif;color:#cdbb8b;border:2px solid #4a3d24;border-radius:4px 4px 0 0;background:#1b1812;cursor:pointer}
+.tw-tabs button{flex:1;padding:8px 0;font:700 17px 'Galmuri11','Malgun Gothic',sans-serif;color:#cdbb8b;border:2px solid #4a3d24;border-radius:4px 4px 0 0;background:#1b1812;cursor:pointer}
 .tw-tabs button.on{color:#fff;border-color:#9a7a3e;background:#3a2e1a}
-.tw-inv{display:flex;flex-wrap:wrap;gap:4px;align-content:flex-start;height:132px;overflow-y:auto;padding:6px;border:1px solid #6b5630;background:#0c0b09}
+.tw-inv{display:flex;flex-wrap:wrap;gap:5px;align-content:flex-start;height:190px;overflow-y:auto;padding:6px;border:1px solid #6b5630;background:#0c0b09}
 .tw-empty,.tw-pick-empty{color:#8f8466;font-size:13px;padding:8px}
 .tw-pick{margin-top:6px;min-height:74px;padding:6px 8px;border:1px solid #6b5630;border-radius:4px;background:#14110c}
-.tw-pick-hd{display:flex;gap:8px;align-items:center;font-size:14px}.tw-pick-hd b{color:#ffd96a}.tw-desc{font-size:12px;color:#b9ad8a;margin-top:2px;line-height:1.35}
+.tw-pick-hd{display:flex;gap:10px;align-items:center;font-size:18px}.tw-pick-hd b{color:#ffd96a}.tw-desc{font-size:15px;color:#b9ad8a;margin-top:2px;line-height:1.35}
 .tw-step{display:flex;align-items:center;gap:5px;margin-top:6px;flex-wrap:wrap}
-.tw-step button{min-width:34px;padding:5px 8px;font:700 15px 'Galmuri11','Malgun Gothic',sans-serif;color:#f1dfb6;border:2px solid #9a7a3e;border-radius:4px;background:linear-gradient(#4a3a24,#2e2416);cursor:pointer}
-.tw-step input{width:58px;padding:5px 2px;text-align:center;font:700 15px 'Galmuri11','Malgun Gothic',sans-serif;color:#fff;background:#0c0b09;border:2px solid #6b5630;border-radius:4px}
-.tw-step span{font-size:12px;color:#9c9174}
+.tw-step button{min-width:42px;padding:7px 10px;font:700 19px 'Galmuri11','Malgun Gothic',sans-serif;color:#f1dfb6;border:2px solid #9a7a3e;border-radius:4px;background:linear-gradient(#4a3a24,#2e2416);cursor:pointer}
+.tw-step input{width:70px;padding:7px 2px;text-align:center;font:700 19px 'Galmuri11','Malgun Gothic',sans-serif;color:#fff;background:#0c0b09;border:2px solid #6b5630;border-radius:4px}
+.tw-step span{font-size:15px;color:#9c9174}
 .tw-btns{display:flex;gap:8px;margin-top:10px}
 .tw-btns button{flex:1;padding:11px 0;font:700 17px 'Galmuri11','Malgun Gothic',sans-serif;border-radius:4px;cursor:pointer;color:#fff;border:2px solid}
 .tw-acc{border-color:#4f9a52!important;background:linear-gradient(#2f6a33,#1c4220)}.tw-acc.on{border-color:#e0c25a!important;background:linear-gradient(#7a6420,#4a3c10)}
@@ -2470,7 +2475,7 @@ body.tw-open .toast{z-index:90}
   const twKind = (id) => { const k = ITEMS[id].kind; return k === 'gear' ? 'gear' : k === 'skillbook' ? 'book' : 'loot'; };
   const twCnt = (list, id) => { const e = list.find((x) => x.id === id); return e ? e.n : 0; };
   const twAvail = () => { const m = new Map(); for (const it of invItems) if (ITEMS[it.id]) m.set(it.id, (m.get(it.id) || 0) + it.n); return m; };
-  const twSlot = (id, n, cls, attr) => '<div class="tw-slot' + cls + '" ' + attr + '="' + esc(id) + '" title="' + esc(ITEMS[id].name) + '">' + iconHtml(ITEMS[id], 38) + '<span class="tw-n">' + n + '</span></div>';
+  const twSlot = (id, n, cls, attr) => '<div class="tw-slot' + cls + '" ' + attr + '="' + esc(id) + '" title="' + esc(ITEMS[id].name) + '">' + iconHtml(ITEMS[id], 52) + '<span class="tw-n">' + n + '</span></div>';
   function twCountText() {
     const left = twEnd - Date.now();
     if (twEnd && left > 0) return Math.ceil(left / 1000) + '초 후 거래가 완료됩니다...';
@@ -2493,7 +2498,7 @@ body.tw-open .toast{z-index:90}
     let pick = '<div class="tw-pick-empty">아이템을 눌러 올릴 수량을 정하세요</div>';
     if (twSel && ITEMS[twSel.id]) {
       const def = ITEMS[twSel.id], id = twSel.id;
-      const head = (n) => '<div class="tw-pick-hd">' + iconHtml(def, 34) + '<div><b>' + esc(def.name) + '</b>' + (n != null ? ' × ' + n : '') + '<div class="tw-desc">' + (def.desc || '') + '</div></div></div>';
+      const head = (n) => '<div class="tw-pick-hd">' + iconHtml(def, 48) + '<div><b>' + esc(def.name) + '</b>' + (n != null ? ' × ' + n : '') + '<div class="tw-desc">' + (def.desc || '') + '</div></div></div>';
       if (twSel.side === 'them') pick = head(twCnt(twTheirs, id));
       else {
         const cur = twCnt(twMine, id), max = av.get(id) || 0;
@@ -2669,12 +2674,13 @@ body.tw-open .toast{z-index:90}
   function refreshQuests() {
     QUESTS.length = 0;
     let mark = null;
+    const cq = curQuest();   // 이장이 지금 줄 차례인 퀘스트
     for (const id of Object.keys(QUEST_DEFS)) {
       const st = questStatus[id], def = QUEST_DEFS[id];
-      if (!st) { if (questsLoaded && id === CHIEF_QUEST) mark = '!'; continue; }   // 아직 안 받음 → 이장 머리 위 '!'
-      const need = def.goal.n, have = st === 'done' ? need : Math.min(need, haveN(def.goal.item)), ready = st === 'active' && have >= need;
-      if (ready && id === CHIEF_QUEST) mark = '?';                                  // 다 모음 → 이장 머리 위 '?'
-      const goals = [{ text: ITEMS[def.goal.item].name + ' ' + need + '개 구하기', dist: have + ' / ' + need }];
+      if (!st) { if (questsLoaded && id === cq) mark = '!'; continue; }   // 아직 안 받음 → 이장 머리 위 '!'
+      const need = def.goal.n, have = st === 'done' ? need : Math.min(need, gotN(id)), ready = st === 'active' && have >= need;
+      if (ready && id === cq) mark = '?';                                  // 다 모음 → 이장 머리 위 '?'
+      const goals = [{ text: def.goalText || (ITEMS[def.goal.item].name + ' ' + need + '개 구하기'), dist: have + ' / ' + need }];
       if (ready) goals.push({ text: '마을 이장에게 가져다주기', dist: '' });
       QUESTS.push({
         id, title: def.title, status: st, summary: st === 'done' ? '완료했어요' : ready ? '마을 이장에게 가져다주기' : def.summary,
@@ -2765,7 +2771,12 @@ body.tw-open .toast{z-index:90}
 
   // ---------- 이장 대화창 (이장 옆에서 E): 대사가 한 글자씩 나오고, 끝나면 선택지 버튼이 떠요 ----------
   // 대사·선택지 글은 items.mjs 의 CHIEF_TALK, 퀘스트 내용은 QUEST_DEFS. 상태: 처음 → 받기/거절, 진행중(모자람) → 안내, 진행중(다 모음) → 보상 받기, 완료 → 인사
-  const CHIEF_QUEST = 'main_1';
+  // 이장이 지금 줄 차례인 퀘스트: 메인퀘스트 순서(QUEST_DEFS 순서)대로 아직 완료하지 않은 첫 번째 (전부 끝났으면 null)
+  const curQuest = () => Object.keys(QUEST_DEFS).find((id) => questStatus[id] !== 'done') || null;
+  // 퀘스트 진행도: 퀘스트를 받은 '뒤에' 목표 아이템을 얻은 수 (서버가 세서 알려줘요. 이장에게 줘도 아이템은 안 빠져요)
+  let questProg = {};
+  const gotN = (qid) => questProg[qid] || 0;
+  let talkQ = null;   // 지금 대화 중인 퀘스트 id (보상을 받아 다음 퀘스트로 넘어가도 대사가 안 바뀌게 기억해 둬요)
   const talkStyle = document.createElement('style');
   talkStyle.textContent = `
 .ct{position:fixed;left:0;right:0;bottom:0;z-index:61;display:none;justify-content:center;padding:0 10px calc(14px + env(safe-area-inset-bottom,0px));pointer-events:none;font-family:'Galmuri11','Galmuri9','Malgun Gothic',sans-serif;color:#efe4c8;user-select:none;-webkit-user-select:none}
@@ -2789,19 +2800,22 @@ body.tw-open .toast{z-index:90}
   const talkChoices = () => {   // 지금 대화 상태의 선택지: [{ t: 글, a: 동작 }]
     if (talkMode === 'intro') return [{ t: CHIEF_TALK.introChoices[0], a: 'accept' }, { t: CHIEF_TALK.introChoices[1], a: 'decline' }];
     if (talkMode === 'ready') return [{ t: CHIEF_TALK.readyChoice, a: 'complete' }];
+    if (talkMode === 'rewarded' && curQuest()) return [{ t: '이야기 계속 듣기', a: 'next' }, { t: CHIEF_TALK.close, a: 'close' }];   // 다음 퀘스트 이야기로 이어져요
     return [{ t: CHIEF_TALK.close, a: 'close' }];
   };
   function talkText() {
-    const def = QUEST_DEFS[CHIEF_QUEST];
-    if (talkMode === 'intro') return CHIEF_TALK.intro;
-    if (talkMode === 'waiting') return CHIEF_TALK.waiting + '\n(' + ITEMS[def.goal.item].name + ' ' + Math.min(def.goal.n, haveN(def.goal.item)) + ' / ' + def.goal.n + ')';
-    return CHIEF_TALK[talkMode] || '';
+    const def = talkQ && QUEST_DEFS[talkQ], tk = (talkQ && CHIEF_TALK.quests[talkQ]) || {};
+    if (!def) return CHIEF_TALK.done;
+    if (talkMode === 'intro') return tk.intro || CHIEF_TALK.intro;
+    if (talkMode === 'waiting') return (tk.waiting || '') + '\n(' + ITEMS[def.goal.item].name + ' ' + Math.min(def.goal.n, gotN(talkQ)) + ' / ' + def.goal.n + ')';
+    return tk[talkMode] || CHIEF_TALK[talkMode] || '';
   }
   function talkStartMode() {   // 이장에게 말을 걸었을 때 퀘스트 상태에 맞는 첫 대사
-    const st = questStatus[CHIEF_QUEST], def = QUEST_DEFS[CHIEF_QUEST];
+    talkQ = curQuest();
+    if (!talkQ) return 'done';
+    const st = questStatus[talkQ], def = QUEST_DEFS[talkQ];
     if (!st) return 'intro';
-    if (st === 'done') return 'done';
-    return haveN(def.goal.item) >= def.goal.n ? 'ready' : 'waiting';
+    return gotN(talkQ) >= def.goal.n ? 'ready' : 'waiting';
   }
   function renderTalk() {   // 새 대사를 처음부터 한 글자씩 보여줘요
     talkFull = talkText();
@@ -2849,9 +2863,10 @@ body.tw-open .toast{z-index:90}
   function talkAct(a) {   // 선택지 동작
     if (a === 'close') { closeWin(); return; }
     if (a === 'decline') { talkMode = 'declined'; renderTalk(); return; }
+    if (a === 'next') { talkMode = talkStartMode(); renderTalk(); return; }
     if (talkPending) return;   // 서버 답을 기다리는 중
-    if (a === 'accept') { talkPending = 'accept'; socket.emit('quest:accept', { id: CHIEF_QUEST }); }
-    else if (a === 'complete') { talkPending = 'complete'; socket.emit('quest:complete', { id: CHIEF_QUEST }); }
+    if (a === 'accept') { talkPending = 'accept'; socket.emit('quest:accept', { id: talkQ }); }
+    else if (a === 'complete') { talkPending = 'complete'; socket.emit('quest:complete', { id: talkQ }); }
   }
   talkEl.addEventListener('click', (e) => {
     const t = e.target;
@@ -2875,6 +2890,7 @@ body.tw-open .toast{z-index:90}
     if (d.ok) { if (talkOn && talkPending === d.act) { talkMode = d.act === 'accept' ? 'accepted' : 'rewarded'; renderTalk(); } }
     else { if (d.msg) toast(d.msg); if (talkOn && talkPending === d.act) { talkPending = ''; talkMode = talkStartMode(); renderTalk(); } }
   });
+  socket.on('qprog', (d) => { questProg = d && typeof d === 'object' ? d : {}; refreshQuests(); });
   socket.on('quests', (d) => { questStatus = d && typeof d === 'object' ? d : {}; questsLoaded = true; refreshQuests(); });
 
   // ---------- 대장간 무기 제작 창 (제작대에서 E): 제작 목록 → 돌 검 → 필요 재료 → 제작하기(30초) → 수령하기 ----------
@@ -3317,6 +3333,21 @@ body.tw-open .toast{z-index:90}
     if (slimes) slimes.onSnapshot(lastSli);
   });
 
+  // ---------- 고릴라 (정글, 사람을 보면 가슴을 두드린 뒤 네 발로 달려옴) ----------
+  // gorilla.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
+  let gorillas = null;
+  let lastGor = [];
+  import('./gorilla.mjs')
+    .then((m) => {
+      gorillas = m.createGorillaWorld({ scene, camera, T, WATER_LEVEL });
+      gorillas.onSnapshot(lastGor);
+    })
+    .catch((err) => console.error('고릴라 로드 실패:', err));
+  socket.on('gor', (list) => {
+    lastGor = Array.isArray(list) ? list : [];
+    if (gorillas) gorillas.onSnapshot(lastGor);
+  });
+
   // ---------- 보스 오크 대전사 + 보스 터(어두운 흙, 뼈) + 화면 위 체력바 ----------
   // boss.mjs 를 못 불러와도 게임 자체는 그대로 돌아가요.
   let boss = null;
@@ -3495,6 +3526,7 @@ body.tw-open .toast{z-index:90}
     setOutfit(myAvatar, { armor: !!gearEq.armor, pants: !!gearEq.pants });   // 입은 옷이 내 캐릭터에 보임
     setWeaponKind(myRig, (gearEq.weapon && ITEMS[gearEq.weapon] && ITEMS[gearEq.weapon].weapon) || 'wooden_sword');   // 장착한 무기(오크 도끼·돌 검)가 손에 보임
     if (winOpenNow()) renderWin();
+    refreshQuests();   // 돌 검 같은 장비를 입고 벗을 때도 퀘스트 진행(가진 걸로 침)을 다시 계산
   });
   // 몬스터를 잡으면 화면 아래 UI 바로 위에 '토끼 가죽x2를 획득했습니다.' 처럼 뜸 (여러 개면 줄줄이, 3초 뒤 사라짐)
   const lootBox = document.createElement('div');
@@ -3511,10 +3543,10 @@ body.tw-open .toast{z-index:90}
       const idef = ITEMS[it.id];
       const nameEl = document.createElement('span');   // 아이템 이름은 크게, 나머지("x2를 획득했습니다.")는 작게
       nameEl.textContent = idef.name;
-      nameEl.style.cssText = 'font-size:' + (touchMode ? 20 : 26) + 'px;font-weight:800;color:#ffe9a0;text-shadow:0 1px 3px #000';
+      nameEl.style.cssText = 'font-size:' + (touchMode ? 24 : 30) + 'px;font-weight:800;color:#ffe9a0;text-shadow:0 1px 3px #000';
       const restEl = document.createElement('span');
       restEl.textContent = text.slice(idef.name.length);
-      restEl.style.cssText = 'font-size:' + (touchMode ? 13 : 16) + 'px;font-weight:600';
+      restEl.style.cssText = 'font-size:' + (touchMode ? 16 : 20) + 'px;font-weight:600';
       line.append(nameEl, restEl);
       line.style.cssText = 'padding:6px 18px;border-radius:16px;background:rgba(20,14,38,.9);color:#f6e3a1;border:1px solid #d9b25c;font-family:sans-serif;opacity:0;transition:opacity .25s;white-space:nowrap';
       lootBox.appendChild(line);
@@ -3905,6 +3937,9 @@ body.tw-open .toast{z-index:90}
     }
     if (slimes) {
       try { slimes.update(dt); } catch (err) { console.error('슬라임 오류 (슬라임만 끕니다):', err); slimes = null; }
+    }
+    if (gorillas) {
+      try { gorillas.update(dt); } catch (err) { console.error('고릴라 오류 (고릴라만 끕니다):', err); gorillas = null; }
     }
     if (boss) {
       try { boss.update(dt, me); } catch (err) { console.error('보스 오류 (보스만 끕니다):', err); boss = null; }
