@@ -69,7 +69,7 @@ const COL = {
   nail: '#9a9a9a'
 };
 
-function buildSwordGeometry(pal = COL, S = SWORD, stone = false) {   // pal = 색, S = 날 크기, stone = 돌 느낌(날을 잘게 나눠 점마다 색을 불규칙하게 + 끝이 뾰족 + 이음선·못 없음)
+function buildSwordGeometry(pal = COL, S = SWORD, stone = false, smooth = false) {   // pal = 색, S = 날 크기, stone = 돌 느낌(날을 잘게 나눠 점마다 색을 불규칙하게 + 끝이 뾰족 + 이음선·못 없음), smooth = true 면 색 얼룩 없이 매끈하게(철검)
   const pos = [];
   const col = [];
   const c = new THREE.Color();
@@ -143,7 +143,7 @@ function buildSwordGeometry(pal = COL, S = SWORD, stone = false) {   // pal = �
     for (const dy of [0.0, 0.03, 0.06]) box(0, y0 + 0.02 + dy, 0, hw * 2 + 0.012, 0.018, t + 0.014, pal.cord);
     const hash = (x, y, z) => { const v = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453; return v - Math.floor(v); };
     for (let i = 0; i < pos.length; i += 3) {   // 점마다 밝기를 불규칙하게: 거친 돌 느낌
-      const h = hash(Math.round(pos[i] * 160), Math.round(pos[i + 1] * 160), Math.round(pos[i + 2] * 160)), m = 0.80 + h * 0.34;
+      const h = hash(Math.round(pos[i] * 160), Math.round(pos[i + 1] * 160), Math.round(pos[i + 2] * 160)), m = smooth ? 1 : 0.80 + h * 0.34;
       col[i] *= m; col[i + 1] *= m; col[i + 2] *= m;
     }
   } else for (const ny of [0.20, 0.33, 0.41]) box(0.022, y0 + ny, 0.0125, 0.011, 0.011, 0.011, pal.nail);
@@ -164,6 +164,16 @@ const STONE_COL = {
   grip: '#6e4d2e', band: '#2f2113',
   pommel: '#3d4046', pommelTop: '#5f636b',
   nail: '#c9c9c9', cord: '#8a6b3f'
+};
+
+// 철검: 돌 검과 같은 굵고 뾰족한 모양이지만 더 하얀 은빛 + 매끈한 날 + 반짝이는 광택 재질
+const IRON_SWORD = { bladeBase: 0.10, bladeLen: 0.64, bladeHalfW: 0.056, bladeThick: 0.036, tipCut: 0.10 };
+const IRON_COL = {
+  edge: '#f4f7fb', ridge: '#b9c2cf', seamDark: 1,
+  guard: '#7f8b9a', guardTop: '#c7d0db',
+  grip: '#4d3a2b', band: '#241812',
+  pommel: '#76818f', pommelTop: '#c2cbd6',
+  nail: '#e6eaf0', cord: '#8b6b45'
 };
 
 // 공유 리소스 (처음 쓸 때 한 번만 생성)
@@ -298,9 +308,16 @@ function sharedStoneSword() {
   return sharedStone;
 }
 
+let sharedIron = null;
+function sharedIronSword() {   // 철검: Phong 재질이라 빛을 받으면 날이 반짝여요
+  if (!sharedIron) sharedIron = { geo: buildSwordGeometry(IRON_COL, IRON_SWORD, true, true), mat: new THREE.MeshPhongMaterial({ vertexColors: true, side: THREE.DoubleSide, specular: 0xffffff, shininess: 120, emissive: 0x1a1e24 }) };
+  return sharedIron;
+}
+
 // 무기 종류 표 (나중에 무기를 더할 때 여기에 추가)
 const WEAPONS = {
   wooden_sword: { build: sharedSword, grip: GRIP },
+  iron_sword: { build: sharedIronSword, grip: GRIP },   // 철검 (대장간 제작 장비). 모션은 나무검과 같음
   stone_sword: { build: sharedStoneSword, grip: GRIP },   // 돌 검 (대장간 제작 장비). 모션은 나무검과 같음(공격 속도 동일)
   orc_axe: { build: sharedAxe, grip: GRIP }   // 오크 도끼 (보스 드랍 장비). 모션은 아래 MOTION 표
 };
@@ -379,6 +396,7 @@ const MOTION = {
     slam: AXE.slam
   }
 };
+MOTION.iron_sword = MOTION.wooden_sword;   // 철검도 나무검과 같은 모션·같은 공격 속도
 MOTION.stone_sword = MOTION.wooden_sword;   // 돌 검은 나무검과 같은 모션·같은 공격 속도
 const motionOf = (wp) => MOTION[wp.kind] || MOTION[DEFAULT_WEAPON];
 const PROC_UPPER_Z = 0.61;   // 코드 캐릭터(fallback)는 팔이 곧게 내려가 있어서 GLB(A자 팔)보다 이만큼 덜 모음
