@@ -146,8 +146,11 @@ const MOB_EXP_MULT = { boss: 4 };                                          // �
 const mobBaseExp = (type) => (10 + 5 * MOB_LV[type]) * (MOB_EXP_MULT[type] || 1);   // 같은 레벨일 때 주는 경험치
 // 내 레벨(plv)로 type 몬스터를 잡았을 때 받는 경험치
 //  - 위 몬스터: 레벨 차이 1당 +5%(최대 +25%) / 아래 몬스터: 레벨 차이 1당 -15%, 6 이상 낮으면 0
-//  - 아무리 센 몬스터여도 잡으면 경험치·전리품을 받아요 (레벨 차이로 막지 않음)
-const canReward = () => true;
+//  - 몬스터 단계(레벨 낮은 순: 토끼 → 고블린 → 슬라임 → 골렘 → 오크 → 고릴라)로 따져서, 내 단계보다 두 단계 이상 강한 몬스터는 경험치·전리품 모두 없음
+//    (내 단계 = 내 레벨 이하인 몬스터 중 가장 강한 몬스터. 예: 1레벨은 토끼 단계라서 고블린까지만 보상, 슬라임은 0)
+const MOB_TIERS = ['rabbit', 'goblin', 'slime', 'golem', 'boss', 'gorilla'];
+const playerTier = (plv) => { let k = 0; for (let i = 0; i < MOB_TIERS.length; i++) if (MOB_LV[MOB_TIERS[i]] <= plv) k = i; return k; };
+const canReward = (plv, type) => !MOB_LV[type] || MOB_TIERS.indexOf(type) - playerTier(plv) < 2;   // 두 단계 이상 강하면 보상 없음 (보스 포함)
 const expReward = (plv, type) => {
   const mlv = MOB_LV[type];
   if (!mlv || !canReward(plv, type)) return 0;
@@ -241,7 +244,7 @@ const STAT = {
   DEX_MOVE: 1 / (5 * (MAX_LEVEL - 1)), MOVE_MAX: 1.0,   // DEX: 이동 속도 — 만렙(100레벨)의 총 495포인트를 전부 찍으면 정확히 +100% (포인트당 약 +0.2%)
   CON_HP: 10,                       // CON: 최대 HP +10
   INT_MP: 6, MP_BASE: 50,           // INT: 최대 MP +6 (기본 50)
-  LUK_CRITDMG: 0.02, CRITDMG_BASE: 1.5, LUK_DROP: 2 / (6 * (MAX_LEVEL - 1)), DROP_MAX: 2.0,   // LUK: 치명타 피해 +2%(기본 150%), 아이템 획득 확률: 만렙까지 받는 포인트(6×99)를 전부 LUK 에 찍어야 +200%(3배, 1% → 3%)
+  LUK_CRITDMG: 0.02 * 2 / 3, CRITDMG_BASE: 1.5 * 2 / 3, LUK_DROP: 2 / (6 * (MAX_LEVEL - 1)), DROP_MAX: 2.0,   // LUK: 치명타 피해 +1.33%(기본 100% = 예전 150%의 2/3), 아이템 획득 확률: 만렙까지 받는 포인트(6×99)를 전부 LUK 에 찍어야 +200%(3배, 1% → 3%)
   AGI_ASPD: 0.008, ASPD_MAX: 0.5,   // AGI: 공격 속도 +0.8% (최대 +50%)
   AGI_CRIT: 0.008, CRIT_MAX: 0.5    // AGI: 치명타 확률 +0.8% (최대 50%)
 };
@@ -256,7 +259,7 @@ const weaponMul = (p) => (ITEMS_MOD && ITEMS_MOD.weaponDmg ? ITEMS_MOD.weaponDmg
 function applyStats(p) {
   fitStats(p);
   const s = p.stats;
-  p.dmgMult = (p.devDmg || 1) * (1 + STAT.STR_DMG * s.str) * weaponMul(p);   // 개발자 도구 배율 × STR × 들고 있는 무기 배율(돌 검 1.4배, 오크 도끼 2.2배)
+  p.dmgMult = (p.devDmg || 1) * (1 + STAT.STR_DMG * s.str) * weaponMul(p);   // 개발자 도구 배율 × STR × 들고 있는 무기 배율(돌 검 1.4배, 오크 도끼 2.2배, 철검 3배)
   p.critChance = Math.min(STAT.CRIT_MAX, STAT.AGI_CRIT * s.agi);
   p.critDmg = STAT.CRITDMG_BASE + STAT.LUK_CRITDMG * s.luk;
   p.dropMul = 1 + Math.min(STAT.DROP_MAX, STAT.LUK_DROP * s.luk);
@@ -1123,7 +1126,7 @@ setInterval(() => {
   const list = [];
   for (const p of players.values()) {
     // 마지막 값 = 입은 옷 (1 = 갑옷, 2 = 바지, 3 = 둘 다) → 다른 플레이어 화면에도 입은 모습이 보임
-    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level, (p.gear && p.gear.armor ? 1 : 0) | (p.gear && p.gear.pants ? 2 : 0) | (p.gear && p.gear.weapon ? (p.gear.weapon === 'stone_sword' ? 8 : 4) : 0), p.dead ? 1 : 0]);   // 마지막 값 = 쓰러져 있는지 (다른 플레이어 화면에도 쓰러진 모습이 보임)
+    if (p.spawned) list.push([p.id, p.nick, p.x, p.y, p.z, p.ry, p.eq ? 1 : 0, p.level, (p.gear && p.gear.armor ? 1 : 0) | (p.gear && p.gear.pants ? 2 : 0) | (p.gear && p.gear.weapon ? (p.gear.weapon === 'stone_sword' ? 8 : p.gear.weapon === 'iron_sword' ? 16 : 4) : 0), p.dead ? 1 : 0]);   // 마지막 값 = 쓰러져 있는지 (다른 플레이어 화면에도 쓰러진 모습이 보임)
   }
   io.emit('state', list);
 }, 1000 / 15);
