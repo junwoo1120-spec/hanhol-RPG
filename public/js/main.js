@@ -16,7 +16,7 @@ import { createStatusUI } from './status-ui.js';
 import { createVillageChief } from './npc.js';
 import { createAuth, clearToken } from './auth.js';
 import { createSeaLife } from './sea-life.js';
-import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, CRAFT_RECIPES, QUEST_DEFS, CHIEF_TALK, lootText } from './items.mjs?v=9';   // ?v= : 브라우저에 남은 예전 items.mjs 를 안 쓰게 (items.mjs 를 고치면 숫자를 올려요)
+import { ITEMS, SKILL_INFO, INV_CAP, SLAM, GEAR_SLOT_NAME, CRAFT_RECIPES, QUEST_DEFS, CHIEF_TALK, lootText } from './items.mjs?v=10';   // ?v= : 브라우저에 남은 예전 items.mjs 를 안 쓰게 (items.mjs 를 고치면 숫자를 올려요)
 
 // HTML 요소 선택 도우미
 const $ = (id) => document.getElementById(id);
@@ -2198,9 +2198,10 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     ['DEX', '민첩', '이동 속도 +0.2% (만렙 총 495포인트면 +100%)', 'dex'],
     ['CON', '체력', '최대 HP +10', 'con'],
     ['INT', '지능', '최대 MP +6', 'int'],
-    ['LUK', '운', '치명타 피해 +2%, 아이템 획득 확률 포인트당 약 +0.34% (전부 찍으면 3배: 1% → 3%)', 'luk'],
+    ['LUK', '운', '치명타 피해 +1.33%, 아이템 획득 확률 포인트당 약 +0.34% (전부 찍으면 3배: 1% → 3%)', 'luk'],
     ['AGI', '공속/치명', '공격 속도 +0.8% (최대 +50%), 치명타 확률 +0.8% (최대 50%)', 'agi']
   ];
+  let statAmt = 1;   // 스탯 +/− 한 번에 올리고 내릴 포인트 (1 이상의 숫자, 또는 'max' = 남은 포인트 전부 / 찍은 만큼 전부)
   const pc = (x, d = 1) => (Math.round(x * 100 * Math.pow(10, d)) / Math.pow(10, d)) + '%';
   const scrSlots = (n) => '<div class="scr-slots">' + '<i></i>'.repeat(n) + '</div>';
   const scrBar = (cls, label, a, b) =>
@@ -2225,14 +2226,17 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
       '<div class="scr-card"><div class="scr-h"><img class="ic sp" src="/ui/icon_trait.png" alt="">특성</div>' + scrSlots(5) + '<div class="scr-note">아직 얻은 특성이 없어요</div></div>';
     const right =
       '<div class="scr-card"><div class="scr-h"><img src="/ui/orn_diamond.png" alt="">스탯 포인트</div>' +
-      '<div class="scr-pts"><span>사용 가능한 포인트</span><b>' + PLAYER.statPts + '</b><button class="scr-btn" data-streset="1"' + (Object.values(PLAYER.stats).some((v) => v > 0) ? '' : ' disabled') + '>초기화</button></div></div>' +
+      '<div class="scr-pts"><span>사용 가능한 포인트</span><b>' + PLAYER.statPts + '</b><button class="scr-btn" data-streset="1"' + (Object.values(PLAYER.stats).some((v) => v > 0) ? '' : ' disabled') + '>초기화</button></div>' +
+      '<div class="scr-pts" style="margin-top:8px;gap:6px;flex-wrap:wrap"><span>한 번에 올릴 포인트</span>' +
+      '<input type="number" min="1" data-stin="1" value="' + (statAmt === 'max' ? '' : statAmt) + '" placeholder="' + (statAmt === 'max' ? '최대' : '') + '" style="width:76px;padding:5px 4px;text-align:center;font:inherit;font-weight:700;color:inherit;background:rgba(0,0,0,.28);border:2px solid #9a7a3e;border-radius:4px">' +
+      [1, 5, 10, 'max'].map((v) => '<button class="scr-btn" data-stamt="' + v + '"' + (statAmt === v ? ' style="outline:2px solid #ffd96a"' : '') + '>' + (v === 'max' ? '최대' : v) + '</button>').join('') + '</div></div>' +
       STATS.map(([ab, n, d, key]) =>
         '<div class="scr-st">' +
         '<div class="scr-sn"><b>' + ab + '</b><small>(' + n + ')</small><div>' + d + '</div></div>' +
         '<span class="scr-vl">' + PLAYER.stats[key] + '</span><span class="scr-pm">' +
         '<button data-st="' + key + '" data-d="-1"' + (PLAYER.stats[key] > 0 ? '' : ' disabled') + '>−</button>' +
         '<button data-st="' + key + '" data-d="1"' + (PLAYER.statPts > 0 ? '' : ' disabled') + '>+</button></span></div>').join('') +
-      '<div class="scr-note">레벨이 오를 때마다 6포인트 · Shift+클릭은 5포인트씩</div>';
+      '<div class="scr-note">레벨이 오를 때마다 6포인트 · 위에서 정한 만큼 +/− 버튼으로 한 번에 올리고 내려요</div>';
     scrEl.innerHTML =
       '<div class="scr-wrap"><div class="scr-r top"><i class="cl"></i><i class="bd bl"></i><i class="st"></i><i class="bd br"></i><i class="cr"></i></div>' +
       '<div class="scr-paper"><div class="scr-x" data-sclose="1">✕</div>' +
@@ -2247,10 +2251,22 @@ body.uw-open .bottom-wrap,body.uw-open .rt-stack,body.uw-open .joy-base,body.uw-
     if (!(t instanceof Element)) return;
     if (performance.now() - scrOpenT < 500) return;   // 상태창을 연 그 터치의 click 이 어두운 배경에 떨어져 바로 닫히는 것 방지
     if (t === scrEl || t.closest('[data-sclose]')) { closeWin(); return; }
+    const am = t.closest('[data-stamt]');   // 한 번에 올릴 포인트 고르기
+    if (am) { statAmt = am.dataset.stamt === 'max' ? 'max' : Number(am.dataset.stamt); renderScr(); return; }
     const sb = t.closest('[data-st]');   // 스탯 + / − (서버가 남은 포인트를 검사해요)
-    if (sb && !sb.disabled) { socket.emit('stat', { k: sb.dataset.st, n: Number(sb.dataset.d) * (e.shiftKey ? 5 : 1) }); return; }
+    if (sb && !sb.disabled) {
+      const up = Number(sb.dataset.d) > 0, key = sb.dataset.st;
+      const n = statAmt === 'max' ? (up ? PLAYER.statPts : PLAYER.stats[key]) : statAmt;
+      socket.emit('stat', { k: key, n: (up ? 1 : -1) * Math.max(1, n) });
+      return;
+    }
     const rb = t.closest('[data-streset]');
     if (rb && !rb.disabled) socket.emit('stat:reset');
+  });
+
+  scrEl.addEventListener('change', (e) => {   // 직접 숫자를 적었을 때
+    const t = e.target;
+    if (t && t.matches && t.matches('[data-stin]')) { statAmt = Math.max(1, Math.floor(Number(t.value)) || 1); renderScr(); }
   });
 
   function openStatus() {
@@ -3105,7 +3121,7 @@ body.tw-open .toast{z-index:90}
         setRemoteWeapon(remote.g.userData.rig, p.eq);          // 장착/해제 모션 재생
       }
 
-      if (remote.gm !== p.gm) { remote.gm = p.gm; setOutfit(remote.g, { armor: !!(p.gm & 1), pants: !!(p.gm & 2) }); setWeaponKind(remote.g.userData.rig, (p.gm & 8) ? 'stone_sword' : (p.gm & 4) ? 'orc_axe' : 'wooden_sword'); }   // 다른 플레이어가 입은 옷
+      if (remote.gm !== p.gm) { remote.gm = p.gm; setOutfit(remote.g, { armor: !!(p.gm & 1), pants: !!(p.gm & 2) }); setWeaponKind(remote.g.userData.rig, (p.gm & 16) ? 'iron_sword' : (p.gm & 8) ? 'stone_sword' : (p.gm & 4) ? 'orc_axe' : 'wooden_sword'); }   // 다른 플레이어가 입은 옷
       remote.eq = !!p.eq;
       if (p.dead && !remote.dead) remote.side = Math.random() < 0.5 ? -1 : 1;   // 쓰러지는 쪽
       remote.dead = !!p.dead;
@@ -3342,7 +3358,7 @@ body.tw-open .toast{z-index:90}
       gorillas = m.createGorillaWorld({ scene, camera, T, WATER_LEVEL });
       gorillas.onSnapshot(lastGor);
     })
-    .catch((err) => console.error('고릴라 로드 실패:', err));
+    .catch((err) => { console.error('고릴라 로드 실패:', err); toast('고릴라 파일(gorilla.mjs)을 불러오지 못했어요. gorilla.mjs 와 gorilla-ai.mjs 가 public/js 에 있는지 확인해 주세요'); });
   socket.on('gor', (list) => {
     lastGor = Array.isArray(list) ? list : [];
     if (gorillas) gorillas.onSnapshot(lastGor);
