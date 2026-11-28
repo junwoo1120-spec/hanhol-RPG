@@ -24,7 +24,7 @@ export const GORILLA = {
   STAND_H: PLAYER_H * 1.5, // 두 발로 섰을 때 키(m) = 3.6m
   HIT_RADIUS: 1.1,         // 몸통 반지름 (플레이어 검이 닿는 거리에 더해짐)
 
-  HP: BOSS.HP * 1.5,       // 체력 = 오크 대전사의 1.5배
+  HP: Math.round(BOSS.HP * 1.5),   // 체력 = 오크 대전사의 1.5배
   DAMAGE: 40 * 1.5,        // 공격력 = 40의 1.5배 = 60 (플레이어 체력 100 이면 두 방)
   AGGRO_DIST: GOBLIN.AGGRO_DIST / 2,           // 인식거리 = 고블린의 절반
   DRUM_SEC: 2,                                  // 인식한 뒤 가슴을 두드리는 시간(초). 끝나면 달려와요
