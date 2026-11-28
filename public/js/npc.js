@@ -44,11 +44,12 @@ function markerTexture(ch) {
   return t;
 }
 
+const CHIEF_SCALE = 1.34;   // 이장 크기 배율 (플레이어와 같은 키로 맞춤. 키를 바꾸려면 이 숫자만)
 export function createVillageChief({ scene, x, y, z, ry = 0 }) {
   const root = new THREE.Group();
   root.position.set(x, y, z);
   root.rotation.y = ry;
-  root.scale.setScalar(0.97);
+  root.scale.setScalar(CHIEF_SCALE);   // 이장 키 = 플레이어 키(약 2.4m). 모델 높이 약 1.79 × 1.34 ≈ 2.4m
   scene.add(root);
 
   // 그룹(움직이는 부분) 만들기: 부품 좌표는 캐릭터 전체 기준이라서, 그룹 기준점을 빼서 넣어요
